@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="14" fill="#0a0a0a"/>
+  <path d="M20 36c-3 0-5 2-5 5s2 5 5 5 5-2 5-5-2-5-5-5zm24 0c-3 0-5 2-5 5s2 5 5 5 5-2 5-5-2-5-5-5z" fill="#ff6b00"/>
+  <path d="M18 32l4-12h20l4 12v8h-4v-4H22v4h-4v-8z" fill="#ff6b00"/>
+  <circle cx="20" cy="33" r="2" fill="#0a0a0a"/>
+  <circle cx="44" cy="33" r="2" fill="#0a0a0a"/>
+  <text x="32" y="56" font-family="Arial,sans-serif" font-size="8" font-weight="bold" fill="#ff6b00" text-anchor="middle">BR</text>
+</svg>
