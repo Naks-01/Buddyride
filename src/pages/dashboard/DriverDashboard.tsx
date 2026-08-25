@@ -4,7 +4,7 @@ import { auth, db } from '../../lib/firebase';
 import { LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 
-type Location = { placeId?: string; address?: string; name?: string; lat?: number; lng?: number };
+type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
 
 type RideRequest = {
   id: string;
@@ -13,6 +13,7 @@ type RideRequest = {
   pickupLatLng?: { lat: number; lng: number };
   dropoffLatLng?: { lat: number; lng: number };
   distance?: string | number;
+  fare?: number;
   price?: number;
   status?: string;
   passengerId?: string;
@@ -34,7 +35,9 @@ export function DriverDashboard() {
     const unsubscribe = onSnapshot(
       requestedQuery,
       (snapshot) => {
-        setRides(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest)));
+        const nextRides = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest));
+        setRides(nextRides);
+        console.log('Driver rides:', nextRides);
       },
       (err) => {
         console.error(err);
@@ -173,7 +176,7 @@ export function DriverDashboard() {
             {acceptedRide.status === 'completed' && (
               <div className="mt-3 space-y-2">
                 <p className="text-center text-sm font-semibold text-green-800">
-                  R{Number(acceptedRide.price ?? 0).toFixed(2)} Collected - Cash
+                  R{Number(acceptedRide.fare ?? acceptedRide.price ?? 0).toFixed(2)} Collected - Cash
                 </p>
                 <button
                   onClick={finishRide}
@@ -220,14 +223,14 @@ function RideDetails({ ride }: { ride: RideRequest }) {
   const formatLocation = (loc?: string | Location) => {
     if (!loc) return '—';
     if (typeof loc === 'string') return loc;
-    return loc.address ?? loc.name ?? JSON.stringify(loc);
+    return loc.address ?? loc.name ?? loc.description ?? JSON.stringify(loc);
   };
   return (
     <div className="space-y-1 text-sm text-gray-700">
       <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>
       <p><span className="font-semibold">Dropoff:</span> {formatLocation(ride.dropoff)}</p>
       <p><span className="font-semibold">Distance:</span> {typeof ride.distance === 'number' ? `${ride.distance} km` : ride.distance ?? '—'}</p>
-      <p><span className="font-semibold">Fare:</span> R{Number(ride.price ?? 0).toFixed(2)}</p>
+      <p><span className="font-semibold">Fare:</span> R{Number(ride.fare ?? ride.price ?? 0).toFixed(2)}</p>
     </div>
   );
 }
