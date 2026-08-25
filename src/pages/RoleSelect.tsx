@@ -18,7 +18,7 @@ export function RoleSelect() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-darkBg px-6 py-8">
       <Logo variant="full" size={72} />
-      <h1 className="text-center text-3xl font-extrabold text-brandOrange">BuddyRide1 - Limpopo eHailing</h1>
+      <h1 className="text-center text-2xl md:text-4xl font-extrabold text-brandOrange">BuddyRide1 - Limpopo eHailing</h1>
       <p className="mb-6 text-center text-base text-gray-300">{t('tagline', lang)}</p>
 
       <div className="flex w-full max-w-md flex-col gap-4">

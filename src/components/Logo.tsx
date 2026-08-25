@@ -5,6 +5,6 @@ type LogoProps = {
 };
 
 export function Logo({ variant = 'icon', size = 48, className }: LogoProps) {
-  const src = variant === 'full' ? '/buddyride1-logo.png' : '/logos/app-icon.png';
+  const src = variant === 'full' ? '/buddyride-logo-main.jpg' : '/logos/app-icon.png';
   return <img src={src} alt="BuddyRide1" height={size} style={{ height: size, width: 'auto' }} className={className} />;
 }

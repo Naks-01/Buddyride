@@ -23,6 +23,15 @@ type RideRequest = {
   createdAt?: unknown;
 };
 
+type Coordinates = { lat: number; lng: number };
+
+function getLocationCoordinates(location?: string | Location, fallback?: Coordinates): Coordinates | null {
+  if (location && typeof location !== 'string' && typeof location.lat === 'number' && typeof location.lng === 'number') {
+    return { lat: location.lat, lng: location.lng };
+  }
+  return fallback ?? null;
+}
+
 // Firestore for this project is provisioned in the africa-south1 region.
 export function DriverDashboard() {
   const [rides, setRides] = useState<RideRequest[]>([]);
@@ -59,7 +68,9 @@ export function DriverDashboard() {
         driverPhone: auth.currentUser?.phoneNumber ?? null,
         acceptedAt: serverTimestamp(),
       });
-      setAcceptedRide(ride);
+      const acceptedRide = { ...ride, status: 'accepted' };
+      setAcceptedRide(acceptedRide);
+      await navigateToPickup(acceptedRide);
     } catch (err) {
       console.error(err);
       setError('Failed to accept ride.');
@@ -93,16 +104,51 @@ export function DriverDashboard() {
     }
   };
 
-  const markArrived = (ride: RideRequest) => void updateRideStatus(ride.id, 'driver_arrived', { arrivedAt: serverTimestamp() });
-  const startTrip = (ride: RideRequest) => void updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp() });
+  const markArrived = (ride: RideRequest) => void updateRideStatus(ride.id, 'arrived_at_pickup', { arrivedAt: serverTimestamp() });
+  const startTrip = async (ride: RideRequest) => {
+    await updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp() });
+    await navigateToDestination(ride);
+  };
   const completeTrip = (ride: RideRequest) =>
     void updateRideStatus(ride.id, 'completed', { completedAt: serverTimestamp() });
 
-  const navigateToPickup = (ride: RideRequest) => {
-    const pickup = ride.pickupLatLng ?? { lat: 0, lng: 0 };
-    const dropoff = ride.dropoffLatLng ?? { lat: 0, lng: 0 };
-    const url = `https://www.google.com/maps/dir/${pickup.lat},${pickup.lng}/${dropoff.lat},${dropoff.lng}`;
+  const openNavigation = (destination: Coordinates, origin?: Coordinates) => {
+    const originQuery = origin ? `&origin=${origin.lat},${origin.lng}` : '';
+    const url = `https://www.google.com/maps/dir/?api=1${originQuery}&destination=${destination.lat},${destination.lng}&travelmode=driving`;
     window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const getDriverLocation = (): Promise<Coordinates | undefined> =>
+    new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve(undefined);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
+        () => resolve(undefined),
+        { enableHighAccuracy: true, timeout: 10000 },
+      );
+    });
+
+  const navigateToPickup = async (ride: RideRequest) => {
+    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
+    if (!pickup) {
+      setError('Pickup location is missing coordinates.');
+      return;
+    }
+    window.speechSynthesis?.speak(new SpeechSynthesisUtterance('Navigating to pickup location'));
+    openNavigation(pickup, await getDriverLocation());
+  };
+
+  const navigateToDestination = async (ride: RideRequest) => {
+    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
+    const destination = getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
+    if (!destination) {
+      setError('Destination is missing coordinates.');
+      return;
+    }
+    openNavigation(destination, pickup ?? undefined);
   };
 
   const finishRide = () => setAcceptedRide(null);
@@ -155,13 +201,13 @@ export function DriverDashboard() {
                 I've Arrived
               </button>
             )}
-            {acceptedRide.status === 'driver_arrived' && (
+            {acceptedRide.status === 'arrived_at_pickup' && (
               <button
-                onClick={() => startTrip(acceptedRide)}
+                onClick={() => void startTrip(acceptedRide)}
                 disabled={updatingStatus}
                 className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
               >
-                Start Trip
+                Passenger Picked Up
               </button>
             )}
             {acceptedRide.status === 'in_progress' && (
