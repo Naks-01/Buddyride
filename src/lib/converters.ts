@@ -10,6 +10,7 @@ export function toProfile(uid: string, data: Record<string, unknown>): Profile {
   return {
     id: uid,
     phone: (data.phone as string) ?? null,
+    email: (data.email as string) ?? null,
     full_name: (data.name as string) ?? null,
     role: (data.role as UserRole) || 'passenger',
     is_driver_approved: Boolean(data.is_driver_approved),

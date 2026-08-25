@@ -1,354 +1,232 @@
 import { useEffect, useState } from 'react';
-import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, type DocumentData } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
-import { useAuth } from '../../context/AuthContext';
-import { MapComponent } from '../../components/MapComponent';
-import { CarIcon, LogOutIcon } from '../../components/Icons';
-import { calculateFare } from '../../utils/fare.js';
+import { LogOutIcon } from '../../components/Icons';
 
-interface RideRequest {
+type Location = { placeId?: string; address?: string; name?: string; lat?: number; lng?: number };
+
+type RideRequest = {
   id: string;
-  passenger_name: string;
-  pickup_address: string;
-  dropoff_address: string;
-  distance: string;
-  fare: number;
-}
+  pickup?: string | Location;
+  dropoff?: string | Location;
+  pickupLatLng?: { lat: number; lng: number };
+  dropoffLatLng?: { lat: number; lng: number };
+  distance?: string | number;
+  price?: number;
+  status?: string;
+  passengerId?: string;
+  driverId?: string | null;
+  driverPhone?: string | null;
+  passengerPhone?: string | null;
+  createdAt?: unknown;
+};
 
-interface ActiveRide {
-  id: string;
-  passenger_name: string;
-  pickup_address: string;
-  pickup_location: { lat: number; lng: number } | null;
-  dropoff_location: { lat: number; lng: number } | null;
-  driver_location: { lat: number; lng: number } | null;
-}
-
-interface CompletedRide {
-  id: string;
-  fare: number;
-  tip: number;
-  totalEarned: number;
-}
-
+// Firestore for this project is provisioned in the africa-south1 region.
 export function DriverDashboard() {
-  const { profile } = useAuth();
-  const [online, setOnline] = useState(false);
-  const [updating, setUpdating] = useState(false);
   const [rides, setRides] = useState<RideRequest[]>([]);
+  const [acceptedRide, setAcceptedRide] = useState<RideRequest | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
-  const [activeRide, setActiveRide] = useState<ActiveRide | null>(null);
-  const [completing, setCompleting] = useState(false);
-  const [completedFare, setCompletedFare] = useState<number | null>(null);
-  const [completedRides, setCompletedRides] = useState<CompletedRide[]>([]);
-
-  // Mock incoming ride request UI, kept as a fallback when there is no live request.
-  const [mockRequest, setMockRequest] = useState<{
-    pickup: string;
-    dropoff: string;
-    fare: number;
-    distanceKm: number;
-  } | null>(null);
-  const [mockAcceptedMessage, setMockAcceptedMessage] = useState<string | null>(null);
-
-  const acceptMockRide = () => {
-    setMockAcceptedMessage('You accepted the ride. Navigating to passenger...');
-  };
-
-  const declineMockRide = () => {
-    setMockRequest(null);
-    setMockAcceptedMessage(null);
-  };
-
-  const toggleOnline = async () => {
-    if (!profile?.id) return;
-    setUpdating(true);
-    try {
-      const next = !online;
-      await setDoc(doc(db, 'users', profile.id), { is_online: next }, { merge: true });
-      setOnline(next);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setUpdating(false);
-    }
-  };
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const ridesQuery = query(collection(db, 'rides'), where('status', '==', 'pending'));
-    const unsubscribe = onSnapshot(ridesQuery, (snapshot) => {
-      setRides(
-        snapshot.docs.map((d) => {
-          const data = d.data() as DocumentData;
-          return {
-            id: d.id,
-            passenger_name: data.passenger_name ?? '',
-            pickup_address: data.pickup_address ?? '',
-            dropoff_address: data.dropoff_address ?? '',
-            distance: data.distance ?? '',
-            fare: typeof data.fare === 'number' ? data.fare : 0,
-          };
-        }),
-      );
-    });
+    const requestedQuery = query(collection(db, 'rides'), where('status', '==', 'searching'));
+    const unsubscribe = onSnapshot(
+      requestedQuery,
+      (snapshot) => {
+        setRides(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest)));
+      },
+      (err) => {
+        console.error(err);
+        setError('Failed to load ride requests.');
+      },
+    );
     return () => unsubscribe();
   }, []);
 
-  // Track this driver's currently accepted ride so we know where to push location updates.
-  useEffect(() => {
-    if (!profile?.id) return;
-    const activeQuery = query(
-      collection(db, 'rides'),
-      where('driver_id', '==', profile.id),
-      where('status', 'in', ['accepted', 'active']),
-    );
-    const unsubscribe = onSnapshot(activeQuery, (snapshot) => {
-      if (snapshot.empty) {
-        setActiveRide(null);
-        return;
-      }
-      const rideDoc = snapshot.docs[0];
-      const data = rideDoc.data() as DocumentData;
-      setCompletedFare(null);
-      setActiveRide({
-        id: rideDoc.id,
-        passenger_name: data.passenger_name ?? '',
-        pickup_address: data.pickup_address ?? '',
-        pickup_location: data.pickup_location ?? null,
-        dropoff_location: data.dropoff_location ?? null,
-        driver_location: data.driver_location ?? null,
-      });
-    });
-    return () => unsubscribe();
-  }, [profile?.id]);
-
-  useEffect(() => {
-    if (!profile?.id) return;
-
-    const completedQuery = query(
-      collection(db, 'rides'),
-      where('driver_id', '==', profile.id),
-      where('status', '==', 'completed'),
-    );
-
-    const unsubscribe = onSnapshot(completedQuery, (snapshot) => {
-      setCompletedRides(
-        snapshot.docs.map((rideDoc) => {
-          const data = rideDoc.data() as DocumentData;
-          const fare = typeof data.fare === 'number' ? data.fare : 0;
-          const tip = typeof data.tip === 'number' ? data.tip : 0;
-
-          return {
-            id: rideDoc.id,
-            fare,
-            tip,
-            totalEarned:
-              typeof data.totalEarned === 'number'
-                ? data.totalEarned
-                : Number((fare + tip).toFixed(2)),
-          };
-        }),
-      );
-    });
-
-    return () => unsubscribe();
-  }, [profile?.id]);
-
-  // While a ride is accepted, watch the driver's position and push updates every 5 seconds.
-  useEffect(() => {
-    const activeRideId = activeRide?.id;
-    if (!activeRideId || !navigator.geolocation) return;
-
-    let lastPosition: { lat: number; lng: number } | null = null;
-
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        lastPosition = { lat: position.coords.latitude, lng: position.coords.longitude };
-      },
-      (err) => console.error(err),
-      { enableHighAccuracy: true },
-    );
-
-    const intervalId = setInterval(() => {
-      if (!lastPosition) return;
-      void updateDoc(doc(db, 'rides', activeRideId), { driver_location: lastPosition }).catch((err) =>
-        console.error(err),
-      );
-    }, 5000);
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-      clearInterval(intervalId);
-    };
-  }, [activeRide?.id]);
-
-  const acceptRide = async (rideId: string) => {
-    if (!profile?.id) return;
-    setAccepting(rideId);
+  const acceptRide = async (ride: RideRequest) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    setAccepting(ride.id);
     try {
-      await updateDoc(doc(db, 'rides', rideId), {
+      await updateDoc(doc(db, 'rides', ride.id), {
         status: 'accepted',
-        driver_id: profile.id,
+        driverId: uid,
+        driverName: auth.currentUser?.displayName ?? 'Driver',
+        driverPhone: auth.currentUser?.phoneNumber ?? null,
+        acceptedAt: serverTimestamp(),
       });
+      setAcceptedRide(ride);
     } catch (err) {
       console.error(err);
+      setError('Failed to accept ride.');
     } finally {
       setAccepting(null);
     }
   };
 
-  const completeTrip = async (rideId: string) => {
-    setCompleting(true);
-    try {
-      if (!activeRide?.pickup_location || !activeRide.dropoff_location) {
-        throw new Error('This ride is missing pickup or dropoff coordinates.');
-      }
+  // Keep the accepted ride's status in sync as the passenger and driver progress through the ride.
+  useEffect(() => {
+    if (!acceptedRide) return;
+    const unsubscribe = onSnapshot(doc(db, 'rides', acceptedRide.id), (snapshot) => {
+      const data = snapshot.data() as Record<string, unknown> | undefined;
+      if (!data) return;
+      setAcceptedRide((prev) => (prev ? { ...prev, ...(data as Record<string, unknown>) } : prev));
+    });
+    return () => unsubscribe();
+  }, [acceptedRide?.id]);
 
-      const { distanceKm, durationMin, fare } = await calculateFare(
-        activeRide.pickup_location,
-        activeRide.dropoff_location,
-      );
-      await updateDoc(doc(db, 'rides', rideId), {
-        status: 'completed',
-        fare,
-        distanceKm,
-        durationMin,
-        totalEarned: fare,
-        completedAt: serverTimestamp(),
-      });
-      setCompletedFare(fare);
-      window.alert(`Trip Completed! Fare: R${fare.toFixed(2)}`);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+
+  const updateRideStatus = async (rideId: string, status: string, extra?: Record<string, unknown>) => {
+    setUpdatingStatus(true);
+    try {
+      await updateDoc(doc(db, 'rides', rideId), { status, ...extra });
     } catch (err) {
       console.error(err);
+      setError('Failed to update ride status.');
     } finally {
-      setCompleting(false);
+      setUpdatingStatus(false);
     }
   };
 
-  const logout = async () => { await auth.signOut(); window.location.href = '/'; };
+  const markArrived = (ride: RideRequest) => void updateRideStatus(ride.id, 'driver_arrived', { arrivedAt: serverTimestamp() });
+  const startTrip = (ride: RideRequest) => void updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp() });
+  const completeTrip = (ride: RideRequest) =>
+    void updateRideStatus(ride.id, 'completed', { completedAt: serverTimestamp() });
 
+  const navigateToPickup = (ride: RideRequest) => {
+    const pickup = ride.pickupLatLng ?? { lat: 0, lng: 0 };
+    const dropoff = ride.dropoffLatLng ?? { lat: 0, lng: 0 };
+    const url = `https://www.google.com/maps/dir/${pickup.lat},${pickup.lng}/${dropoff.lat},${dropoff.lng}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const finishRide = () => setAcceptedRide(null);
+
+  const logout = async () => {
+    await auth.signOut();
+    window.location.href = '/';
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b border-gray-200 px-4 py-4 flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-orange-500">BuddyRide1 - Driver</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-orange-500">BuddyRide1 - Driver</h1>
         <button onClick={() => void logout()} className="flex items-center gap-2 text-gray-600 hover:text-gray-900">
           <LogOutIcon size={20} /> Logout
         </button>
       </header>
 
-      <main className="flex-1 flex flex-col">
-        <div className="p-4 max-w-2xl w-full mx-auto">
-          <button
-            onClick={() => void toggleOnline()}
-            disabled={updating}
-            className={`w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl text-white disabled:opacity-60 ${online ? 'bg-green-500' : 'bg-gray-700'}`}
-          >
-            <CarIcon size={20} /> {online ? 'Online - Go Offline' : 'Go Online'}
-          </button>
-        </div>
+      <main className="flex-1 p-4 max-w-2xl w-full mx-auto">
+        <h2 className="text-lg font-bold text-gray-800 mb-3">Incoming Ride Requests</h2>
 
-        {rides.length === 0 && mockRequest && (
-          <div className="p-4 max-w-2xl w-full mx-auto">
-            <div className="bg-white border border-orange-200 rounded-xl p-4">
-              <h2 className="text-lg font-bold text-gray-800 mb-2">Incoming Ride Request</h2>
-              <p className="text-gray-700">Pickup: {mockRequest.pickup}</p>
-              <p className="text-gray-700">Dropoff: {mockRequest.dropoff}</p>
-              <p className="text-gray-700">Fare: R{mockRequest.fare}</p>
-              <p className="text-gray-700 mb-3">Distance: {mockRequest.distanceKm}km</p>
-              {mockAcceptedMessage ? (
-                <p className="text-center text-sm bg-green-50 text-green-700 border border-green-200 rounded-lg py-2 px-3">
-                  {mockAcceptedMessage}
-                </p>
-              ) : (
-                <div className="flex gap-3">
-                  <button
-                    onClick={acceptMockRide}
-                    className="flex-1 bg-orange-500 text-white font-bold py-2 rounded-lg"
-                  >
-                    Accept Ride
-                  </button>
-                  <button
-                    onClick={declineMockRide}
-                    className="flex-1 bg-gray-200 text-gray-700 font-bold py-2 rounded-lg"
-                  >
-                    Decline
-                  </button>
-                </div>
-              )}
-            </div>
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+            {error}
           </div>
         )}
 
-        <MapComponent />
-
-        <div className="p-4 max-w-2xl w-full mx-auto flex-1">
-          <h2 className="text-lg font-bold text-gray-800 mb-3">Incoming Ride Requests</h2>
-          {rides.length === 0 && <p className="text-sm text-gray-500">No ride requests right now.</p>}
-          <div className="space-y-3">
-            {rides.map((ride) => (
-              <div key={ride.id} className="bg-white border border-orange-200 rounded-xl p-4">
-                {ride.passenger_name && <p className="text-sm text-gray-500 mb-1">{ride.passenger_name}</p>}
-                <p className="text-gray-700">Pickup: {ride.pickup_address}</p>
-                <p className="text-gray-700">Dropoff: {ride.dropoff_address}</p>
-                <p className="text-gray-700">Fare: R{ride.fare}</p>
-                <p className="text-gray-700 mb-3">Distance: {ride.distance}</p>
+        {acceptedRide && (
+          <section className="mb-5 rounded-xl border border-green-200 bg-green-50 p-4 shadow-sm">
+            <h2 className="mb-3 text-lg font-bold text-green-900">Accepted Ride</h2>
+            <RideDetails ride={acceptedRide} />
+            <a
+              href={`tel:${acceptedRide.passengerPhone ?? ''}`}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-green-600 py-2 font-bold text-green-700 hover:bg-green-100"
+            >
+              Call Passenger
+            </a>
+            <button
+              onClick={() => navigateToPickup(acceptedRide)}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-green-600 py-3 font-bold text-white hover:bg-green-700"
+            >
+              Navigate
+            </button>
+            {acceptedRide.status === 'accepted' && (
+              <button
+                onClick={() => markArrived(acceptedRide)}
+                disabled={updatingStatus}
+                className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+              >
+                I've Arrived
+              </button>
+            )}
+            {acceptedRide.status === 'driver_arrived' && (
+              <button
+                onClick={() => startTrip(acceptedRide)}
+                disabled={updatingStatus}
+                className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+              >
+                Start Trip
+              </button>
+            )}
+            {acceptedRide.status === 'in_progress' && (
+              <button
+                onClick={() => completeTrip(acceptedRide)}
+                disabled={updatingStatus}
+                className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+              >
+                Complete Trip
+              </button>
+            )}
+            {acceptedRide.status === 'completed' && (
+              <div className="mt-3 space-y-2">
+                <p className="text-center text-sm font-semibold text-green-800">
+                  R{Number(acceptedRide.price ?? 0).toFixed(2)} Collected - Cash
+                </p>
                 <button
-                  onClick={() => void acceptRide(ride.id)}
+                  onClick={finishRide}
+                  className="w-full rounded-lg bg-gray-200 py-2 font-bold text-gray-700 hover:bg-gray-300"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {rides.length === 0 && !acceptedRide && <p className="text-sm text-gray-500">No ride requests right now.</p>}
+
+        <div className="space-y-3">
+          {rides.map((ride) => (
+            <div key={ride.id} className="bg-white border border-orange-200 rounded-xl p-4 shadow-sm">
+              <RideDetails ride={ride} />
+              <p className="text-gray-500 text-sm mb-3">Passenger: {ride.passengerId ?? 'test123'}</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  onClick={() => navigateToPickup(ride)}
+                  className="w-full rounded-lg border border-orange-500 py-2 font-bold text-orange-600 hover:bg-orange-50"
+                >
+                  Open in Maps
+                </button>
+                <button
+                  onClick={() => void acceptRide(ride)}
                   disabled={accepting === ride.id}
-                  className="w-full bg-orange-500 disabled:opacity-60 text-white font-bold py-2 rounded-lg"
+                  className="w-full rounded-lg bg-orange-500 py-2 font-bold text-white disabled:opacity-60"
                 >
                   {accepting === ride.id ? 'Accepting...' : 'Accept Ride'}
                 </button>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
-
-        {completedFare !== null && !activeRide && (
-          <div className="p-4 max-w-2xl w-full mx-auto">
-            <p className="text-center text-sm bg-green-50 text-green-700 border border-green-200 rounded-lg py-2 px-3">
-              Trip Complete. You earned R{completedFare}
-            </p>
-          </div>
-        )}
-
-        {completedRides.length > 0 && (
-          <div className="p-4 max-w-2xl w-full mx-auto">
-            <h2 className="text-lg font-bold text-gray-800 mb-3">Trip Earnings</h2>
-            <div className="space-y-3">
-              {completedRides.map((ride) => (
-                <div key={ride.id} className="bg-white border border-gray-200 rounded-xl p-4">
-                  <p className="text-gray-700">Fare: R{ride.fare.toFixed(2)}</p>
-                  <p className="text-gray-700">Tip: R{ride.tip.toFixed(2)}</p>
-                  <p className="font-bold text-green-700 mt-1">
-                    Total: R{ride.totalEarned.toFixed(2)}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeRide && (
-          <div className="p-4 max-w-2xl w-full mx-auto">
-            <h2 className="text-lg font-bold text-gray-800 mb-3">Active Trip</h2>
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <div>
-                <p className="font-semibold text-gray-800">{activeRide.passenger_name}</p>
-                <p className="text-sm text-gray-500">{activeRide.pickup_address}</p>
-              </div>
-              <button
-                onClick={() => void completeTrip(activeRide.id)}
-                disabled={completing}
-                className="mt-4 w-full bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white text-lg font-bold py-4 rounded-lg"
-              >
-                {completing ? 'Completing...' : 'Complete Trip'}
-              </button>
-            </div>
-          </div>
-        )}
       </main>
+    </div>
+  );
+}
+
+function RideDetails({ ride }: { ride: RideRequest }) {
+  const formatLocation = (loc?: string | Location) => {
+    if (!loc) return '—';
+    if (typeof loc === 'string') return loc;
+    return loc.address ?? loc.name ?? JSON.stringify(loc);
+  };
+  return (
+    <div className="space-y-1 text-sm text-gray-700">
+      <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>
+      <p><span className="font-semibold">Dropoff:</span> {formatLocation(ride.dropoff)}</p>
+      <p><span className="font-semibold">Distance:</span> {typeof ride.distance === 'number' ? `${ride.distance} km` : ride.distance ?? '—'}</p>
+      <p><span className="font-semibold">Fare:</span> R{Number(ride.price ?? 0).toFixed(2)}</p>
     </div>
   );
 }

@@ -22,6 +22,7 @@ export type DocStatus = 'pending' | 'approved' | 'rejected';
 export interface Profile {
   id: string;
   phone: string | null;
+  email: string | null;
   full_name: string | null;
   role: UserRole;
   is_driver_approved: boolean;

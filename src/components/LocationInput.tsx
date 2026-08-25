@@ -28,14 +28,60 @@ export function LocationInput({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [placesReady, setPlacesReady] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setQuery(value);
   }, [value]);
 
+  useEffect(() => {
+    const google = (window as any).google;
+    if (!google?.maps?.places?.Autocomplete || !inputRef.current) return;
+    if (autocompleteRef.current) return;
+
+    const polokwaneBounds = new google.maps.LatLngBounds(
+      new google.maps.LatLng(-24.1, 29.3),
+      new google.maps.LatLng(-23.8, 29.6)
+    );
+
+    const autocompleteOptions = {
+      componentRestrictions: { country: 'za' },
+      bounds: polokwaneBounds,
+      strictBounds: true,
+      types: ['address'],
+      fields: ['geometry', 'formatted_address', 'place_id', 'name'],
+    };
+
+    const autocomplete = new google.maps.places.Autocomplete(inputRef.current, autocompleteOptions);
+    autocompleteRef.current = autocomplete;
+
+    const listener = autocomplete.addListener('place_changed', () => {
+      const place = autocomplete.getPlace();
+      const location = place.geometry?.location;
+      if (!location) return;
+
+      const address = place.formatted_address ?? place.name ?? inputRef.current?.value ?? '';
+      setQuery(address);
+      setShowResults(false);
+      setResults([]);
+      onChange(address, { lat: location.lat(), lng: location.lng() });
+    });
+    setPlacesReady(true);
+
+    return () => {
+      listener.remove();
+      autocompleteRef.current = null;
+    };
+    // The autocomplete instance should live for this input's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const search = (text: string) => {
     setQuery(text);
+    if (placesReady) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (text.trim().length < 3) {
       setResults([]);
@@ -81,6 +127,7 @@ export function LocationInput({
         <MapPinIcon size={18} className="loc-input-icon" />
         <span className="loc-input-dot" style={{ background: iconColor }} />
         <input
+          ref={inputRef}
           className="loc-input-field"
           value={query}
           onChange={(e) => {
@@ -101,7 +148,7 @@ export function LocationInput({
         )}
       </div>
 
-      {showResults && results.length > 0 && (
+      {showResults && !placesReady && results.length > 0 && (
         <div className="loc-results">
           {results.map((r, i) => (
             <button
@@ -116,7 +163,7 @@ export function LocationInput({
         </div>
       )}
 
-      {showResults && loading && results.length === 0 && query.length >= 3 && (
+      {showResults && !placesReady && loading && results.length === 0 && query.length >= 3 && (
         <div className="loc-results">
           <div className="loc-result-item loc-result-loading">
             <div className="spinner" style={{ width: 16, height: 16 }} />
