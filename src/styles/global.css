@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --black: #0a0a0a;
   --black-light: #1a1a1a;
@@ -257,89 +261,8 @@ input {
 }
 
 /* ===== Role Select ===== */
-.role-screen {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  min-height: 100vh;
-  gap: 16px;
-}
+/* Layout/typography kept in Tailwind on RoleSelect.tsx; role cards are pure Tailwind. */
 
-.role-logo {
-  width: 80px;
-  height: 80px;
-  border-radius: 20px;
-  background: var(--orange);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 32px;
-  font-weight: 900;
-  color: var(--black);
-  margin-bottom: 8px;
-}
-
-.role-title {
-  font-size: 28px;
-  font-weight: 800;
-  color: var(--orange);
-}
-
-.role-subtitle {
-  font-size: 16px;
-  color: var(--gray);
-  margin-bottom: 24px;
-  text-align: center;
-}
-
-.role-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 20px;
-  background: var(--black-card);
-  border-radius: var(--radius);
-  border: 2px solid var(--black-border);
-  width: 100%;
-  text-align: left;
-  color: var(--white);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.role-card--passenger {
-  background: #b84a00;
-  border-color: #ff6b00;
-}
-
-.role-card--driver {
-  background: #174ea6;
-  border-color: #3b82f6;
-}
-
-.role-card--admin {
-  background: #6b21a8;
-  border-color: #a855f7;
-}
-
-.role-card-icon {
-  font-size: 32px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.role-card:active {
-  border-color: var(--orange);
-}
-
-.role-card svg {
-  width: 32px;
-  height: 32px;
-  color: var(--orange);
-  flex-shrink: 0;
-}
 
 /* ===== Map ===== */
 .map-container {
