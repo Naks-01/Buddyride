@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { CarIcon, LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
+import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane';
 
 const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
@@ -15,7 +16,7 @@ const STATUS_BANNER: Record<string, string> = {
   in_progress: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
-const MAP_HEIGHT = '500px';
+const MAP_HEIGHT = '70vh';
 const GOOGLE_MAPS_LIBRARIES: ('places' | 'marker')[] = ['places', 'marker'];
 
 function GoogleMapsBillingHelp() {
@@ -38,8 +39,7 @@ export function PassengerDashboard() {
     googleMapsApiKey: hasGoogleMapsApiKey ? googleMapsApiKey : 'missing-key',
     libraries: GOOGLE_MAPS_LIBRARIES,
   });
-  const pickupAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-  const dropoffAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [locating, setLocating] = useState(false);
@@ -65,6 +65,10 @@ export function PassengerDashboard() {
   const [estimatedFare, setEstimatedFare] = useState<number>(0);
   const [googleMapsError, setGoogleMapsError] = useState<string | null>(null);
   const [pricing, setPricing] = useState({ baseFare: 20, perKm: 8 });
+  const [locationStep, setLocationStep] = useState<'pickup' | 'dropoff'>('pickup');
+  const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
+  const [mapAddress, setMapAddress] = useState('');
+  const [searchText, setSearchText] = useState('');
 
   // Live pricing set by the admin in Settings - Pricing.
   useEffect(() => {
@@ -107,27 +111,19 @@ export function PassengerDashboard() {
     };
   }, []);
 
-  const reverseGeocode = (location: { lat: number; lng: number }, setAddress: (value: string) => void) => {
-    const google = (window as any).google;
-    if (!google?.maps?.Geocoder) {
-      setTimeout(() => reverseGeocode(location, setAddress), 500);
-      return;
+  const reverseGeocode = async (location: { lat: number; lng: number }) => {
+    const fallback = searchPolokwanePlaces(`${location.lat.toFixed(3)} ${location.lng.toFixed(3)}`)[0];
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${location.lat},${location.lng}&key=${googleMapsApiKey}`
+      );
+      const data = await response.json();
+      const address = data.results?.[0]?.formatted_address;
+      setMapAddress(address || fallback?.address || `Seshego Zone X (${location.lat.toFixed(5)}, ${location.lng.toFixed(5)})`);
+    } catch {
+      setMapAddress(fallback?.address || `Seshego Zone X (${location.lat.toFixed(5)}, ${location.lng.toFixed(5)})`);
     }
-    new google.maps.Geocoder().geocode({ location }, (results: any, status: string) => {
-      setAddress(status === 'OK' && results?.[0] ? results[0].formatted_address : `${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}`);
-    });
   };
-
-  // Reverse-geocode each pin so its address shows in the text box above the map.
-  useEffect(() => {
-    if (pickupLocation) reverseGeocode(pickupLocation, setPickupAddress);
-    else setPickupAddress('');
-  }, [pickupLocation]);
-
-  useEffect(() => {
-    if (dropoffLocation) reverseGeocode(dropoffLocation, setDropoffAddress);
-    else setDropoffAddress('');
-  }, [dropoffLocation]);
 
   const calculateFare = () => {
     if (!pickupLocation || !dropoffLocation) return;
@@ -160,23 +156,13 @@ export function PassengerDashboard() {
     );
   };
 
-  const handleMapClick = (e: google.maps.MapMouseEvent) => {
-    if (!e.latLng || rideId) return;
-    const point = { lat: e.latLng.lat(), lng: e.latLng.lng() };
-    if (!pickupLocation) setPickupLocation(point);
-    else if (!dropoffLocation) setDropoffLocation(point);
-  };
-
-  const handlePickupDragEnd = (e: google.maps.MapMouseEvent) => {
-    if (!e.latLng) return;
-    setPickupLocation({ lat: e.latLng.lat(), lng: e.latLng.lng() });
-    setPickupPlaceId(null);
-  };
-
-  const handleDropoffDragEnd = (e: google.maps.MapMouseEvent) => {
-    if (!e.latLng) return;
-    setDropoffLocation({ lat: e.latLng.lat(), lng: e.latLng.lng() });
-    setDropoffPlaceId(null);
+  const handleMapIdle = () => {
+    if (rideId || !mapRef.current) return;
+    const center = mapRef.current.getCenter();
+    if (!center) return;
+    const nextLocation = { lat: center.lat(), lng: center.lng() };
+    setMapLocation(nextLocation);
+    void reverseGeocode(nextLocation);
   };
 
   const focusMapOnSelection = (location: { lat: number; lng: number }) => {
@@ -187,28 +173,44 @@ export function PassengerDashboard() {
     map.setZoom(17);
   };
 
-  const onPickupPlaceChanged = () => {
-    const place = pickupAutocompleteRef.current?.getPlace();
+  const onPlaceChanged = () => {
+    const place = autocompleteRef.current?.getPlace();
     const location = place?.geometry?.location;
     if (!location) return;
 
     const nextLocation = { lat: location.lat(), lng: location.lng() };
-    setPickupAddress(place?.formatted_address ?? place?.name ?? '');
-    setPickupLocation(nextLocation);
-    setPickupPlaceId(place.place_id ?? null);
+    const address = place?.formatted_address ?? place?.name ?? '';
+    setMapAddress(address);
+    setSearchText(address);
+    setMapLocation(nextLocation);
+    if (locationStep === 'pickup') setPickupPlaceId(place.place_id ?? null);
+    else setDropoffPlaceId(place.place_id ?? null);
     focusMapOnSelection(nextLocation);
   };
 
-  const onDropoffPlaceChanged = () => {
-    const place = dropoffAutocompleteRef.current?.getPlace();
-    const location = place?.geometry?.location;
-    if (!location) return;
-
-    const nextLocation = { lat: location.lat(), lng: location.lng() };
-    setDropoffAddress(place?.formatted_address ?? place?.name ?? '');
-    setDropoffLocation(nextLocation);
-    setDropoffPlaceId(place.place_id ?? null);
+  const selectLocalPlace = (place: PolokwanePlace) => {
+    const nextLocation = { lat: place.lat, lng: place.lng };
+    setMapAddress(place.address);
+    setSearchText(place.name);
+    setMapLocation(nextLocation);
     focusMapOnSelection(nextLocation);
+  };
+
+  const confirmMapLocation = () => {
+    if (locationStep === 'pickup') {
+      setPickupLocation(mapLocation);
+      setPickupAddress(mapAddress || 'Seshego Zone X');
+      setPickupPlaceId(null);
+      setLocationStep('dropoff');
+      setSearchText('');
+      setMapAddress('');
+    } else {
+      setDropoffLocation(mapLocation);
+      setDropoffAddress(mapAddress || 'Seshego Zone X');
+      setDropoffPlaceId(null);
+      setSearchText('');
+      setMapAddress('');
+    }
   };
 
   const getCurrentPosition = (): Promise<GeolocationPosition> =>
@@ -229,9 +231,10 @@ export function PassengerDashboard() {
     try {
       const position = await getCurrentPosition();
       const location = { lat: position.coords.latitude, lng: position.coords.longitude };
-      setPickupLocation(location);
-      setPickupPlaceId(null);
-      reverseGeocode(location, setPickupAddress);
+      setMapLocation(location);
+      setMapAddress('Current location');
+      setSearchText('Current location');
+      focusMapOnSelection(location);
     } catch (err) {
       console.error(err);
       setMessage(
@@ -247,6 +250,11 @@ export function PassengerDashboard() {
   const resetPins = () => {
     setPickupLocation(null);
     setDropoffLocation(null);
+    setPickupAddress('');
+    setDropoffAddress('');
+    setLocationStep('pickup');
+    setMapAddress('');
+    setSearchText('');
   };
 
   const requestRide = async () => {
@@ -258,8 +266,8 @@ export function PassengerDashboard() {
     setMessage('');
     try {
       const rideRef = await addDoc(collection(db, 'rides'), {
-        pickup: pickupAddress || 'Polokwane Airport',
-        dropoff: dropoffAddress || '27 Zune St, Magna Via, 0700, South Africa',
+        pickup: { address: pickupAddress || 'Seshego Zone X', lat: pickupLocation.lat, lng: pickupLocation.lng, source: 'manual_pin' },
+        dropoff: { address: dropoffAddress || 'Seshego Zone X', lat: dropoffLocation.lat, lng: dropoffLocation.lng, source: 'manual_pin' },
         pickupLatLng: { lat: pickupLocation.lat, lng: pickupLocation.lng },
         dropoffLatLng: { lat: dropoffLocation.lat, lng: dropoffLocation.lng },
         distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
@@ -365,18 +373,6 @@ export function PassengerDashboard() {
         }
       : DEFAULT_CENTER;
 
-  // Center the pin-drop map over the pins the passenger has placed so far.
-  const pinPoints = [pickupLocation, dropoffLocation].filter(
-    (point): point is { lat: number; lng: number } => point != null
-  );
-  const pinMapCenter =
-    pinPoints.length > 0
-      ? {
-          lat: pinPoints.reduce((sum, p) => sum + p.lat, 0) / pinPoints.length,
-          lng: pinPoints.reduce((sum, p) => sum + p.lng, 0) / pinPoints.length,
-        }
-      : DEFAULT_CENTER;
-
   const getPolokwaneAutocompleteOptions = (): google.maps.places.AutocompleteOptions | undefined => {
     const google = (window as any).google;
     if (!google?.maps?.LatLngBounds) return undefined;
@@ -389,10 +385,11 @@ export function PassengerDashboard() {
     return {
       componentRestrictions: { country: 'za' },
       bounds: polokwaneBounds,
-      strictBounds: true,
-      types: ['address'],
+      strictBounds: false,
+      types: ['establishment', 'geocode'],
       fields: ['geometry', 'formatted_address', 'place_id', 'name'],
-    };
+      locationBias: { lat: DEFAULT_CENTER.lat, lng: DEFAULT_CENTER.lng, radius: 50000 },
+    } as google.maps.places.AutocompleteOptions;
   };
 
   const mapsError = !hasGoogleMapsApiKey
@@ -444,70 +441,15 @@ export function PassengerDashboard() {
             </>
           )}
 
-          {!rideId && (
-            <div className="mb-3 space-y-2">
-              <button
-                onClick={() => void useCurrentLocation()}
-                disabled={locating}
-                className="w-full rounded-lg border border-blue-500 py-2 px-3 text-sm font-bold text-blue-600 disabled:opacity-60 hover:bg-blue-50"
-              >
-                {locating ? 'Locating...' : 'Use my current location'}
-              </button>
-              {mapsAvailable ? (
-                <Autocomplete
-                  options={getPolokwaneAutocompleteOptions()}
-                  onLoad={(autocomplete) => (pickupAutocompleteRef.current = autocomplete)}
-                  onPlaceChanged={onPickupPlaceChanged}
-                >
-                  <input
-                    value={pickupAddress}
-                    onChange={(e) => setPickupAddress(e.target.value)}
-                    placeholder="Pickup location"
-                    className="w-full rounded-lg border border-blue-200 bg-blue-50 py-2 px-3 text-sm text-gray-700"
-                  />
-                </Autocomplete>
-              ) : (
-                <input
-                  readOnly
-                  value={pickupAddress}
-                  placeholder="Pickup location"
-                  className="w-full rounded-lg border border-blue-200 bg-blue-50 py-2 px-3 text-sm text-gray-700"
-                />
-              )}
-              {mapsAvailable ? (
-                <Autocomplete
-                  options={getPolokwaneAutocompleteOptions()}
-                  onLoad={(autocomplete) => (dropoffAutocompleteRef.current = autocomplete)}
-                  onPlaceChanged={onDropoffPlaceChanged}
-                >
-                  <input
-                    value={dropoffAddress}
-                    onChange={(e) => setDropoffAddress(e.target.value)}
-                    placeholder="Dropoff location"
-                    className="w-full rounded-lg border border-red-200 bg-red-50 py-2 px-3 text-sm text-gray-700"
-                  />
-                </Autocomplete>
-              ) : (
-                <input
-                  readOnly
-                  value={dropoffAddress}
-                  placeholder="Dropoff location"
-                  className="w-full rounded-lg border border-red-200 bg-red-50 py-2 px-3 text-sm text-gray-700"
-                />
-              )}
-              <p className="text-xs text-gray-500">You can type OR tap map to set locations</p>
-            </div>
-          )}
-
           {mapsAvailable ? (
             <GoogleMap
-              mapContainerStyle={{ width: '100%', height: MAP_HEIGHT }}
-              center={isActiveTrip ? liveMapCenter : pinMapCenter}
+              mapContainerClassName="h-[70vh] w-full"
+              center={isActiveTrip ? liveMapCenter : mapLocation}
               zoom={14}
               onLoad={(map) => {
                 mapRef.current = map;
               }}
-              onClick={rideId ? undefined : handleMapClick}
+              onIdle={isActiveTrip || rideId ? undefined : handleMapIdle}
             >
               {isActiveTrip ? (
                 <>
@@ -533,28 +475,7 @@ export function PassengerDashboard() {
                     />
                   )}
                 </>
-              ) : (
-                <>
-                  {pickupLocation && (
-                    <Marker
-                      position={pickupLocation}
-                      label="A"
-                      draggable
-                      onDragEnd={handlePickupDragEnd}
-                      icon="http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-                    />
-                  )}
-                  {dropoffLocation && (
-                    <Marker
-                      position={dropoffLocation}
-                      label="B"
-                      draggable
-                      onDragEnd={handleDropoffDragEnd}
-                      icon="http://maps.google.com/mapfiles/ms/icons/red-dot.png"
-                    />
-                  )}
-                </>
-              )}
+              ) : null}
             </GoogleMap>
           ) : (
             <div
@@ -566,6 +487,87 @@ export function PassengerDashboard() {
                 : 'Loading map...'}
             </div>
           )}
+
+            {!rideId && !isActiveTrip && (
+              <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full text-3xl">
+                📍
+              </div>
+            )}
+
+            {!rideId && !isActiveTrip && (
+              <div className="relative z-20 -mt-28 px-3 pb-3">
+                <div className="pointer-events-auto rounded-2xl bg-white p-3 shadow-xl">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    {locationStep === 'pickup' ? 'Set pickup location' : 'Set destination'}
+                  </p>
+                  {mapsAvailable ? (
+                    <Autocomplete
+                      options={getPolokwaneAutocompleteOptions()}
+                      onLoad={(autocomplete) => (autocompleteRef.current = autocomplete)}
+                      onPlaceChanged={onPlaceChanged}
+                    >
+                      <input
+                        value={searchText}
+                        onChange={(event) => setSearchText(event.target.value)}
+                        placeholder={locationStep === 'pickup' ? 'Where are you?' : 'Where to?'}
+                        className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
+                      />
+                    </Autocomplete>
+                  ) : (
+                    <input
+                      value={searchText}
+                      onChange={(event) => setSearchText(event.target.value)}
+                      placeholder="Set location on map"
+                      className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800"
+                    />
+                  )}
+                  {locationStep === 'pickup' && (
+                    <button
+                      type="button"
+                      onClick={() => void useCurrentLocation()}
+                      disabled={locating}
+                      className="mt-2 w-full rounded-xl border border-gray-200 py-2 text-sm font-semibold text-gray-700 disabled:opacity-60"
+                    >
+                      {locating ? 'Locating...' : 'Use my current location'}
+                    </button>
+                  )}
+                  {searchText && searchPolokwanePlaces(searchText).length > 0 && (
+                    <div className="mt-2 max-h-32 overflow-y-auto border-t border-gray-100 pt-1">
+                      {searchPolokwanePlaces(searchText).map((place) => (
+                        <button
+                          key={place.name}
+                          type="button"
+                          onClick={() => selectLocalPlace(place)}
+                          className="block w-full px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
+                        >
+                          {place.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {mapAddress && (
+                    <div className="mt-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
+                      <p><span className="font-semibold">{locationStep === 'pickup' ? 'Pickup' : 'Destination'}:</span> {mapAddress}</p>
+                      <button
+                        type="button"
+                        onClick={confirmMapLocation}
+                        className="mt-3 w-full rounded-xl bg-orange-500 py-3 font-bold text-white hover:bg-orange-600"
+                      >
+                        Confirm {locationStep === 'pickup' ? 'Pickup' : 'Destination'}
+                      </button>
+                    </div>
+                  )}
+                  {!mapAddress && searchText && (
+                    <button type="button" onClick={() => setMapAddress(searchText)} className="mt-2 w-full rounded-xl bg-gray-100 py-2 text-sm font-semibold text-gray-700">
+                      Set location on map
+                    </button>
+                  )}
+                  {locationStep === 'dropoff' && pickupAddress && (
+                    <p className="mt-2 text-xs text-gray-500">Pickup: {pickupAddress}</p>
+                  )}
+                </div>
+              </div>
+            )}
 
           {!rideId && (pickupLocation || dropoffLocation) && (
             <button onClick={resetPins} className="mt-2 text-sm text-gray-500 underline">
