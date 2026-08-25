@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { collection, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
 import { LogOutIcon, SearchIcon } from '../../components/Icons';
+import { Logo } from '../../components/Logo';
 
 type Location = { address?: string; name?: string; lat?: number; lng?: number };
 
@@ -152,7 +153,7 @@ export function AdminDashboard() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       <header className="flex items-center justify-between border-b border-gray-800 bg-gray-900 px-4 py-4 sm:px-6">
-        <h1 className="text-xl font-bold text-orange-500 sm:text-2xl">BuddyRide1 - Admin HQ</h1>
+        <Logo size={48} />
         <button onClick={() => void logout()} className="flex items-center gap-2 text-gray-400 hover:text-white">
           <LogOutIcon size={20} /> Logout
         </button>

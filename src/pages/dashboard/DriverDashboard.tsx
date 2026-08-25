@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
 import { LogOutIcon } from '../../components/Icons';
+import { Logo } from '../../components/Logo';
 
 type Location = { placeId?: string; address?: string; name?: string; lat?: number; lng?: number };
 
@@ -111,7 +112,7 @@ export function DriverDashboard() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b border-gray-200 px-4 py-4 flex justify-between items-center">
-        <h1 className="text-xl sm:text-2xl font-bold text-orange-500">BuddyRide1 - Driver</h1>
+        <Logo size={48} />
         <button onClick={() => void logout()} className="flex items-center gap-2 text-gray-600 hover:text-gray-900">
           <LogOutIcon size={20} /> Logout
         </button>
