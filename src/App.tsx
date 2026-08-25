@@ -7,6 +7,7 @@ import { DriverDashboard } from './pages/dashboard/DriverDashboard';
 import { AdminDashboard } from './pages/dashboard/AdminDashboard';
 import { RideStatus } from './pages/RideStatus';
 import { LoadingScreen } from './components/LoadingScreen';
+import { SplashScreen } from './components/SplashScreen';
 import type { AppRole } from './types';
 
 export type { AppRole };
@@ -50,16 +51,19 @@ function LoginRouter() {
 
 export default function App() {
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <Routes>
-        <Route path="/" element={<HomeOrRedirect />} />
-        <Route path="/login" element={<LoginRouter />} />
-        <Route path="/dashboard/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
-        <Route path="/dashboard/driver" element={<RequireRole role="driver"><DriverDashboard /></RequireRole>} />
-        <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
-        <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <>
+      <SplashScreen />
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Routes>
+          <Route path="/" element={<HomeOrRedirect />} />
+          <Route path="/login" element={<LoginRouter />} />
+          <Route path="/dashboard/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
+          <Route path="/dashboard/driver" element={<RequireRole role="driver"><DriverDashboard /></RequireRole>} />
+          <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
+          <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </>
   );
 }
