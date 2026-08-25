@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { LangSelector } from '../components/LangSelector';
+import { Logo } from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
 import { t } from '../lib/i18n';
 import type { AppRole } from '../types';
@@ -16,7 +17,7 @@ export function RoleSelect() {
 
   return (
     <div className="role-screen">
-      <div className="role-logo">BR</div>
+      <Logo variant="full" size={72} />
       <h1 className="role-title">BuddyRide1 - Limpopo eHailing</h1>
       <p className="role-subtitle">{t('tagline', lang)}</p>
 
