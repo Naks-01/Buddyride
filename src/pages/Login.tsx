@@ -77,6 +77,7 @@ export default function Login() {
       }, { merge: true });
       await refreshProfile();
 
+      if (role === 'admin') localStorage.setItem('adminLoggedIn', 'true');
       navigate(`/dashboard/${role}`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid code. Try again.');

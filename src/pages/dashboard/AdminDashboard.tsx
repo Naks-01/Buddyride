@@ -3,6 +3,7 @@ import { collection, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firesto
 import { auth, db } from '../../lib/firebase';
 import { LogOutIcon, SearchIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
+import { AdminApiDashboard } from './AdminApiDashboard';
 
 type Location = { address?: string; name?: string; lat?: number; lng?: number };
 
@@ -49,6 +50,10 @@ function formatLocation(loc?: string | Location) {
 }
 
 export function AdminDashboard() {
+  return <AdminApiDashboard />;
+}
+
+export function LegacyAdminDashboard() {
   const [tab, setTab] = useState<'rides' | 'drivers' | 'pricing' | 'users'>('rides');
   const [rides, setRides] = useState<Ride[]>([]);
   const [users, setUsers] = useState<UserDoc[]>([]);

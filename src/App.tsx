@@ -30,7 +30,7 @@ function RequireRole({ role, children }: { role: AppRole; children: React.ReactN
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { profile, loading } = useAuth();
   if (loading) return <LoadingScreen />;
-  if (!profile) return <Navigate to="/" replace />;
+  if (!profile || localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/" replace />;
   if (profile.role !== 'admin' || profile.email !== ADMIN_EMAIL) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
@@ -53,7 +53,7 @@ export default function App() {
   return (
     <>
       <SplashScreen />
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <BrowserRouter basename="/" future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/" element={<HomeOrRedirect />} />
           <Route path="/login" element={<LoginRouter />} />
