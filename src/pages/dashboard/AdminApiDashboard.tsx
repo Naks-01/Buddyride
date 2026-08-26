@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
-const API = 'http://' + window.location.hostname + ':5000';
+const API = import.meta.env.VITE_API_URL || 'http://' + window.location.hostname + ':5000';
 
 type Ride = {
   _id?: string;
@@ -99,7 +99,7 @@ export function AdminApiDashboard() {
             <p className={connected ? 'text-green-400' : 'text-red-400'}>
               {connected ? '✅ Connected' : '❌ Failed'}
             </p>
-            <button type="button" onClick={() => void logout()} className="rounded bg-gray-700 px-3 py-2 text-sm font-semibold hover:bg-gray-600">
+            <button type="button" onClick={() => void logout()} className="rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700">
               Logout
             </button>
           </div>

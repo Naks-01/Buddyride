@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { RoleSelect } from './pages/RoleSelect';
-import Login from './pages/Login';
+import RolePasswordLogin from './pages/RolePasswordLogin';
 import { PassengerDashboard } from './pages/dashboard/PassengerDashboard';
 import { DriverDashboard } from './pages/dashboard/DriverDashboard';
 import { AdminDashboard } from './pages/dashboard/AdminDashboard';
@@ -12,9 +12,6 @@ import type { AppRole } from './types';
 
 export type { AppRole };
 
-// Only this email may access the Admin HQ dashboard, even if the user's role is 'admin'.
-const ADMIN_EMAIL = 'mokgalaka.nt@gmail.com';
-
 function dashboardPath(role: AppRole): string {
   return `/dashboard/${role}`;
 }
@@ -22,31 +19,29 @@ function dashboardPath(role: AppRole): string {
 function RequireRole({ role, children }: { role: AppRole; children: React.ReactNode }) {
   const { profile, loading } = useAuth();
   if (loading) return <LoadingScreen />;
-  if (!profile) return <Navigate to="/" replace />;
-  if (profile.role !== role) return <Navigate to={dashboardPath(profile.role)} replace />;
+  if (localStorage.getItem(`${role}LoggedIn`) !== 'true') return <Navigate to={`/login?role=${role}`} replace />;
+  if (profile && profile.role !== role) return <Navigate to={`/login?role=${role}`} replace />;
   return <>{children}</>;
 }
 
 function RequireAdmin({ children }: { children: React.ReactNode }) {
-  const { profile, loading } = useAuth();
+  const { loading } = useAuth();
   if (loading) return <LoadingScreen />;
-  if (!profile || localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/" replace />;
-  if (profile.role !== 'admin' || profile.email !== ADMIN_EMAIL) return <Navigate to="/" replace />;
+  if (localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
 function HomeOrRedirect() {
   const { profile, loading } = useAuth();
   if (loading) return <LoadingScreen />;
+  const savedRole = (['passenger', 'driver', 'admin'] as AppRole[]).find((role) => localStorage.getItem(`${role}LoggedIn`) === 'true');
+  if (savedRole) return <Navigate to={dashboardPath(savedRole)} replace />;
   if (profile) return <Navigate to={dashboardPath(profile.role)} replace />;
   return <RoleSelect />;
 }
 
 function LoginRouter() {
-  const { profile, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (profile) return <Navigate to={dashboardPath(profile.role)} replace />;
-  return <Login />;
+  return <RolePasswordLogin />;
 }
 
 export default function App() {

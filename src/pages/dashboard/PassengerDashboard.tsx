@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Autocomplete, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { addDoc, collection, doc, onSnapshot, serverTimestamp, type DocumentData } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { CarIcon, LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
@@ -32,7 +33,8 @@ function GoogleMapsBillingHelp() {
 }
 
 export function PassengerDashboard() {
-  const { profile } = useAuth();
+  const { profile, signOut } = useAuth();
+  const navigate = useNavigate();
   const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
   const hasGoogleMapsApiKey = googleMapsApiKey.length > 0;
   const { isLoaded, loadError } = useJsApiLoader({
@@ -397,13 +399,13 @@ export function PassengerDashboard() {
     : googleMapsError ?? (loadError ? loadError.message : null);
   const mapsAvailable = hasGoogleMapsApiKey && isLoaded && !mapsError;
 
-  const logout = async () => { await auth.signOut(); window.location.href = '/'; };
+  const logout = async () => { await signOut(); localStorage.clear(); navigate('/login?role=passenger'); };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b border-gray-200 px-4 py-4 flex justify-between items-center">
         <Logo size={48} />
-        <button onClick={() => void logout()} className="flex items-center gap-2 text-gray-600 hover:text-gray-900">
+        <button onClick={() => void logout()} className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-white hover:bg-red-700">
           <LogOutIcon size={20} /> Logout
         </button>
       </header>
