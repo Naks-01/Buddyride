@@ -160,7 +160,7 @@ export function DriverDashboard() {
   const logout = async () => {
     await signOut();
     localStorage.clear();
-    navigate('/login?role=driver');
+    navigate('/');
   };
 
   return (

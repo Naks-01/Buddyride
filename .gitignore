@@ -5,3 +5,5 @@ dist/
 !.env.example
 .vercel
 vite.config.ts.timestamp-*.mjs
+
+vite-dev.log

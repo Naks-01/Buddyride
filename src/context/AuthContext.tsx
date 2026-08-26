@@ -62,9 +62,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    const userProfile = await ensureProfile(user.uid, user.phoneNumber);
-    setProfile(userProfile);
-    setLoading(false);
+    try {
+      const userProfile = await ensureProfile(user.uid, user.phoneNumber);
+      setProfile(userProfile);
+    } catch (err) {
+      console.error('Failed to load profile:', err);
+      setProfile(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const refreshProfile = async () => {
@@ -72,10 +78,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, () => {
-      void loadProfile();
-    });
-    return () => unsubscribe();
+    // Safety net: never let the app hang on the splash/loading screen if
+    // Firebase auth is slow or fails to respond.
+    const safetyTimer = setTimeout(() => setLoading(false), 2000);
+
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      () => {
+        clearTimeout(safetyTimer);
+        void loadProfile();
+      },
+      (err) => {
+        console.error('Auth state error:', err);
+        clearTimeout(safetyTimer);
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      clearTimeout(safetyTimer);
+      unsubscribe();
+    };
   }, []);
 
   const signOut = async () => {

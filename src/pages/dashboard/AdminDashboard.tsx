@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { collection, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
 import { LogOutIcon, SearchIcon } from '../../components/Icons';
@@ -54,6 +55,7 @@ export function AdminDashboard() {
 }
 
 export function LegacyAdminDashboard() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<'rides' | 'drivers' | 'pricing' | 'users'>('rides');
   const [rides, setRides] = useState<Ride[]>([]);
   const [users, setUsers] = useState<UserDoc[]>([]);
@@ -152,7 +154,8 @@ export function LegacyAdminDashboard() {
 
   const logout = async () => {
     await auth.signOut();
-    window.location.href = '/';
+    localStorage.clear();
+    navigate('/');
   };
 
   return (

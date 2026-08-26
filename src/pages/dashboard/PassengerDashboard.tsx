@@ -399,7 +399,7 @@ export function PassengerDashboard() {
     : googleMapsError ?? (loadError ? loadError.message : null);
   const mapsAvailable = hasGoogleMapsApiKey && isLoaded && !mapsError;
 
-  const logout = async () => { await signOut(); localStorage.clear(); navigate('/login?role=passenger'); };
+  const logout = async () => { await signOut(); localStorage.clear(); navigate('/'); };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
