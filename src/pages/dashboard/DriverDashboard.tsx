@@ -52,6 +52,7 @@ export function DriverDashboard() {
   const navigate = useNavigate();
   const user = auth.currentUser;
   const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
+  const [drivers, setDrivers] = useState<Record<string, unknown>[] | null>(null);
   const [rides, setRides] = useState<RideRequest[]>([]);
   const [acceptedRide, setAcceptedRide] = useState<RideRequest | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
@@ -66,7 +67,9 @@ export function DriverDashboard() {
         const driverRef = doc(db, 'drivers', user.uid);
         const existing = await getDoc(driverRef);
         if (existing.exists()) {
-          setDriverProfile(existing.data());
+          const profile = existing.data();
+          setDriverProfile(profile);
+          setDrivers([profile]);
           return;
         }
 
@@ -78,6 +81,7 @@ export function DriverDashboard() {
         };
         await setDoc(driverRef, newDriver);
         setDriverProfile(newDriver);
+        setDrivers([newDriver]);
       } catch (err) {
         console.error('Failed to load driver profile:', err);
         setError('Failed to load driver profile.');
@@ -88,6 +92,9 @@ export function DriverDashboard() {
   }, [authLoading, user]);
 
   useEffect(() => {
+    if (authLoading || !user) return;
+
+    try {
     const requestedQuery = query(collection(db, 'rides'), where('status', '==', 'searching'));
     const unsubscribe = onSnapshot(
       requestedQuery,
@@ -102,7 +109,12 @@ export function DriverDashboard() {
       },
     );
     return () => unsubscribe();
-  }, []);
+    } catch (err) {
+      console.error('Failed to subscribe to ride requests:', err);
+      setError('Failed to load ride requests.');
+      return undefined;
+    }
+  }, [authLoading, user]);
 
   const acceptRide = async (ride: RideRequest) => {
     const uid = auth.currentUser?.uid;
@@ -130,11 +142,24 @@ export function DriverDashboard() {
   // Keep the accepted ride's status in sync as the passenger and driver progress through the ride.
   useEffect(() => {
     if (!acceptedRide) return;
-    const unsubscribe = onSnapshot(doc(db, 'rides', acceptedRide.id), (snapshot) => {
-      const data = snapshot.data() as Record<string, unknown> | undefined;
-      if (!data) return;
-      setAcceptedRide((prev) => (prev ? { ...prev, ...(data as Record<string, unknown>) } : prev));
-    });
+    let unsubscribe: () => void = () => {};
+    try {
+      unsubscribe = onSnapshot(
+        doc(db, 'rides', acceptedRide.id),
+        (snapshot) => {
+          const data = snapshot.data() as Record<string, unknown> | undefined;
+          if (!data) return;
+          setAcceptedRide((prev) => (prev ? { ...prev, ...data } : prev));
+        },
+        (err) => {
+          console.error('Failed to load accepted ride:', err);
+          setError('Failed to load accepted ride details.');
+        },
+      );
+    } catch (err) {
+      console.error('Failed to subscribe to accepted ride:', err);
+      setError('Failed to load accepted ride details.');
+    }
     return () => unsubscribe();
   }, [acceptedRide?.id]);
 
@@ -258,12 +283,16 @@ export function DriverDashboard() {
     return <div className="min-h-screen bg-black p-8 text-white">Loading...</div>;
   }
 
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
   if (!user) {
     navigate('/login?role=driver', { replace: true });
     return null;
   }
 
-  if (!driverProfile && !error) {
+  if (!drivers && !error) {
     return <div className="min-h-screen bg-black p-8 text-white">Loading...</div>;
   }
 

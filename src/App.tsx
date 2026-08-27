@@ -35,6 +35,7 @@ function dashboardPath(role: AppRole): string {
 
 function RequireRole({ role, children }: { role: AppRole; children: React.ReactNode }) {
   const { profile, loading } = useAuth();
+  if (typeof window === 'undefined') return null;
   if (loading) return <LoadingScreen />;
   if (localStorage.getItem(`${role}LoggedIn`) !== 'true') return <Navigate to={`/login?role=${role}`} replace />;
   if (profile && profile.role !== role) return <Navigate to={`/login?role=${role}`} replace />;
@@ -43,6 +44,7 @@ function RequireRole({ role, children }: { role: AppRole; children: React.ReactN
 
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { loading } = useAuth();
+  if (typeof window === 'undefined') return null;
   if (loading) return <LoadingScreen />;
   if (localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/" replace />;
   return <>{children}</>;
@@ -50,6 +52,7 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
 
 function HomeOrRedirect() {
   const { profile, loading } = useAuth();
+  if (typeof window === 'undefined') return null;
   if (loading) return <LoadingScreen />;
   const savedRole = (['passenger', 'driver', 'admin'] as AppRole[]).find((role) => localStorage.getItem(`${role}LoggedIn`) === 'true');
   if (savedRole) return <Navigate to={dashboardPath(savedRole)} replace />;
