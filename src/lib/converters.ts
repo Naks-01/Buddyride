@@ -17,6 +17,12 @@ export function toProfile(uid: string, data: Record<string, unknown>): Profile {
     vehicle_plate: (data.vehicle_plate as string) ?? null,
     vehicle_model: (data.vehicle_model as string) ?? null,
     created_at: tsToIso(data.createdAt),
+    idNumberVerified: Boolean(data.idNumberVerified),
+    idNumberLast4: (data.idNumberLast4 as string) ?? null,
+    idNumberHash: (data.idNumberHash as string) ?? null,
+    selfieUrl: (data.selfieUrl as string) ?? null,
+    verificationStatus: (data.verificationStatus as Profile['verificationStatus']) || 'unverified',
+    verifiedAt: data.verifiedAt ? tsToIso(data.verifiedAt) : null,
   };
 }
 

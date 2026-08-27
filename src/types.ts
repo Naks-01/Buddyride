@@ -19,6 +19,8 @@ export type DocType = 'id' | 'license' | 'prdp' | 'vehicle_papers';
 
 export type DocStatus = 'pending' | 'approved' | 'rejected';
 
+export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'failed';
+
 export interface Profile {
   id: string;
   phone: string | null;
@@ -29,6 +31,13 @@ export interface Profile {
   vehicle_plate: string | null;
   vehicle_model: string | null;
   created_at: string;
+  // NLTA passenger ID verification
+  idNumberVerified: boolean;
+  idNumberLast4: string | null;
+  idNumberHash: string | null;
+  selfieUrl: string | null;
+  verificationStatus: VerificationStatus;
+  verifiedAt: string | null;
 }
 
 export interface DriverDocument {
