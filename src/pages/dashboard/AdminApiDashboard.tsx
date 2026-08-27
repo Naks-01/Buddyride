@@ -17,6 +17,8 @@ type Ride = {
   status?: string;
   price?: number;
   fare?: number;
+  cancellationFee?: number;
+  cancellationPlatformCut?: number;
   createdAt?: string;
   created_at?: string;
 };
@@ -122,6 +124,7 @@ export function AdminApiDashboard() {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Price</th>
                 <th className="px-4 py-3">Platform</th>
+                <th className="px-4 py-3">Cancellation earnings</th>
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Action</th>
               </tr>
@@ -137,6 +140,7 @@ export function AdminApiDashboard() {
                     <td className="px-4 py-3 capitalize">{ride.status || '-'}</td>
                     <td className="px-4 py-3">R{Number(ride.price ?? ride.fare ?? 0).toFixed(2)}</td>
                     <td className="px-4 py-3">Platform: R{((Math.max(Number(ride.price ?? ride.fare ?? 0) - BOOKING_FEE, 0) * COMMISSION_RATE) + BOOKING_FEE).toFixed(2)}</td>
+                    <td className="px-4 py-3">R{Number(ride.cancellationPlatformCut ?? 0).toFixed(2)}</td>
                     <td className="px-4 py-3">{rideDate(ride)}</td>
                     <td className="px-4 py-3">
                       <button
@@ -153,7 +157,7 @@ export function AdminApiDashboard() {
               })}
               {rides.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">No rides found.</td>
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-400">No rides found.</td>
                 </tr>
               )}
             </tbody>

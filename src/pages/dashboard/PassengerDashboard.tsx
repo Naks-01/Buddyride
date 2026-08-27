@@ -10,6 +10,7 @@ import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane';
 import { calculateRidePricing } from '../../lib/pricing';
 import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE } from '../../config/pricing';
+import { calcDistance } from '../../lib/maps';
 
 const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
@@ -50,6 +51,7 @@ export function PassengerDashboard() {
   const [message, setMessage] = useState('');
   const [rideId, setRideId] = useState<string | null>(null);
   const [rideCreatedAt, setRideCreatedAt] = useState<number | null>(null);
+  const [cancelSecondsRemaining, setCancelSecondsRemaining] = useState(120);
   const [pickupAddress, setPickupAddress] = useState('');
   const [pickupLocation, setPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [pickupPlaceId, setPickupPlaceId] = useState<string | null>(null);
@@ -272,6 +274,7 @@ export function PassengerDashboard() {
 
       setRideId(rideRef.id);
       setRideCreatedAt(Date.now());
+      setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
       setRideStatus('searching');
       setDriverLocation(null);
       setTripPickupLocation({ lat: pickupLocation.lat, lng: pickupLocation.lng });
@@ -352,14 +355,27 @@ export function PassengerDashboard() {
 
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
+  useEffect(() => {
+    if (!isActiveTrip || rideCreatedAt == null) return;
+    const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(timer);
+  }, [isActiveTrip, rideCreatedAt]);
+
   const cancelRide = async () => {
     if (!rideId || !isActiveTrip) return;
-    const elapsedSec = rideCreatedAt == null ? CANCELLATION.FREE_WINDOW_SEC : (Date.now() - rideCreatedAt) / 1000;
+    const elapsedSec = rideCreatedAt == null ? CANCELLATION.FREE_CANCEL_SEC : (Date.now() - rideCreatedAt) / 1000;
     const arrived = rideStatus === 'driver_arrived' || rideStatus === 'arrived_at_pickup';
+    const driverDistanceKm = driverLocation && tripPickupLocation
+      ? calcDistance(driverLocation.lat, driverLocation.lng, tripPickupLocation.lat, tripPickupLocation.lng)
+      : null;
+    const driverIsDriving = Boolean(driverName || driverPhone);
+    const driverIsCloseEnough = driverDistanceKm != null && driverDistanceKm <= 1;
     const cancellationFee = arrived
       ? CANCELLATION.NO_SHOW_FEE
-      : elapsedSec > CANCELLATION.FREE_WINDOW_SEC
-        ? CANCELLATION.LATE_FEE
+      : elapsedSec >= CANCELLATION.FREE_CANCEL_SEC && driverIsDriving && driverIsCloseEnough
+        ? CANCELLATION.LATE_CANCEL_FEE
         : 0;
     try {
       await updateDoc(doc(db, 'rides', rideId), {
@@ -367,12 +383,15 @@ export function PassengerDashboard() {
         cancellationFee,
         cancellationPlatformCut: cancellationFee * COMMISSION_RATE,
         cancellationDriverPayout: cancellationFee * DRIVER_RATE,
+        paymentMethod: 'cash',
+        cancellationBalanceDue: cancellationFee,
         cancelledAt: serverTimestamp(),
       });
       setMessage(cancellationFee ? `Ride cancelled. Fee: R${cancellationFee.toFixed(2)}` : 'Ride cancelled for free.');
       setRideId(null);
       setRideStatus(null);
       setRideCreatedAt(null);
+      setCancelSecondsRemaining(0);
     } catch (err) {
       console.error(err);
       setMessage('Unable to cancel ride. Please try again.');
@@ -461,7 +480,9 @@ export function PassengerDashboard() {
                 onClick={() => void cancelRide()}
                 className="mt-2 w-full rounded-lg border border-red-500 py-2 font-semibold text-red-600 hover:bg-red-50"
               >
-                Cancel Ride
+                {cancelSecondsRemaining > 0
+                  ? `Cancel within ${Math.floor(cancelSecondsRemaining / 60)}:${String(cancelSecondsRemaining % 60).padStart(2, '0')} for free, after R${CANCELLATION.LATE_CANCEL_FEE}`
+                  : `Cancel Ride - R${CANCELLATION.LATE_CANCEL_FEE} fee`}
               </button>
             </>
           )}

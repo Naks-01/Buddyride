@@ -6,6 +6,8 @@ import { useAuth } from '../../context/AuthContext';
 import { LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
+import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
+import { calcDistance } from '../../lib/maps';
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
 
@@ -24,9 +26,17 @@ type RideRequest = {
   driverPhone?: string | null;
   passengerPhone?: string | null;
   createdAt?: unknown;
+  arrivedAt?: unknown;
 };
 
 type Coordinates = { lat: number; lng: number };
+
+function toMillis(value: unknown): number | null {
+  if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') {
+    return value.toMillis();
+  }
+  return typeof value === 'number' ? value : null;
+}
 
 function getLocationCoordinates(location?: string | Location, fallback?: Coordinates): Coordinates | null {
   if (location && typeof location !== 'string' && typeof location.lat === 'number' && typeof location.lng === 'number') {
@@ -45,6 +55,7 @@ export function DriverDashboard() {
   const [acceptedRide, setAcceptedRide] = useState<RideRequest | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
 
   useEffect(() => {
     if (authLoading || !user) return;
@@ -140,7 +151,54 @@ export function DriverDashboard() {
     }
   };
 
-  const markArrived = (ride: RideRequest) => void updateRideStatus(ride.id, 'arrived_at_pickup', { arrivedAt: serverTimestamp() });
+  const markArrivedAtPickup = async (ride: RideRequest) => {
+    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
+    const location = await getDriverLocation();
+    if (!pickup || !location) {
+      setError('GPS location is required to mark arrival.');
+      return;
+    }
+    const distanceKm = calcDistance(location.lat, location.lng, pickup.lat, pickup.lng);
+    if (distanceKm > 0.05) {
+      setError('You must be within 50m of the pickup location.');
+      return;
+    }
+    await updateRideStatus(ride.id, 'arrived_at_pickup', {
+      arrivedAt: serverTimestamp(),
+      driverLocation: location,
+      arrivalDistanceM: distanceKm * 1000,
+    });
+  };
+  const driverCancelRide = async (ride: RideRequest) => {
+    const arrivedAt = toMillis(ride.arrivedAt);
+    const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
+    if (waitedLongEnough) {
+      await updateRideStatus(ride.id, 'cancelled', {
+        cancellationFee: CANCELLATION.NO_SHOW_FEE,
+        cancellationPlatformCut: CANCELLATION.NO_SHOW_FEE * COMMISSION_RATE,
+        cancellationDriverPayout: CANCELLATION.NO_SHOW_FEE * DRIVER_RATE,
+        cancellationReason: 'passenger_no_show',
+        cancelledAt: serverTimestamp(),
+      });
+    } else {
+      await updateRideStatus(ride.id, 'cancelled', { cancellationFee: 0, cancellationReason: 'driver_cancelled', driverPenalty: true, cancelledAt: serverTimestamp() });
+    }
+    setAcceptedRide(null);
+  };
+
+  useEffect(() => {
+    if (acceptedRide?.status !== 'arrived_at_pickup') {
+      setWaitSecondsRemaining(0);
+      return;
+    }
+    const updateWait = () => {
+      const arrivedAt = toMillis(acceptedRide.arrivedAt);
+      setWaitSecondsRemaining(Math.max(0, (arrivedAt == null ? CANCELLATION.DRIVER_WAIT_MIN * 60 : Math.ceil((arrivedAt + CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000 - Date.now()) / 1000))));
+    };
+    updateWait();
+    const timer = window.setInterval(updateWait, 1000);
+    return () => window.clearInterval(timer);
+  }, [acceptedRide?.status, acceptedRide?.arrivedAt]);
   const startTrip = async (ride: RideRequest) => {
     await updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp() });
     await navigateToDestination(ride);
@@ -244,20 +302,47 @@ export function DriverDashboard() {
             </button>
             {acceptedRide.status === 'accepted' && (
               <button
-                onClick={() => markArrived(acceptedRide)}
+                onClick={() => void markArrivedAtPickup(acceptedRide)}
                 disabled={updatingStatus}
                 className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
               >
-                I've Arrived
+                I've Arrived (GPS)
               </button>
             )}
             {acceptedRide.status === 'arrived_at_pickup' && (
+              <>
+                <p className="mt-2 text-center text-sm font-semibold text-orange-700">
+                  {waitSecondsRemaining > 0
+                    ? `Wait ${Math.floor(waitSecondsRemaining / 60)}:${String(waitSecondsRemaining % 60).padStart(2, '0')} before marking no-show`
+                    : 'Passenger no-show is available'}
+                </p>
+                {waitSecondsRemaining === 0 ? (
+                  <button
+                    onClick={() => void driverCancelRide(acceptedRide)}
+                    disabled={updatingStatus}
+                    className="mt-2 w-full rounded-lg bg-red-600 py-3 font-bold text-white disabled:opacity-60"
+                  >
+                    Passenger no-show (R20)
+                  </button>
+                ) : (
+                  <p className="mt-1 text-center text-xs text-gray-500">Must be at pickup location</p>
+                )}
+                <button
+                  onClick={() => void startTrip(acceptedRide)}
+                  disabled={updatingStatus}
+                  className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+                >
+                  Passenger Picked Up
+                </button>
+              </>
+            )}
+            {(acceptedRide.status === 'accepted' || acceptedRide.status === 'arrived_at_pickup') && (
               <button
-                onClick={() => void startTrip(acceptedRide)}
+                onClick={() => void driverCancelRide(acceptedRide)}
                 disabled={updatingStatus}
-                className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+                className="mt-2 w-full rounded-lg border border-red-500 py-2 font-semibold text-red-600 disabled:opacity-60"
               >
-                Passenger Picked Up
+                Cancel Ride (no fee before wait)
               </button>
             )}
             {acceptedRide.status === 'in_progress' && (
