@@ -1,19 +1,32 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { onAuthStateChanged } from 'firebase/auth';
 import { LangSelector } from '../components/LangSelector';
 import { Logo } from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
 import { t } from '../lib/i18n';
 import type { AppRole } from '../types';
+import { auth } from '../lib/firebase';
+import { ADMIN_EMAIL } from '../config/admin';
 
-const roles: Array<{ role: AppRole; icon: string; description: string; card: string }> = [
+const publicRoles: Array<{ role: AppRole; icon: string; description: string; card: string }> = [
   { role: 'passenger', icon: '👤', description: 'Find a ride', card: 'bg-brandOrange/90 border-brandOrange' },
   { role: 'driver', icon: '🚗', description: 'Drive & earn', card: 'bg-brandBlue/90 border-brandBlue' },
-  { role: 'admin', icon: '🛡️', description: 'Manage platform', card: 'bg-brandPurple/90 border-brandPurple' },
 ];
 
 export function RoleSelect() {
   const { lang } = useAuth();
   const navigate = useNavigate();
+  const [userEmail, setUserEmail] = useState(auth.currentUser?.email?.toLowerCase() ?? null);
+  const showAdmin = userEmail === ADMIN_EMAIL;
+
+  useEffect(() => onAuthStateChanged(auth, (user) => {
+    setUserEmail(user?.email?.toLowerCase() ?? null);
+  }), []);
+
+  const roles = showAdmin
+    ? [...publicRoles, { role: 'admin' as const, icon: '🛡️', description: 'Manage platform', card: 'bg-brandPurple/90 border-brandPurple' }]
+    : publicRoles;
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-darkBg px-6 py-8">
