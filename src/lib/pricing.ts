@@ -1,33 +1,25 @@
-import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
-import { db } from './firebase';
 import { calcDistance, nearestTown } from './maps';
+import { BASE_FARE, COMMISSION_RATE, DRIVER_RATE, PER_KM_RATE } from '../config/pricing';
 
 export async function getFarePricing(lat: number, lng: number): Promise<{ baseFare: number; perKm: number; town: string }> {
   const town = nearestTown(lat, lng);
-  const townSnap = await getDoc(doc(db, 'town_pricing', town));
-
-  if (townSnap.exists()) {
-    const townData = townSnap.data();
-    return { baseFare: Number(townData.base_fare), perKm: Number(townData.per_km), town };
-  }
-
-  const settingsSnap = await getDocs(query(collection(db, 'app_settings'), limit(1)));
-  const settings = settingsSnap.docs[0]?.data();
-
-  return {
-    baseFare: settings ? Number(settings.default_base_fare) : 15,
-    perKm: settings ? Number(settings.default_per_km) : 8,
-    town,
-  };
+  return { baseFare: BASE_FARE, perKm: PER_KM_RATE, town };
 }
 
-export function calculateFare(baseFare: number, perKm: number, distanceKm: number): number {
-  return Math.round(baseFare + perKm * distanceKm);
+export function calculateFare(_baseFare: number, _perKm: number, distanceKm: number): number {
+  return BASE_FARE + distanceKm * PER_KM_RATE;
+}
+
+export function calculateFareBreakdown(distanceKm: number) {
+  const total = BASE_FARE + distanceKm * PER_KM_RATE;
+  const platformCut = total * COMMISSION_RATE;
+  const driverPayout = total * DRIVER_RATE;
+  return { total, platformCut, driverPayout };
 }
 
 // Simple flat-rate fare used for the in-app trip flow: R50 base + R10/km.
 export function calculateSimpleFare(distanceKm: number): number {
-  return Math.round(50 + distanceKm * 10);
+  return BASE_FARE + distanceKm * PER_KM_RATE;
 }
 
 export async function calculateTripFare(

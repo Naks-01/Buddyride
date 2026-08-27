@@ -8,6 +8,7 @@ import { CarIcon, LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane';
+import { calculateFareBreakdown } from '../../lib/pricing';
 
 const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
@@ -66,25 +67,10 @@ export function PassengerDashboard() {
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [estimatedFare, setEstimatedFare] = useState<number>(0);
   const [googleMapsError, setGoogleMapsError] = useState<string | null>(null);
-  const [pricing, setPricing] = useState({ baseFare: 20, perKm: 8 });
   const [locationStep, setLocationStep] = useState<'pickup' | 'dropoff'>('pickup');
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
   const [mapAddress, setMapAddress] = useState('');
   const [searchText, setSearchText] = useState('');
-
-  // Live pricing set by the admin in Settings - Pricing.
-  useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'settings', 'pricing'), (snapshot) => {
-      const data = snapshot.data();
-      if (data) {
-        setPricing({
-          baseFare: Number(data.baseFare ?? 20),
-          perKm: Number(data.perKm ?? 8),
-        });
-      }
-    });
-    return () => unsubscribe();
-  }, []);
 
   useEffect(() => {
     if (!loadError) return;
@@ -150,7 +136,8 @@ export function PassengerDashboard() {
         if (!leg) return;
 
         const km = leg.distance.value / 1000;
-        const fareEstimate = Math.round(pricing.baseFare + km * pricing.perKm);
+        const { total } = calculateFareBreakdown(km);
+        const fareEstimate = total;
         setDistance(leg.distance.text);
         setDistanceKm(km);
         setEstimatedFare(fareEstimate);

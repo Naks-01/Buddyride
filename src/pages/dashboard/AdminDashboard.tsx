@@ -5,6 +5,7 @@ import { auth, db } from '../../lib/firebase';
 import { LogOutIcon, SearchIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { AdminApiDashboard } from './AdminApiDashboard';
+import { COMMISSION_RATE } from '../../config/pricing';
 
 type Location = { address?: string; name?: string; lat?: number; lng?: number };
 
@@ -35,7 +36,7 @@ type UserDoc = {
 
 type Pricing = { perKm: number; baseFare: number; commissionPct: number };
 
-const DEFAULT_PRICING: Pricing = { perKm: 12, baseFare: 30, commissionPct: 20 };
+const DEFAULT_PRICING: Pricing = { perKm: 8.5, baseFare: 15, commissionPct: COMMISSION_RATE * 100 };
 const ACTIVE_RIDE_STATUSES = ['accepted', 'driver_arrived', 'in_progress'];
 const RIDE_FILTERS: { label: string; value: string | null }[] = [
   { label: 'All', value: null },
@@ -97,7 +98,7 @@ export function LegacyAdminDashboard() {
         setPricing({
           perKm: Number(data.perKm ?? DEFAULT_PRICING.perKm),
           baseFare: Number(data.baseFare ?? DEFAULT_PRICING.baseFare),
-          commissionPct: Number(data.commissionPct ?? DEFAULT_PRICING.commissionPct),
+          commissionPct: COMMISSION_RATE * 100,
         });
       }
     });
@@ -224,6 +225,7 @@ export function LegacyAdminDashboard() {
                     <th className="px-3 py-2">Dropoff</th>
                     <th className="px-3 py-2">Distance</th>
                     <th className="px-3 py-2">Fare</th>
+                    <th className="px-3 py-2">Platform</th>
                     <th className="px-3 py-2">Status</th>
                     <th className="px-3 py-2">Driver</th>
                     <th className="px-3 py-2">Passenger</th>
@@ -237,6 +239,7 @@ export function LegacyAdminDashboard() {
                       <td className="px-3 py-2">{formatLocation(r.dropoff)}</td>
                       <td className="px-3 py-2">{typeof r.distance === 'number' ? `${r.distance} km` : r.distance ?? '—'}</td>
                       <td className="px-3 py-2">R{Number(r.price ?? 0).toFixed(2)}</td>
+                      <td className="px-3 py-2">Platform: R{(Number(r.price ?? 0) * COMMISSION_RATE).toFixed(2)}</td>
                       <td className="px-3 py-2 capitalize">{r.status ?? '—'}</td>
                       <td className="px-3 py-2">{r.driverName ?? r.driverId ?? '—'}</td>
                       <td className="px-3 py-2">{r.passengerId ?? '—'}</td>
@@ -244,7 +247,7 @@ export function LegacyAdminDashboard() {
                   ))}
                   {filteredRides.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-3 py-4 text-center text-gray-500">No rides found.</td>
+                      <td colSpan={9} className="px-3 py-4 text-center text-gray-500">No rides found.</td>
                     </tr>
                   )}
                 </tbody>
@@ -340,8 +343,8 @@ export function LegacyAdminDashboard() {
                 <span className="mb-1 block text-sm text-gray-400">Commission %</span>
                 <input
                   type="number"
-                  value={pricing.commissionPct}
-                  onChange={(e) => setPricing((p) => ({ ...p, commissionPct: Number(e.target.value) }))}
+                  value={COMMISSION_RATE * 100}
+                  readOnly
                   className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-white"
                 />
               </label>
