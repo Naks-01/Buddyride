@@ -5,6 +5,7 @@ import { doc, setDoc } from 'firebase/firestore';
 import '../firebase';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { ADMIN_EMAIL } from '../config/admin';
 import type { AppRole } from '../types';
 
 function roleLabel(role: AppRole) {
@@ -50,6 +51,10 @@ export default function RolePasswordLogin() {
       }
 
       const credential = await signInWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
+      if (role === 'admin' && credential.user.email?.toLowerCase() !== ADMIN_EMAIL) {
+        await auth.signOut();
+        throw new Error('Access denied. This account is not an administrator.');
+      }
       await setDoc(doc(db, 'users', credential.user.uid), {
         uid: credential.user.uid,
         email: credential.user.email,

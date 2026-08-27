@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Component, type ReactNode } from 'react';
 import { useAuth } from './context/AuthContext';
+import { auth } from './lib/firebase';
 import { RoleSelect } from './pages/RoleSelect';
 import RolePasswordLogin from './pages/RolePasswordLogin';
 import { PassengerDashboard } from './pages/dashboard/PassengerDashboard';
@@ -11,6 +12,7 @@ import SafetyDashboard from './pages/admin/SafetyDashboard';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SplashScreen } from './components/SplashScreen';
 import type { AppRole } from './types';
+import { ADMIN_EMAIL } from './config/admin';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -46,7 +48,13 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { loading } = useAuth();
   if (typeof window === 'undefined') return null;
   if (loading) return <LoadingScreen />;
-  if (localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/" replace />;
+  const user = auth.currentUser;
+  if (!user) return <Navigate to="/login?role=admin" replace />;
+  if (user.email?.toLowerCase() !== ADMIN_EMAIL) {
+    console.warn('Blocked non-admin:', user.email);
+    return <Navigate to="/" replace />;
+  }
+  if (localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/login?role=admin" replace />;
   return <>{children}</>;
 }
 

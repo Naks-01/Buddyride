@@ -2,6 +2,11 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    match /admin/{doc=**} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email == 'mokgalaka.nt@gmail.com';
+    }
+
     match /rides/{rideId} {
       allow read, write: if request.auth != null;
     }
