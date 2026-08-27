@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Component, type ReactNode } from 'react';
 import { useAuth } from './context/AuthContext';
 import { RoleSelect } from './pages/RoleSelect';
 import RolePasswordLogin from './pages/RolePasswordLogin';
@@ -9,6 +10,21 @@ import { RideStatus } from './pages/RideStatus';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SplashScreen } from './components/SplashScreen';
 import type { AppRole } from './types';
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return <div className="min-h-screen bg-black p-8 text-white">Driver dashboard error: {this.state.error.message}</div>;
+    }
+    return this.props.children;
+  }
+}
 
 export type { AppRole };
 
@@ -44,6 +60,10 @@ function LoginRouter() {
   return <RolePasswordLogin />;
 }
 
+function ProtectedDriverDashboard() {
+  return <RequireRole role="driver"><ErrorBoundary><DriverDashboard /></ErrorBoundary></RequireRole>;
+}
+
 export default function App() {
   return (
     <>
@@ -53,8 +73,12 @@ export default function App() {
           <Route path="/" element={<HomeOrRedirect />} />
           <Route path="/login" element={<LoginRouter />} />
           <Route path="/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
+          <Route path="/passenger/dashboard" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
           <Route path="/dashboard/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
-          <Route path="/dashboard/driver" element={<RequireRole role="driver"><DriverDashboard /></RequireRole>} />
+          <Route path="/driver" element={<ProtectedDriverDashboard />} />
+          <Route path="/driver/dashboard" element={<ProtectedDriverDashboard />} />
+          <Route path="/dashboard/driver" element={<ProtectedDriverDashboard />} />
+          <Route path="/admin/dashboard" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
           <Route path="*" element={<Navigate to="/" replace />} />

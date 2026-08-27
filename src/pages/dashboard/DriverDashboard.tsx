@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { LogOutIcon } from '../../components/Icons';
@@ -36,12 +36,43 @@ function getLocationCoordinates(location?: string | Location, fallback?: Coordin
 
 // Firestore for this project is provisioned in the africa-south1 region.
 export function DriverDashboard() {
-  const { signOut } = useAuth();
+  const { loading: authLoading, signOut } = useAuth();
   const navigate = useNavigate();
+  const user = auth.currentUser;
+  const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
   const [rides, setRides] = useState<RideRequest[]>([]);
   const [acceptedRide, setAcceptedRide] = useState<RideRequest | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+
+    const loadDriverProfile = async () => {
+      try {
+        const driverRef = doc(db, 'drivers', user.uid);
+        const existing = await getDoc(driverRef);
+        if (existing.exists()) {
+          setDriverProfile(existing.data());
+          return;
+        }
+
+        const newDriver = {
+          uid: user.uid,
+          email: user.email ?? null,
+          role: 'driver',
+          createdAt: serverTimestamp(),
+        };
+        await setDoc(driverRef, newDriver);
+        setDriverProfile(newDriver);
+      } catch (err) {
+        console.error('Failed to load driver profile:', err);
+        setError('Failed to load driver profile.');
+      }
+    };
+
+    void loadDriverProfile();
+  }, [authLoading, user]);
 
   useEffect(() => {
     const requestedQuery = query(collection(db, 'rides'), where('status', '==', 'searching'));
@@ -162,6 +193,19 @@ export function DriverDashboard() {
     localStorage.clear();
     navigate('/');
   };
+
+  if (authLoading) {
+    return <div className="min-h-screen bg-black p-8 text-white">Loading...</div>;
+  }
+
+  if (!user) {
+    navigate('/login?role=driver', { replace: true });
+    return null;
+  }
+
+  if (!driverProfile && !error) {
+    return <div className="min-h-screen bg-black p-8 text-white">Loading...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">

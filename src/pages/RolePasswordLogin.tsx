@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import '../firebase';
+import { db } from '../lib/firebase';
+import { useAuth } from '../context/AuthContext';
 import type { AppRole } from '../types';
 
 function roleLabel(role: AppRole) {
@@ -13,14 +16,16 @@ export default function RolePasswordLogin() {
   const role = (searchParams.get('role') || 'passenger') as AppRole;
   const navigate = useNavigate();
   const auth = getAuth();
+  const { refreshProfile } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignup, setIsSignup] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    document.title = `${roleLabel(role)} Login | BuddyRide1`;
     if (localStorage.getItem(`${role}LoggedIn`) === 'true') {
-      navigate(`/dashboard/${role}`, { replace: true });
+      navigate(`/${role}/dashboard`, { replace: true });
     }
   }, [navigate, role]);
 
@@ -44,9 +49,15 @@ export default function RolePasswordLogin() {
         return;
       }
 
-      await signInWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
+      const credential = await signInWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
+      await setDoc(doc(db, 'users', credential.user.uid), {
+        uid: credential.user.uid,
+        email: credential.user.email,
+        role,
+      }, { merge: true });
+      await refreshProfile();
       localStorage.setItem(`${role}LoggedIn`, 'true');
-      navigate(`/dashboard/${role}`, { replace: true });
+      navigate(`/${role}/dashboard`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to authenticate.');
     }
