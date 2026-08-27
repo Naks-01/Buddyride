@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Autocomplete, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
+import { ShieldCheck } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { CarIcon, LogOutIcon } from '../../components/Icons';
@@ -706,14 +707,20 @@ export function PassengerDashboard() {
             </p>
           )}
           {!rideId && pickupLocation && dropoffLocation && (
-            <button
-              onClick={() => void requestRide()}
-              disabled={requesting}
-              className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-3"
-            >
-              <CarIcon size={20} />{' '}
-              {requesting ? 'Requesting...' : `Request BuddyRide - R${estimatedFare}`}
-            </button>
+            profile?.verificationStatus !== 'verified' ? (
+              <div className="w-full flex items-center justify-center gap-2 bg-yellow-50 border border-yellow-300 text-yellow-700 font-bold py-3 rounded-xl mt-3">
+                <ShieldCheck size={20} /> Verify ID to ride
+              </div>
+            ) : (
+              <button
+                onClick={() => void requestRide()}
+                disabled={requesting}
+                className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-3"
+              >
+                <CarIcon size={20} />{' '}
+                {requesting ? 'Requesting...' : `Request BuddyRide - R${estimatedFare}`}
+              </button>
+            )
           )}
         </div>
       </main>
