@@ -1,36 +1,50 @@
 import { useState } from 'react';
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, increment, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { TIP_PRESETS } from '../config/pricing';
 
 interface TripReceiptProps {
   rideId: string;
   fare: number;
+  driverId?: string | null;
+  paymentMethod?: string;
 }
 
-const QUICK_TIPS = [5, 10, 20];
-
-export function TripReceipt({ rideId, fare }: TripReceiptProps) {
+export function TripReceipt({ rideId, fare, driverId, paymentMethod = 'cash' }: TripReceiptProps) {
   const [tipAmount, setTipAmount] = useState<number | null>(null);
   const [customTip, setCustomTip] = useState('');
   const [tipMessage, setTipMessage] = useState('');
   const [sendingTip, setSendingTip] = useState(false);
 
-  const addTip = async (rideId: string, tipAmount: number) => {
-    if (sendingTip || tipAmount < 0) return;
+  const addTip = async (rideId: string, nextTipAmount: number) => {
+    if (sendingTip || !Number.isFinite(nextTipAmount) || nextTipAmount < 0) return;
+    if (!driverId) {
+      setTipMessage('A driver must be assigned before adding a tip.');
+      return;
+    }
 
     setSendingTip(true);
 
     try {
-      const totalEarned = Number((fare + tipAmount).toFixed(2));
-
-      await updateDoc(doc(db, 'rides', rideId), {
-        tip: tipAmount,
-        tipAt: serverTimestamp(),
-        totalEarned,
+      await runTransaction(db, async (transaction) => {
+        const rideRef = doc(db, 'rides', rideId);
+        const driverRef = doc(db, 'drivers', driverId);
+        const rideSnapshot = await transaction.get(rideRef);
+        await transaction.get(driverRef);
+        if (rideSnapshot.data()?.tipAmount != null) return;
+        transaction.set(rideRef, {
+          tipAmount: nextTipAmount,
+          tippedAt: serverTimestamp(),
+          tipMethod: paymentMethod,
+          totalEarned: Number((fare + nextTipAmount).toFixed(2)),
+        }, { merge: true });
+        transaction.set(driverRef, { totalTips: increment(nextTipAmount) }, { merge: true });
       });
 
-      setTipAmount(tipAmount);
-      setTipMessage(`Thank you! R${tipAmount.toFixed(2)} tip sent to your driver`);
+      setTipAmount(nextTipAmount);
+      setTipMessage(nextTipAmount === 0 ? 'No tip added. Thank you for riding with BuddyRide1.' : paymentMethod === 'cash'
+        ? `Give R${nextTipAmount.toFixed(2)} tip in cash to driver`
+        : `Total paid: R${fare.toFixed(2)} fare + R${nextTipAmount.toFixed(2)} tip = R${(fare + nextTipAmount).toFixed(2)}`);
     } catch (err) {
       console.error(err);
       setTipMessage('Unable to send tip. Please try again.');
@@ -60,12 +74,12 @@ export function TripReceipt({ rideId, fare }: TripReceiptProps) {
 
       {!tipSubmitted && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {QUICK_TIPS.map((amount) => (
+          {TIP_PRESETS.map((amount) => (
             <button
               key={amount}
               onClick={() => void addTip(rideId, amount)}
               disabled={sendingTip}
-              className="bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white font-bold py-2 px-4 rounded-lg"
+              className="rounded-full border border-orange-500 px-4 py-2 font-bold text-orange-600 hover:bg-green-100 disabled:opacity-60"
             >
               R{amount}
             </button>

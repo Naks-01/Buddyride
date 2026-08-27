@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
@@ -28,6 +28,7 @@ type RideRequest = {
   passengerPhone?: string | null;
   createdAt?: unknown;
   arrivedAt?: unknown;
+  tipAmount?: number;
 };
 
 type Coordinates = { lat: number; lng: number };
@@ -58,6 +59,7 @@ export function DriverDashboard() {
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
+  const tipToastRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (authLoading || !user) return;
@@ -149,6 +151,11 @@ export function DriverDashboard() {
         (snapshot) => {
           const data = snapshot.data() as Record<string, unknown> | undefined;
           if (!data) return;
+          const tipAmount = Number(data.tipAmount ?? 0);
+          if (tipAmount > 0 && tipToastRef.current !== `${acceptedRide.id}:${tipAmount}`) {
+            tipToastRef.current = `${acceptedRide.id}:${tipAmount}`;
+            setError(`You received R${tipAmount.toFixed(2)} tip!`);
+          }
           setAcceptedRide((prev) => (prev ? { ...prev, ...data } : prev));
         },
         (err) => {
@@ -390,7 +397,7 @@ export function DriverDashboard() {
             {acceptedRide.status === 'completed' && (
               <div className="mt-3 space-y-2">
                 <p className="text-center text-sm font-semibold text-green-800">
-                  R{Number(acceptedRide.fare ?? acceptedRide.price ?? 0).toFixed(2)} Collected - Cash
+                  Collect R{Number(acceptedRide.fare ?? acceptedRide.price ?? 0).toFixed(2)} + R{Number(acceptedRide.tipAmount ?? 0).toFixed(2)} tip = R{(Number(acceptedRide.fare ?? acceptedRide.price ?? 0) + Number(acceptedRide.tipAmount ?? 0)).toFixed(2)} cash
                 </p>
                 <button
                   onClick={finishRide}
@@ -444,6 +451,7 @@ function RideDetails({ ride }: { ride: RideRequest }) {
   };
   const total = Number(ride.fare ?? ride.price ?? 0);
   const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE;
+  const tipAmount = Number(ride.tipAmount ?? 0);
   return (
     <div className="space-y-1 text-sm text-gray-700">
       <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>
@@ -451,6 +459,8 @@ function RideDetails({ ride }: { ride: RideRequest }) {
       <p><span className="font-semibold">Distance:</span> {typeof ride.distance === 'number' ? `${ride.distance} km` : ride.distance ?? '—'}</p>
       <p><span className="font-semibold">Fare:</span> R{total.toFixed(2)}</p>
       <p className="font-semibold text-green-700">You earn: R{driverPayout.toFixed(2)} (80%)</p>
+      <p>Tip (100%): R{tipAmount.toFixed(2)}</p>
+      <p className="font-semibold text-green-700">Total you get: R{(driverPayout + tipAmount).toFixed(2)}</p>
     </div>
   );
 }

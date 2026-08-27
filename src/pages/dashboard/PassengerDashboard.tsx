@@ -68,6 +68,7 @@ export function PassengerDashboard() {
   const [driverPhone, setDriverPhone] = useState<string | null>(null);
   const [driverName, setDriverName] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState('cash');
   const [fare, setFare] = useState<number | null>(null);
   const [rated, setRated] = useState(false);
   const [ratingValue, setRatingValue] = useState<number | null>(null);
@@ -349,6 +350,9 @@ export function PassengerDashboard() {
       }
       if (typeof data.driverId === 'string') {
         setDriverId(data.driverId);
+      }
+      if (typeof data.paymentMethod === 'string') {
+        setPaymentMethod(data.paymentMethod);
       }
       if (nextStatus === 'completed' && typeof data.driverId === 'string' && !rated) {
         setShowRating(true);
@@ -665,7 +669,7 @@ export function PassengerDashboard() {
               >
                 {rated ? 'Thanks for rating!' : 'Rate Driver'}
               </button>
-              {rideId && <TripReceipt rideId={rideId} fare={fare ?? 0} />}
+              {rideId && <TripReceipt rideId={rideId} fare={fare ?? 0} driverId={driverId} paymentMethod={paymentMethod} />}
             </div>
           )}
           {message && (

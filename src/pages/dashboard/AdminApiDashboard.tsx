@@ -19,6 +19,7 @@ type Ride = {
   fare?: number;
   cancellationFee?: number;
   cancellationPlatformCut?: number;
+  tipAmount?: number;
   createdAt?: string;
   created_at?: string;
 };
@@ -45,6 +46,11 @@ export function AdminApiDashboard() {
   const [rides, setRides] = useState<Ride[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
+  const totalTipsByDriver = rides.reduce<Record<string, number>>((totals, ride) => {
+    const driver = ride.driverId || ride.driver_id;
+    if (driver) totals[driver] = (totals[driver] ?? 0) + Number(ride.tipAmount ?? 0);
+    return totals;
+  }, {});
 
   useEffect(() => {
     console.log('BuddyRide API URL:', API);
@@ -113,6 +119,7 @@ export function AdminApiDashboard() {
             <strong>Could not load rides.</strong> API: {API}. Error: {error}
           </div>
         )}
+        <p className="mb-4 text-sm text-gray-300">Total tips by driver: {Object.entries(totalTipsByDriver).map(([driver, total]) => `${driver}: R${total.toFixed(2)}`).join(' | ') || 'None'}</p>
 
         <div className="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900">
           <table className="w-full min-w-[900px] text-left text-sm">
@@ -125,6 +132,7 @@ export function AdminApiDashboard() {
                 <th className="px-4 py-3">Price</th>
                 <th className="px-4 py-3">Platform</th>
                 <th className="px-4 py-3">Cancellation earnings</th>
+                <th className="px-4 py-3">Tips</th>
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Action</th>
               </tr>
@@ -141,6 +149,7 @@ export function AdminApiDashboard() {
                     <td className="px-4 py-3">R{Number(ride.price ?? ride.fare ?? 0).toFixed(2)}</td>
                     <td className="px-4 py-3">Platform: R{((Math.max(Number(ride.price ?? ride.fare ?? 0) - BOOKING_FEE, 0) * COMMISSION_RATE) + BOOKING_FEE).toFixed(2)}</td>
                     <td className="px-4 py-3">R{Number(ride.cancellationPlatformCut ?? 0).toFixed(2)}</td>
+                    <td className="px-4 py-3">R{Number(ride.tipAmount ?? 0).toFixed(2)}</td>
                     <td className="px-4 py-3">{rideDate(ride)}</td>
                     <td className="px-4 py-3">
                       <button
@@ -157,7 +166,7 @@ export function AdminApiDashboard() {
               })}
               {rides.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-gray-400">No rides found.</td>
+                  <td colSpan={10} className="px-4 py-8 text-center text-gray-400">No rides found.</td>
                 </tr>
               )}
             </tbody>
