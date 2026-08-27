@@ -5,7 +5,7 @@ import { auth, db } from '../../lib/firebase';
 import { LogOutIcon, SearchIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { AdminApiDashboard } from './AdminApiDashboard';
-import { COMMISSION_RATE } from '../../config/pricing';
+import { BOOKING_FEE, COMMISSION_RATE } from '../../config/pricing';
 
 type Location = { address?: string; name?: string; lat?: number; lng?: number };
 
@@ -239,7 +239,7 @@ export function LegacyAdminDashboard() {
                       <td className="px-3 py-2">{formatLocation(r.dropoff)}</td>
                       <td className="px-3 py-2">{typeof r.distance === 'number' ? `${r.distance} km` : r.distance ?? '—'}</td>
                       <td className="px-3 py-2">R{Number(r.price ?? 0).toFixed(2)}</td>
-                      <td className="px-3 py-2">Platform: R{(Number(r.price ?? 0) * COMMISSION_RATE).toFixed(2)}</td>
+                      <td className="px-3 py-2">Platform: R{((Math.max(Number(r.price ?? 0) - BOOKING_FEE, 0) * COMMISSION_RATE) + BOOKING_FEE).toFixed(2)}</td>
                       <td className="px-3 py-2 capitalize">{r.status ?? '—'}</td>
                       <td className="px-3 py-2">{r.driverName ?? r.driverId ?? '—'}</td>
                       <td className="px-3 py-2">{r.passengerId ?? '—'}</td>

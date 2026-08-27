@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { COMMISSION_RATE } from '../../config/pricing';
+import { BOOKING_FEE, COMMISSION_RATE } from '../../config/pricing';
 
 const API = import.meta.env.VITE_API_URL || 'http://' + window.location.hostname + ':5000';
 
@@ -136,7 +136,7 @@ export function AdminApiDashboard() {
                     <td className="px-4 py-3">{ride.driverId || ride.driver_id || '-'}</td>
                     <td className="px-4 py-3 capitalize">{ride.status || '-'}</td>
                     <td className="px-4 py-3">R{Number(ride.price ?? ride.fare ?? 0).toFixed(2)}</td>
-                    <td className="px-4 py-3">Platform: R{(Number(ride.price ?? ride.fare ?? 0) * COMMISSION_RATE).toFixed(2)}</td>
+                    <td className="px-4 py-3">Platform: R{((Math.max(Number(ride.price ?? ride.fare ?? 0) - BOOKING_FEE, 0) * COMMISSION_RATE) + BOOKING_FEE).toFixed(2)}</td>
                     <td className="px-4 py-3">{rideDate(ride)}</td>
                     <td className="px-4 py-3">
                       <button

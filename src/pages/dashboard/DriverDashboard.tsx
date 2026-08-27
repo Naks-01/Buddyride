@@ -5,7 +5,7 @@ import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
-import { DRIVER_RATE } from '../../config/pricing';
+import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
 
@@ -322,7 +322,7 @@ function RideDetails({ ride }: { ride: RideRequest }) {
     return loc.address ?? loc.name ?? loc.description ?? JSON.stringify(loc);
   };
   const total = Number(ride.fare ?? ride.price ?? 0);
-  const driverPayout = total * DRIVER_RATE;
+  const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE;
   return (
     <div className="space-y-1 text-sm text-gray-700">
       <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>

@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Autocomplete, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
-import { addDoc, collection, doc, onSnapshot, serverTimestamp, type DocumentData } from 'firebase/firestore';
+import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { CarIcon, LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane';
-import { calculateFareBreakdown } from '../../lib/pricing';
+import { calculateRidePricing } from '../../lib/pricing';
+import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE } from '../../config/pricing';
 
 const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
@@ -48,6 +49,7 @@ export function PassengerDashboard() {
   const [locating, setLocating] = useState(false);
   const [message, setMessage] = useState('');
   const [rideId, setRideId] = useState<string | null>(null);
+  const [rideCreatedAt, setRideCreatedAt] = useState<number | null>(null);
   const [pickupAddress, setPickupAddress] = useState('');
   const [pickupLocation, setPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [pickupPlaceId, setPickupPlaceId] = useState<string | null>(null);
@@ -136,8 +138,8 @@ export function PassengerDashboard() {
         if (!leg) return;
 
         const km = leg.distance.value / 1000;
-        const { total } = calculateFareBreakdown(km);
-        const fareEstimate = total;
+        const { totalToPassenger } = calculateRidePricing(km);
+        const fareEstimate = totalToPassenger;
         setDistance(leg.distance.text);
         setDistanceKm(km);
         setEstimatedFare(fareEstimate);
@@ -269,6 +271,7 @@ export function PassengerDashboard() {
       });
 
       setRideId(rideRef.id);
+      setRideCreatedAt(Date.now());
       setRideStatus('searching');
       setDriverLocation(null);
       setTripPickupLocation({ lat: pickupLocation.lat, lng: pickupLocation.lng });
@@ -349,6 +352,32 @@ export function PassengerDashboard() {
 
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
+  const cancelRide = async () => {
+    if (!rideId || !isActiveTrip) return;
+    const elapsedSec = rideCreatedAt == null ? CANCELLATION.FREE_WINDOW_SEC : (Date.now() - rideCreatedAt) / 1000;
+    const arrived = rideStatus === 'driver_arrived' || rideStatus === 'arrived_at_pickup';
+    const cancellationFee = arrived
+      ? CANCELLATION.NO_SHOW_FEE
+      : elapsedSec > CANCELLATION.FREE_WINDOW_SEC
+        ? CANCELLATION.LATE_FEE
+        : 0;
+    try {
+      await updateDoc(doc(db, 'rides', rideId), {
+        status: 'cancelled',
+        cancellationFee,
+        cancellationPlatformCut: cancellationFee * COMMISSION_RATE,
+        cancellationDriverPayout: cancellationFee * DRIVER_RATE,
+        cancelledAt: serverTimestamp(),
+      });
+      setMessage(cancellationFee ? `Ride cancelled. Fee: R${cancellationFee.toFixed(2)}` : 'Ride cancelled for free.');
+      setRideId(null);
+      setRideStatus(null);
+      setRideCreatedAt(null);
+    } catch (err) {
+      console.error(err);
+      setMessage('Unable to cancel ride. Please try again.');
+    }
+  };
 
   // Center the live map over every known point: pickup, dropoff, and the driver (once assigned).
   const knownPoints = [tripPickupLocation, tripDropoffLocation, driverLocation].filter(
@@ -427,6 +456,13 @@ export function PassengerDashboard() {
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
                 <span>Fare: R{(fare ?? 0).toFixed(2)}</span>
               </div>
+              <button
+                type="button"
+                onClick={() => void cancelRide()}
+                className="mt-2 w-full rounded-lg border border-red-500 py-2 font-semibold text-red-600 hover:bg-red-50"
+              >
+                Cancel Ride
+              </button>
             </>
           )}
 
@@ -575,9 +611,8 @@ export function PassengerDashboard() {
 
           {!rideId && distance && estimatedFare > 0 && (
             <div className="bg-orange-100 p-3 rounded-lg mt-3">
-              <p>
-                Distance: {distance} • R{estimatedFare}
-              </p>
+              <p>Distance: {distance}</p>
+              <p>Ride R{(estimatedFare - BOOKING_FEE).toFixed(2)} + Booking R{BOOKING_FEE.toFixed(2)} = R{estimatedFare.toFixed(2)}</p>
             </div>
           )}
 
