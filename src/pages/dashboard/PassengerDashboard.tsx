@@ -85,6 +85,7 @@ export function PassengerDashboard() {
   const [rideCategory, setRideCategory] = useState<'Standard' | 'Comfort' | 'XL'>('Standard');
   const [passengerCount, setPassengerCount] = useState(1);
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
   const extrasFee = selectedExtras.reduce((total, extra) => total + RIDE_EXTRAS[extra].fee, 0);
 
   useEffect(() => {
@@ -308,6 +309,14 @@ export function PassengerDashboard() {
     } finally {
       setRequesting(false);
     }
+  };
+
+  const handleRequestClick = () => {
+    if (!profile?.idNumberVerified || profile?.verificationStatus !== 'verified') {
+      setShowVerifyModal(true);
+      return;
+    }
+    void requestRide();
   };
 
   // Recompute the fare estimate whenever both pins are set.
@@ -707,20 +716,14 @@ export function PassengerDashboard() {
             </p>
           )}
           {!rideId && pickupLocation && dropoffLocation && (
-            profile?.verificationStatus !== 'verified' ? (
-              <div className="w-full flex items-center justify-center gap-2 bg-yellow-50 border border-yellow-300 text-yellow-700 font-bold py-3 rounded-xl mt-3">
-                <ShieldCheck size={20} /> Verify ID to ride
-              </div>
-            ) : (
-              <button
-                onClick={() => void requestRide()}
-                disabled={requesting}
-                className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-3"
-              >
-                <CarIcon size={20} />{' '}
-                {requesting ? 'Requesting...' : `Request BuddyRide - R${estimatedFare}`}
-              </button>
-            )
+            <button
+              onClick={handleRequestClick}
+              disabled={requesting}
+              className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-3"
+            >
+              <CarIcon size={20} />{' '}
+              {requesting ? 'Requesting...' : `Request BuddyRide - R${estimatedFare}`}
+            </button>
           )}
         </div>
       </main>
@@ -729,6 +732,29 @@ export function PassengerDashboard() {
       <SOSButton rideId={rideId} userRole="passenger" />
       {showRating && driverId && profile?.id && rideId && (
         <RatingModal rideId={rideId} driverId={driverId} driverName={driverName} passengerId={profile.id} onSaved={(value) => { setRated(true); setRatingValue(value); setShowRating(false); }} />
+      )}
+      {showVerifyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <ShieldCheck size={40} className="mx-auto mb-3 text-orange-500" />
+            <h3 className="mb-2 text-lg font-bold text-gray-900">Verification Required</h3>
+            <p className="mb-4 text-sm text-gray-600">
+              SA law requires passengers to verify ID + selfie like Bolt. Takes 1 min.
+            </p>
+            <button
+              onClick={() => navigate('/profile')}
+              className="mb-2 w-full rounded-lg bg-orange-500 py-2.5 font-bold text-white hover:bg-orange-600"
+            >
+              Verify Now
+            </button>
+            <button
+              onClick={() => setShowVerifyModal(false)}
+              className="w-full rounded-lg bg-gray-100 py-2.5 font-semibold text-gray-700 hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

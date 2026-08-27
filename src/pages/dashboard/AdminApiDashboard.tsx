@@ -1,9 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { ShieldCheck, ShieldX } from 'lucide-react';
+import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, COMMISSION_RATE } from '../../config/pricing';
+import type { VerificationStatus } from '../../types';
 
 const API = import.meta.env.VITE_API_URL || 'http://' + window.location.hostname + ':5000';
+
+type VerificationEntry = {
+  id: string;
+  name?: string | null;
+  phone?: string | null;
+  idNumberLast4?: string | null;
+  selfieUrl?: string | null;
+  verificationStatus?: VerificationStatus;
+};
 
 type Ride = {
   _id?: string;
@@ -46,11 +59,35 @@ export function AdminApiDashboard() {
   const [rides, setRides] = useState<Ride[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
+  const [verificationQueue, setVerificationQueue] = useState<VerificationEntry[]>([]);
   const totalTipsByDriver = rides.reduce<Record<string, number>>((totals, ride) => {
     const driver = ride.driverId || ride.driver_id;
     if (driver) totals[driver] = (totals[driver] ?? 0) + Number(ride.tipAmount ?? 0);
     return totals;
   }, {});
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
+      const entries = snapshot.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as VerificationEntry))
+        .filter((u) => Boolean(u.idNumberLast4));
+      setVerificationQueue(entries);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const setVerification = async (userId: string, status: VerificationStatus) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        verificationStatus: status,
+        idNumberVerified: status === 'verified',
+        verifiedAt: status === 'verified' ? serverTimestamp() : null,
+      });
+    } catch (err) {
+      console.error(err);
+      setError('Failed to update verification status.');
+    }
+  };
 
   useEffect(() => {
     console.log('BuddyRide API URL:', API);
@@ -167,6 +204,62 @@ export function AdminApiDashboard() {
               {rides.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-4 py-8 text-center text-gray-400">No rides found.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <h2 className="mb-3 mt-8 text-xl font-bold">Verification Queue</h2>
+        <div className="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="bg-gray-800 text-gray-300">
+              <tr>
+                <th className="px-4 py-3">Passenger</th>
+                <th className="px-4 py-3">ID (last 4)</th>
+                <th className="px-4 py-3">Selfie</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {verificationQueue.map((entry) => (
+                <tr key={entry.id} className="border-t border-gray-800">
+                  <td className="px-4 py-3">{entry.name || entry.phone || entry.id.slice(0, 8)}</td>
+                  <td className="px-4 py-3 font-mono">{entry.idNumberLast4 || '-'}</td>
+                  <td className="px-4 py-3">
+                    {entry.selfieUrl ? (
+                      <a href={entry.selfieUrl} target="_blank" rel="noopener noreferrer">
+                        <img src={entry.selfieUrl} alt="Selfie" className="h-10 w-10 rounded-full object-cover" />
+                      </a>
+                    ) : (
+                      '-'
+                    )}
+                  </td>
+                  <td className="px-4 py-3 capitalize">{entry.verificationStatus ?? 'unverified'}</td>
+                  <td className="px-4 py-3 space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => void setVerification(entry.id, 'verified')}
+                      disabled={entry.verificationStatus === 'verified'}
+                      className="inline-flex items-center gap-1 rounded bg-green-600 px-3 py-1.5 font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ShieldCheck size={14} /> Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void setVerification(entry.id, 'failed')}
+                      disabled={entry.verificationStatus === 'failed'}
+                      className="inline-flex items-center gap-1 rounded bg-red-600 px-3 py-1.5 font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ShieldX size={14} /> Reject
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {verificationQueue.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">No verification submissions yet.</td>
                 </tr>
               )}
             </tbody>

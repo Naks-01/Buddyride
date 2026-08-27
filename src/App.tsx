@@ -8,6 +8,7 @@ import { PassengerDashboard } from './pages/dashboard/PassengerDashboard';
 import { DriverDashboard } from './pages/dashboard/DriverDashboard';
 import { AdminDashboard } from './pages/dashboard/AdminDashboard';
 import { RideStatus } from './pages/RideStatus';
+import { Profile } from './pages/Profile';
 import SafetyDashboard from './pages/admin/SafetyDashboard';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SplashScreen } from './components/SplashScreen';
@@ -94,6 +95,7 @@ export default function App() {
           <Route path="/admin/safety" element={<RequireAdmin><SafetyDashboard /></RequireAdmin>} />
           <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
+          <Route path="/profile" element={<RequireRole role="passenger"><Profile /></RequireRole>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

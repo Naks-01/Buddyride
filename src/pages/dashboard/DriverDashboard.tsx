@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { ShieldAlert, ShieldCheck } from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { LogOutIcon } from '../../components/Icons';
@@ -365,6 +366,7 @@ export function DriverDashboard() {
           <section className="mb-5 rounded-xl border border-green-200 bg-green-50 p-4 shadow-sm">
             <h2 className="mb-3 text-lg font-bold text-green-900">Accepted Ride</h2>
             <RideDetails ride={acceptedRide} />
+            <PassengerBadge passengerId={acceptedRide.passengerId} revealed />
             <a
               href={`tel:${acceptedRide.passengerPhone ?? ''}`}
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-green-600 py-2 font-bold text-green-700 hover:bg-green-100"
@@ -453,6 +455,7 @@ export function DriverDashboard() {
           {rides.map((ride) => (
             <div key={ride.id} className="bg-white border border-orange-200 rounded-xl p-4 shadow-sm">
               <RideDetails ride={ride} />
+              <PassengerBadge passengerId={ride.passengerId} revealed={false} />
               <p className="text-gray-500 text-sm mb-3">Passenger: {ride.passengerId ?? 'test123'}</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 <button
@@ -479,6 +482,40 @@ export function DriverDashboard() {
       <EmergencyContacts userId={user.uid} />
       <footer className="p-4 text-center text-xs text-gray-500">BuddyRide Safety: In emergency press SOS or call 10111 / 112</footer>
       <SOSButton rideId={acceptedRide?.id} userRole="driver" />
+    </div>
+  );
+}
+
+function PassengerBadge({ passengerId, revealed }: { passengerId?: string | null; revealed: boolean }) {
+  const [passenger, setPassenger] = useState<{ verificationStatus?: string; selfieUrl?: string } | null>(null);
+
+  useEffect(() => {
+    if (!passengerId) return;
+    void getDoc(doc(db, 'users', passengerId)).then((snapshot) => {
+      if (snapshot.exists()) setPassenger(snapshot.data());
+    });
+  }, [passengerId]);
+
+  const verified = passenger?.verificationStatus === 'verified';
+
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      {passenger?.selfieUrl && (
+        <img
+          src={passenger.selfieUrl}
+          alt="Passenger"
+          className="h-9 w-9 rounded-full object-cover"
+          style={{ filter: revealed ? 'none' : 'blur(6px)' }}
+        />
+      )}
+      <span
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${
+          verified ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+        }`}
+      >
+        {verified ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+        {verified ? 'Verified' : 'Unverified'}
+      </span>
     </div>
   );
 }
