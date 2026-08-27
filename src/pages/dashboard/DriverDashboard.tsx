@@ -8,6 +8,7 @@ import { Logo } from '../../components/Logo';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
+import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
 
@@ -276,6 +277,9 @@ export function DriverDashboard() {
       </header>
 
       <main className="flex-1 p-4 max-w-2xl w-full mx-auto">
+        <p className="mb-3 rounded-lg bg-white p-3 text-sm font-semibold text-gray-700">
+          Your rating: {Number(driverProfile?.avgRating ?? 0).toFixed(1)}★ ({Number(driverProfile?.totalRatings ?? 0)} trips)
+        </p>
         <h2 className="text-lg font-bold text-gray-800 mb-3">Incoming Ride Requests</h2>
 
         {error && (
@@ -396,6 +400,9 @@ export function DriverDashboard() {
           ))}
         </div>
       </main>
+      <EmergencyContacts userId={user.uid} />
+      <footer className="p-4 text-center text-xs text-gray-500">BuddyRide Safety: In emergency press SOS or call 10111 / 112</footer>
+      <SOSButton rideId={acceptedRide?.id} userRole="driver" />
     </div>
   );
 }

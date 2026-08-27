@@ -7,6 +7,7 @@ import { PassengerDashboard } from './pages/dashboard/PassengerDashboard';
 import { DriverDashboard } from './pages/dashboard/DriverDashboard';
 import { AdminDashboard } from './pages/dashboard/AdminDashboard';
 import { RideStatus } from './pages/RideStatus';
+import SafetyDashboard from './pages/admin/SafetyDashboard';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SplashScreen } from './components/SplashScreen';
 import type { AppRole } from './types';
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="/driver/dashboard" element={<ProtectedDriverDashboard />} />
           <Route path="/dashboard/driver" element={<ProtectedDriverDashboard />} />
           <Route path="/admin/dashboard" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
+          <Route path="/admin/safety" element={<RequireAdmin><SafetyDashboard /></RequireAdmin>} />
           <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
           <Route path="*" element={<Navigate to="/" replace />} />

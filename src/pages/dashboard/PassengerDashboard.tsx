@@ -11,6 +11,8 @@ import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane'
 import { calculateRidePricing } from '../../lib/pricing';
 import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
+import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
+import { RatingModal } from '../../components/RatingModal';
 
 const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
@@ -65,8 +67,11 @@ export function PassengerDashboard() {
   const [tripDistanceKm, setTripDistanceKm] = useState<number | null>(null);
   const [driverPhone, setDriverPhone] = useState<string | null>(null);
   const [driverName, setDriverName] = useState<string | null>(null);
+  const [driverId, setDriverId] = useState<string | null>(null);
   const [fare, setFare] = useState<number | null>(null);
   const [rated, setRated] = useState(false);
+  const [ratingValue, setRatingValue] = useState<number | null>(null);
+  const [showRating, setShowRating] = useState(false);
   const [distance, setDistance] = useState<string>('');
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [estimatedFare, setEstimatedFare] = useState<number>(0);
@@ -283,6 +288,7 @@ export function PassengerDashboard() {
       setDriverPhone(null);
       setFare(null);
       setRated(false);
+      setRatingValue(null);
       setMessage('Ride requested! Looking for driver...');
     } catch (err) {
       console.error(err);
@@ -340,6 +346,12 @@ export function PassengerDashboard() {
       }
       if (typeof data.driverName === 'string') {
         setDriverName(data.driverName);
+      }
+      if (typeof data.driverId === 'string') {
+        setDriverId(data.driverId);
+      }
+      if (nextStatus === 'completed' && typeof data.driverId === 'string' && !rated) {
+        setShowRating(true);
       }
       if (typeof data.price === 'number') {
         setFare(data.price);
@@ -640,8 +652,14 @@ export function PassengerDashboard() {
           {isCompleted && (
             <div className="text-center mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-3 px-3">
               <p className="mb-2">Trip Complete. Pay R{fare ?? 0} cash to driver</p>
+              {driverId && !rated && (
+                <button type="button" onClick={() => setShowRating(true)} className="mb-2 rounded-lg bg-yellow-500 px-4 py-2 font-bold text-white">
+                  Rate your driver
+                </button>
+              )}
+              {rated && <p className="mb-2 font-semibold text-green-700">You rated {driverName ?? 'your driver'} {ratingValue}★</p>}
               <button
-                onClick={() => setRated(true)}
+                onClick={() => setShowRating(true)}
                 disabled={rated}
                 className="bg-orange-500 disabled:opacity-60 text-white font-bold py-2 px-4 rounded-lg"
               >
@@ -667,6 +685,12 @@ export function PassengerDashboard() {
           )}
         </div>
       </main>
+      {profile?.id && <EmergencyContacts userId={profile.id} />}
+      <footer className="p-4 text-center text-xs text-gray-500">BuddyRide Safety: In emergency press SOS or call 10111 / 112</footer>
+      <SOSButton rideId={rideId} userRole="passenger" />
+      {showRating && driverId && profile?.id && rideId && (
+        <RatingModal rideId={rideId} driverId={driverId} driverName={driverName} passengerId={profile.id} onSaved={(value) => { setRated(true); setRatingValue(value); setShowRating(false); }} />
+      )}
     </div>
   );
 }
