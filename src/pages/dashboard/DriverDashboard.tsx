@@ -26,6 +26,9 @@ type RideRequest = {
   driverId?: string | null;
   driverPhone?: string | null;
   passengerPhone?: string | null;
+  extras?: string[];
+  extrasFee?: number;
+  category?: string;
   createdAt?: unknown;
   arrivedAt?: unknown;
   tipAmount?: number;
@@ -59,6 +62,9 @@ export function DriverDashboard() {
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
+  const [acceptsPets, setAcceptsPets] = useState(false);
+  const [hasChildSeat, setHasChildSeat] = useState(false);
+  const [xlWithExtraBoot, setXlWithExtraBoot] = useState(false);
   const tipToastRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -72,6 +78,9 @@ export function DriverDashboard() {
           const profile = existing.data();
           setDriverProfile(profile);
           setDrivers([profile]);
+          setAcceptsPets(profile.petFriendly === true);
+          setHasChildSeat(profile.hasChildSeat === true);
+          setXlWithExtraBoot(profile.xlWithExtraBoot === true);
           return;
         }
 
@@ -97,11 +106,14 @@ export function DriverDashboard() {
     if (authLoading || !user) return;
 
     try {
-    const requestedQuery = query(collection(db, 'rides'), where('status', '==', 'searching'));
     const unsubscribe = onSnapshot(
-      requestedQuery,
+      query(collection(db, 'rides'), where('status', '==', 'searching')),
       (snapshot) => {
-        const nextRides = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest));
+        const nextRides = snapshot.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest))
+          .filter((ride) => !ride.extras?.includes('pet') || acceptsPets)
+          .filter((ride) => !ride.extras?.includes('childSeat') || hasChildSeat)
+          .filter((ride) => ride.category !== 'XL' || !ride.extras?.includes('luggage') || xlWithExtraBoot);
         setRides(nextRides);
         console.log('Driver rides:', nextRides);
       },
@@ -116,7 +128,7 @@ export function DriverDashboard() {
       setError('Failed to load ride requests.');
       return undefined;
     }
-  }, [authLoading, user]);
+  }, [acceptsPets, authLoading, hasChildSeat, user, xlWithExtraBoot]);
 
   const acceptRide = async (ride: RideRequest) => {
     const uid = auth.currentUser?.uid;
@@ -181,6 +193,24 @@ export function DriverDashboard() {
       setError('Failed to update ride status.');
     } finally {
       setUpdatingStatus(false);
+    }
+  };
+
+  const declineRide = async (ride: RideRequest) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    await updateRideStatus(ride.id, 'declined', { declinedBy: uid, declinedReason: 'driver_not_equipped' });
+  };
+
+  const saveDriverSettings = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    try {
+      await setDoc(doc(db, 'drivers', uid), { petFriendly: acceptsPets, hasChildSeat, xlWithExtraBoot }, { merge: true });
+      setError('Driver settings saved.');
+    } catch (err) {
+      console.error(err);
+      setError('Failed to save driver settings.');
     }
   };
 
@@ -316,6 +346,13 @@ export function DriverDashboard() {
         <p className="mb-3 rounded-lg bg-white p-3 text-sm font-semibold text-gray-700">
           Your rating: {Number(driverProfile?.avgRating ?? 0).toFixed(1)}★ ({Number(driverProfile?.totalRatings ?? 0)} trips)
         </p>
+        <section className="mb-4 rounded-lg bg-white p-3 text-sm text-gray-700">
+          <h3 className="font-bold">Vehicle capabilities</h3>
+          <label className="mt-2 block"><input type="checkbox" checked={acceptsPets} onChange={(event) => setAcceptsPets(event.target.checked)} /> I accept pets 🐶</label>
+          <label className="mt-2 block"><input type="checkbox" checked={hasChildSeat} onChange={(event) => setHasChildSeat(event.target.checked)} /> I have child seat 👶</label>
+          <label className="mt-2 block"><input type="checkbox" checked={xlWithExtraBoot} onChange={(event) => setXlWithExtraBoot(event.target.checked)} /> XL with extra boot</label>
+          <button type="button" onClick={() => void saveDriverSettings()} className="mt-3 rounded bg-gray-800 px-3 py-2 font-semibold text-white">Save settings</button>
+        </section>
         <h2 className="text-lg font-bold text-gray-800 mb-3">Incoming Ride Requests</h2>
 
         {error && (
@@ -431,6 +468,9 @@ export function DriverDashboard() {
                 >
                   {accepting === ride.id ? 'Accepting...' : 'Accept Ride'}
                 </button>
+                <button type="button" onClick={() => void declineRide(ride)} className="w-full rounded-lg border border-red-500 py-2 font-bold text-red-600 hover:bg-red-50">
+                  Decline if not equipped
+                </button>
               </div>
             </div>
           ))}
@@ -452,6 +492,8 @@ function RideDetails({ ride }: { ride: RideRequest }) {
   const total = Number(ride.fare ?? ride.price ?? 0);
   const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE;
   const tipAmount = Number(ride.tipAmount ?? 0);
+  const extrasFee = Number(ride.extrasFee ?? 0);
+  const extraLabels = (ride.extras ?? []).map((extra) => extra === 'pet' ? 'Pet' : extra === 'luggage' ? 'Luggage' : extra === 'childSeat' ? 'Child seat' : 'Extra stop');
   return (
     <div className="space-y-1 text-sm text-gray-700">
       <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>
@@ -459,6 +501,8 @@ function RideDetails({ ride }: { ride: RideRequest }) {
       <p><span className="font-semibold">Distance:</span> {typeof ride.distance === 'number' ? `${ride.distance} km` : ride.distance ?? '—'}</p>
       <p><span className="font-semibold">Fare:</span> R{total.toFixed(2)}</p>
       <p className="font-semibold text-green-700">You earn: R{driverPayout.toFixed(2)} (80%)</p>
+      {extraLabels.length > 0 && <p className="font-semibold text-orange-700">⚠️ {extraLabels.join(' + ')}</p>}
+      {extrasFee > 0 && <p>Extras: R{extrasFee.toFixed(2)} (you get R{(extrasFee * DRIVER_RATE).toFixed(2)})</p>}
       <p>Tip (100%): R{tipAmount.toFixed(2)}</p>
       <p className="font-semibold text-green-700">Total you get: R{(driverPayout + tipAmount).toFixed(2)}</p>
     </div>

@@ -9,7 +9,7 @@ import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane';
 import { calculateRidePricing } from '../../lib/pricing';
-import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE } from '../../config/pricing';
+import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE, RIDE_EXTRAS } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { RatingModal } from '../../components/RatingModal';
@@ -81,6 +81,10 @@ export function PassengerDashboard() {
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
   const [mapAddress, setMapAddress] = useState('');
   const [searchText, setSearchText] = useState('');
+  const [rideCategory, setRideCategory] = useState<'Standard' | 'Comfort' | 'XL'>('Standard');
+  const [passengerCount, setPassengerCount] = useState(1);
+  const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
+  const extrasFee = selectedExtras.reduce((total, extra) => total + RIDE_EXTRAS[extra].fee, 0);
 
   useEffect(() => {
     if (!loadError) return;
@@ -147,7 +151,7 @@ export function PassengerDashboard() {
 
         const km = leg.distance.value / 1000;
         const { totalToPassenger } = calculateRidePricing(km);
-        const fareEstimate = totalToPassenger;
+        const fareEstimate = totalToPassenger + extrasFee;
         setDistance(leg.distance.text);
         setDistanceKm(km);
         setEstimatedFare(fareEstimate);
@@ -271,6 +275,12 @@ export function PassengerDashboard() {
         dropoffLatLng: { lat: dropoffLocation.lat, lng: dropoffLocation.lng },
         distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
         price: estimatedFare,
+        fare: estimatedFare - BOOKING_FEE - extrasFee,
+        totalFare: estimatedFare,
+        category: rideCategory,
+        passengerCount,
+        extras: selectedExtras,
+        extrasFee,
         status: 'searching',
         passengerId: profile?.id ?? 'test123',
         pickupPlaceId: pickupPlaceId ?? null,
@@ -309,7 +319,7 @@ export function PassengerDashboard() {
       setEstimatedFare(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickupLocation, dropoffLocation]);
+  }, [pickupLocation, dropoffLocation, extrasFee]);
 
   // Follow the requested ride's status and the driver's live location once accepted.
   useEffect(() => {
@@ -648,8 +658,26 @@ export function PassengerDashboard() {
 
           {!rideId && distance && estimatedFare > 0 && (
             <div className="bg-orange-100 p-3 rounded-lg mt-3">
+              <div className="mb-3 flex gap-2">
+                {(['Standard', 'Comfort', 'XL'] as const).map((category) => (
+                  <button key={category} type="button" onClick={() => setRideCategory(category)} className={`rounded-full px-3 py-1 text-sm font-semibold ${rideCategory === category ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>
+                    {category}
+                  </button>
+                ))}
+                <select value={passengerCount} onChange={(event) => setPassengerCount(Number(event.target.value))} className="rounded border px-2 text-sm">
+                  {Array.from({ length: 6 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} pax</option>)}
+                </select>
+              </div>
+              <p className="mb-2 font-semibold text-gray-700">Add extras</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(Object.entries(RIDE_EXTRAS) as Array<[keyof typeof RIDE_EXTRAS, (typeof RIDE_EXTRAS)[keyof typeof RIDE_EXTRAS]]>).map(([key, extra]) => {
+                  const enabled = key !== 'childSeat' || rideCategory === 'Comfort' || rideCategory === 'XL';
+                  return <label key={key} className={`flex items-center gap-2 rounded-lg bg-white p-2 text-sm ${!enabled ? 'opacity-40' : ''}`}><input type="checkbox" disabled={!enabled} checked={selectedExtras.includes(key)} onChange={() => setSelectedExtras((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /> <span>{extra.icon} {extra.label} +R{extra.fee}</span></label>;
+                })}
+              </div>
               <p>Distance: {distance}</p>
-              <p>Ride R{(estimatedFare - BOOKING_FEE).toFixed(2)} + Booking R{BOOKING_FEE.toFixed(2)} = R{estimatedFare.toFixed(2)}</p>
+              <p>Ride R{(estimatedFare - BOOKING_FEE - extrasFee).toFixed(2)} + Booking R{BOOKING_FEE.toFixed(2)}{extrasFee > 0 ? ` + Extras R${extrasFee.toFixed(2)}` : ''} = R{estimatedFare.toFixed(2)}</p>
+              {rideCategory === 'XL' && passengerCount === 6 && selectedExtras.includes('luggage') && <p className="mt-2 font-semibold text-green-700">Perfect for airport trip</p>}
             </div>
           )}
 
