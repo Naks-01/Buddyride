@@ -52,6 +52,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomeOrRedirect />} />
           <Route path="/login" element={<LoginRouter />} />
+          <Route path="/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
           <Route path="/dashboard/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
           <Route path="/dashboard/driver" element={<RequireRole role="driver"><DriverDashboard /></RequireRole>} />
           <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />

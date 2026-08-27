@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
+import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
+import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { t } from '../lib/i18n';
 import { LangSelector } from '../components/LangSelector';
@@ -10,15 +10,22 @@ import { LoadingScreen } from '../components/LoadingScreen';
 import { PhoneIcon, XIcon, CheckIcon } from '../components/Icons';
 import type { AppRole } from '../types';
 
+declare global {
+  interface Window {
+    confirmationResult?: ConfirmationResult;
+  }
+}
+
 interface PhoneLoginProps {
   role: AppRole;
   onBack: () => void;
 }
 
 export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
+  const auth = getAuth();
   const { lang, refreshProfile } = useAuth();
   const navigate = useNavigate();
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState('+27793051213');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -28,6 +35,20 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
   const verifierRef = useRef<RecaptchaVerifier | null>(null);
   const roleIcon = role === 'driver' ? '🚗' : role === 'admin' ? '🛡️' : '👤';
   const roleLabel = role === 'driver' ? t('driver', lang) : role === 'admin' ? t('admin', lang) : t('passenger', lang);
+
+  useEffect(() => {
+    if (!verifierRef.current) {
+      verifierRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
+        size: 'invisible',
+      });
+      void verifierRef.current.render();
+    }
+
+    return () => {
+      verifierRef.current?.clear();
+      verifierRef.current = null;
+    };
+  }, []);
 
   const formatPhone = (input: string): string => {
     let cleaned = input.replace(/\D/g, '');
@@ -40,15 +61,6 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
     return cleaned;
   };
 
-  const getVerifier = (): RecaptchaVerifier => {
-    if (!verifierRef.current) {
-      verifierRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-      });
-    }
-    return verifierRef.current;
-  };
-
   const sendOtp = async () => {
     setError('');
     if (phone.replace(/\D/g, '').length < 10) {
@@ -58,8 +70,13 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
     setLoading(true);
     try {
       const formattedPhone = formatPhone(phone);
-      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, getVerifier());
+      if (!verifierRef.current) {
+        setError('Security verification is still loading. Please try again.');
+        return;
+      }
+      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, verifierRef.current);
       confirmationRef.current = confirmation;
+      window.confirmationResult = confirmation;
       setOtpSent(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send OTP');
@@ -74,13 +91,14 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
       setError(t('enterOtp', lang));
       return;
     }
-    if (!confirmationRef.current) {
+    const confirmation = window.confirmationResult ?? confirmationRef.current;
+    if (!confirmation) {
       setError('Please request a new code');
       return;
     }
     setLoading(true);
     try {
-      const result = await confirmationRef.current.confirm(otp);
+      const result = await confirmation.confirm(otp);
       const user = result.user;
 
       const userRef = doc(db, 'users', user.uid);
@@ -102,13 +120,8 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
       }
 
       await refreshProfile();
-      if (role === 'driver') {
-        navigate('/driver-home', { replace: true });
-      } else if (role === 'admin') {
-        navigate('/admin-dashboard', { replace: true });
-      } else {
-        navigate('/request-ride', { replace: true });
-      }
+      localStorage.setItem(`${role}LoggedIn`, 'true');
+      navigate('/passenger', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid code');
     } finally {
@@ -148,6 +161,7 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
       {!otpSent ? (
         <>
           <p className="role-subtitle">{t('enterPhone', lang)}</p>
+          <p style={{ fontSize: 12 }}>Demo: use +27793051213 and code 123456</p>
 
           <div className="form-group w-full">
             <label className="form-label">{t('fullName', lang)}</label>
