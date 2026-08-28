@@ -4,6 +4,7 @@ import { IdVerificationForm } from '../components/IdVerificationForm';
 import { XIcon } from '../components/Icons';
 import { LoadingScreen } from '../components/LoadingScreen';
 
+// NETA VERIFICATION - Re-enable after 20 drivers in Polokwane
 export function Profile() {
   const navigate = useNavigate();
   const { profile, loading, refreshProfile } = useAuth();

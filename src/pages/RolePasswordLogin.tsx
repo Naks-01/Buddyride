@@ -44,7 +44,18 @@ export default function RolePasswordLogin() {
 
     try {
       if (isSignup) {
-        await createUserWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
+        const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
+        if (role === 'driver') {
+          await setDoc(doc(db, 'users', credential.user.uid), {
+            uid: credential.user.uid,
+            email: credential.user.email,
+            role,
+          }, { merge: true });
+          await refreshProfile();
+          localStorage.setItem(`${role}LoggedIn`, 'true');
+          navigate('/driver/dashboard', { replace: true });
+          return;
+        }
         setIsSignup(false);
         setError('Account created. Log in to continue.');
         return;
