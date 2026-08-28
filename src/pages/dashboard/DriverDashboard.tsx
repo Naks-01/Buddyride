@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import {
   Car as CarPin,
   HelpCircle,
@@ -17,12 +16,11 @@ import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
-import { calcDistance, DARK_MAP_STYLE, DEFAULT_CENTER as DEFAULT_CENTER_ARR } from '../../lib/maps';
+import { calcDistance } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
-
-const DEFAULT_MAP_CENTER = { lat: DEFAULT_CENTER_ARR[0], lng: DEFAULT_CENTER_ARR[1] };
+import AppMap from '../../components/Map/AppMap';
 
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
@@ -98,13 +96,8 @@ export function DriverDashboard() {
   const knownRideIdsRef = useRef<Set<string>>(new Set());
   const [isOnline, setIsOnline] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const [todayEarnings, setTodayEarnings] = useState(0);
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
-  const { isLoaded: mapsLoaded } = useJsApiLoader({
-    googleMapsApiKey: googleMapsApiKey.length > 0 ? googleMapsApiKey : 'missing-key',
-  });
+  const [centerTrigger, setCenterTrigger] = useState(0);
 
   const toggleOnline = async () => {
     const next = !isOnline;
@@ -449,23 +442,7 @@ export function DriverDashboard() {
       );
     });
 
-  // Watch the driver's own position for the map marker, independent of any active trip.
-  useEffect(() => {
-    if (!navigator.geolocation) return;
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => setDriverLocation({ lat: position.coords.latitude, lng: position.coords.longitude }),
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
-
-  const recenterMap = () => {
-    if (mapRef.current && driverLocation) {
-      mapRef.current.panTo(driverLocation);
-      mapRef.current.setZoom(16);
-    }
-  };
+  const recenterMap = () => setCenterTrigger((prev) => prev + 1);
 
   useEffect(() => {
     if (!acceptedRide || acceptedRide.status !== 'accepted' || !navigator.geolocation) return;
@@ -539,32 +516,15 @@ export function DriverDashboard() {
     return <div className="min-h-screen bg-[#121212] p-8 text-white">Loading...</div>;
   }
 
-  const mapsAvailable = googleMapsApiKey.length > 0 && mapsLoaded;
   const hasActiveOverlay = Boolean(acceptedRide) || rides.length > 0;
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#121212] text-white">
-      <div className="absolute inset-0">
-        {mapsAvailable ? (
-          <GoogleMap
-            mapContainerClassName="h-full w-full"
-            center={driverLocation ?? DEFAULT_MAP_CENTER}
-            zoom={15}
-            onLoad={(map) => {
-              mapRef.current = map;
-            }}
-            options={{ styles: DARK_MAP_STYLE, disableDefaultUI: true, zoomControl: false, gestureHandling: 'greedy' }}
-          >
-            {driverLocation && <Marker position={driverLocation} icon="https://maps.google.com/mapfiles/kml/shapes/cabs.png" />}
-          </GoogleMap>
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[#121212] text-sm text-gray-500">
-            {googleMapsApiKey ? 'Loading map...' : 'Map unavailable - missing API key'}
-          </div>
-        )}
+      <div className="absolute inset-0 top-0 bottom-[72px] z-0">
+        <AppMap centerBtn={centerTrigger} />
       </div>
 
-      <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 pt-4">
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-4 pointer-events-auto">
         <button
           type="button"
           onClick={() => setIsDrawerOpen(true)}
@@ -600,7 +560,7 @@ export function DriverDashboard() {
       )}
 
       {!hasActiveOverlay && (
-        <div className="absolute right-4 bottom-24 z-20 flex flex-col gap-3">
+        <div className="absolute right-4 bottom-24 z-10 flex flex-col gap-3 pointer-events-auto">
           <button type="button" onClick={recenterMap} aria-label="Locate me" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
             <LocateFixed size={20} />
           </button>
@@ -614,14 +574,14 @@ export function DriverDashboard() {
         <button
           type="button"
           onClick={() => void toggleOnline()}
-          className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#00C853] px-8 py-4 text-lg font-bold text-white shadow-lg hover:bg-[#00b34b]"
+          className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#00C853] px-8 py-4 text-lg font-bold text-white shadow-lg hover:bg-[#00b34b] pointer-events-auto"
         >
           GO ONLINE
         </button>
       )}
 
       {isOnline && !hasActiveOverlay && (
-        <div className="absolute left-1/2 top-24 z-20 flex -translate-x-1/2 flex-col items-center gap-3">
+        <div className="absolute left-1/2 top-24 z-10 flex -translate-x-1/2 flex-col items-center gap-3 pointer-events-auto">
           <div className="flex items-center gap-2 rounded-full bg-[#00C853] px-6 py-2 font-bold text-white shadow-lg">
             <span className="h-2 w-2 rounded-full bg-white" /> You're online
           </div>
@@ -799,7 +759,7 @@ export function DriverDashboard() {
         </div>
       )}
 
-      <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-around bg-[#2A2D36] py-3">
+      <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-around bg-[#2A2D36] py-3 pointer-events-auto">
         <button type="button" className="flex flex-col items-center gap-1 text-white">
           <HomeNav size={20} />
           <span className="text-[11px] font-semibold">Home</span>
