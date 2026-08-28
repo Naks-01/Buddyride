@@ -1,16 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
-import { ShieldAlert, ShieldCheck } from 'lucide-react';
+import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import {
+  Car as CarPin,
+  Gift,
+  HelpCircle,
+  Home as HomeNav,
+  LocateFixed,
+  Lock,
+  Menu,
+  ShieldAlert,
+  ShieldCheck,
+  SlidersHorizontal,
+  Star,
+  Wallet,
+  Zap,
+} from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { LogOutIcon } from '../../components/Icons';
-import { Logo } from '../../components/Logo';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
-import { calcDistance } from '../../lib/maps';
+import { calcDistance, DARK_MAP_STYLE, DEFAULT_CENTER as DEFAULT_CENTER_ARR } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { isSoundMuted, setSoundMuted, startRequestLoop, stopRequestLoop } from '../../utils/sound';
+
+const DEFAULT_MAP_CENTER = { lat: DEFAULT_CENTER_ARR[0], lng: DEFAULT_CENTER_ARR[1] };
+
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
 type Stop = { id: string; address: string; lat: number | null; lng: number | null };
@@ -84,12 +101,31 @@ export function DriverDashboard() {
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
   const [soundMuted, setSoundMutedState] = useState(isSoundMuted());
+  const [isOnline, setIsOnline] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
+  const [todayEarnings, setTodayEarnings] = useState(0);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
+  const { isLoaded: mapsLoaded } = useJsApiLoader({
+    googleMapsApiKey: googleMapsApiKey.length > 0 ? googleMapsApiKey : 'missing-key',
+  });
 
   const toggleMute = () => {
     const next = !soundMuted;
     setSoundMutedState(next);
     setSoundMuted(next);
     if (next) stopRequestLoop();
+  };
+
+  const toggleOnline = async () => {
+    const next = !isOnline;
+    setIsOnline(next);
+    if (user) {
+      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: next }).catch((err) => {
+        console.error('Failed to update online status:', err);
+      });
+    }
   };
 
   useEffect(() => {
@@ -107,6 +143,7 @@ export function DriverDashboard() {
           const profile = existing.data();
           setDriverProfile(profile);
           setDrivers([profile]);
+          setIsOnline(Boolean(profile.isOnline));
           return;
         }
 
@@ -337,6 +374,9 @@ export function DriverDashboard() {
   };
   const completeTrip = (ride: RideRequest) => {
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed' } : prev));
+    const total = Number(ride.fare ?? ride.price ?? 0);
+    const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE + Number(ride.tipAmount ?? 0);
+    setTodayEarnings((prev) => prev + driverPayout);
     void updateRideStatus(ride.id, 'completed', { completedAt: serverTimestamp() });
   };
 
@@ -405,6 +445,24 @@ export function DriverDashboard() {
       );
     });
 
+  // Watch the driver's own position for the map marker, independent of any active trip.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => setDriverLocation({ lat: position.coords.latitude, lng: position.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  const recenterMap = () => {
+    if (mapRef.current && driverLocation) {
+      mapRef.current.panTo(driverLocation);
+      mapRef.current.setZoom(16);
+    }
+  };
+
   useEffect(() => {
     if (!acceptedRide || acceptedRide.status !== 'accepted' || !navigator.geolocation) return;
 
@@ -467,7 +525,7 @@ export function DriverDashboard() {
   };
 
   if (authLoading) {
-    return <div className="min-h-screen bg-black p-8 text-white">Loading...</div>;
+    return <div className="min-h-screen bg-[#121212] p-8 text-white">Loading...</div>;
   }
 
   if (typeof window === 'undefined') {
@@ -480,42 +538,142 @@ export function DriverDashboard() {
   }
 
   if (!drivers && !error) {
-    return <div className="min-h-screen bg-black p-8 text-white">Loading...</div>;
+    return <div className="min-h-screen bg-[#121212] p-8 text-white">Loading...</div>;
   }
 
+  const mapsAvailable = googleMapsApiKey.length > 0 && mapsLoaded;
+  const hasActiveOverlay = Boolean(acceptedRide) || rides.length > 0;
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <header className="bg-white border-b border-gray-200 px-4 py-4 flex justify-between items-center">
-        <Logo size={48} />
-        <div className="flex items-center gap-2">
+    <div className="relative h-screen w-screen overflow-hidden bg-[#121212] text-white">
+      <div className="absolute inset-0">
+        {mapsAvailable ? (
+          <GoogleMap
+            mapContainerClassName="h-full w-full"
+            center={driverLocation ?? DEFAULT_MAP_CENTER}
+            zoom={15}
+            onLoad={(map) => {
+              mapRef.current = map;
+            }}
+            options={{ styles: DARK_MAP_STYLE, disableDefaultUI: true, zoomControl: false, gestureHandling: 'greedy' }}
+          >
+            {driverLocation && <Marker position={driverLocation} icon="https://maps.google.com/mapfiles/kml/shapes/cabs.png" />}
+          </GoogleMap>
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-[#121212] text-sm text-gray-500">
+            {googleMapsApiKey ? 'Loading map...' : 'Map unavailable - missing API key'}
+          </div>
+        )}
+      </div>
+
+      <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 pt-4">
+        <button
+          type="button"
+          onClick={() => setShowMenu((prev) => !prev)}
+          aria-label="Menu"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg"
+        >
+          <Menu size={20} />
+        </button>
+        <div className="flex flex-col items-center rounded-full bg-[#3A3D45] px-5 py-2 shadow-lg">
+          <span className="text-base font-bold leading-none text-white">R {todayEarnings.toFixed(2)}</span>
+          <span className="text-[11px] text-gray-400">Today</span>
+        </div>
+        <button type="button" aria-label="Safety" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
+          <ShieldCheck size={20} />
+        </button>
+      </div>
+
+      {showMenu && (
+        <div className="absolute left-4 top-16 z-30 w-52 rounded-xl bg-[#2A2D36] p-2 shadow-2xl">
+          <p className="px-2 py-1 text-xs text-gray-400">
+            Rating {Number(driverProfile?.avgRating ?? 0).toFixed(1)}★ ({Number(driverProfile?.totalRatings ?? 0)} trips)
+          </p>
           <button
             type="button"
             onClick={toggleMute}
-            aria-label={soundMuted ? 'Unmute notifications' : 'Mute notifications'}
-            className="rounded-lg border border-gray-200 px-3 py-2 text-lg hover:bg-gray-50"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-white hover:bg-[#3A3D45]"
           >
-            {soundMuted ? '🔇' : '🔊'}
+            {soundMuted ? '🔇 Unmute notifications' : '🔊 Mute notifications'}
           </button>
-          <button onClick={() => void logout()} className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-white hover:bg-red-700">
-            <LogOutIcon size={20} /> Logout
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-red-400 hover:bg-[#3A3D45]"
+          >
+            <LogOutIcon size={16} /> Logout
           </button>
         </div>
-      </header>
+      )}
 
-      <main className="flex-1 p-4 max-w-2xl w-full mx-auto">
-        <p className="mb-3 rounded-lg bg-white p-3 text-sm font-semibold text-gray-700">
-          Your rating: {Number(driverProfile?.avgRating ?? 0).toFixed(1)}★ ({Number(driverProfile?.totalRatings ?? 0)} trips)
-        </p>
-        <h2 className="text-lg font-bold text-gray-800 mb-3">Incoming Ride Requests</h2>
+      {error && (
+        <div className="absolute inset-x-4 top-20 z-30 rounded-lg border border-red-500 bg-red-900/90 px-4 py-2 text-sm text-white shadow-lg">
+          {error}
+        </div>
+      )}
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
-            {error}
+      {!hasActiveOverlay && (
+        <div className="absolute right-4 bottom-[27rem] z-20 flex flex-col gap-3">
+          <button type="button" onClick={recenterMap} aria-label="Locate me" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
+            <LocateFixed size={20} />
+          </button>
+          <button type="button" aria-label="Filter" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
+            <SlidersHorizontal size={20} />
+          </button>
+        </div>
+      )}
+
+      {!isOnline && !hasActiveOverlay && (
+        <button
+          type="button"
+          onClick={() => void toggleOnline()}
+          className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#00C853] px-10 py-5 text-lg font-bold text-white shadow-2xl hover:bg-[#00b34b]"
+        >
+          Go online
+        </button>
+      )}
+
+      {isOnline && !hasActiveOverlay && (
+        <div className="absolute left-1/2 top-24 z-20 -translate-x-1/2 rounded-full bg-[#00C853] px-4 py-1.5 text-xs font-bold text-white shadow-lg">
+          You're online
+        </div>
+      )}
+
+      {!acceptedRide && rides.length > 0 && (
+        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[65vh] overflow-y-auto px-4">
+          <div className="space-y-3 pb-2">
+            {rides.map((ride) => (
+              <div key={ride.id} className="rounded-2xl bg-white p-4 shadow-2xl">
+                <RideDetails ride={ride} />
+                <PassengerBadge passengerId={ride.passengerId} revealed={false} />
+                <p className="mb-3 text-sm text-gray-500">Passenger: {ride.passengerId ?? 'test123'}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    onClick={() => navigateToPickup(ride)}
+                    className="w-full rounded-lg border border-orange-500 py-2 font-bold text-orange-600 hover:bg-orange-50"
+                  >
+                    Open in Maps
+                  </button>
+                  <button
+                    onClick={() => void acceptRide(ride)}
+                    disabled={accepting === ride.id}
+                    className="w-full rounded-lg bg-orange-500 py-2 font-bold text-white disabled:opacity-60"
+                  >
+                    {accepting === ride.id ? 'Accepting...' : 'Accept Ride'}
+                  </button>
+                  <button type="button" onClick={() => void declineRide(ride)} className="w-full rounded-lg border border-red-500 py-2 font-bold text-red-600 hover:bg-red-50">
+                    Decline if not equipped
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
-        )}
+        </div>
+      )}
 
-        {acceptedRide && (
-          <section className="mb-5 rounded-xl border border-green-200 bg-green-50 p-4 shadow-sm">
+      {acceptedRide && (
+        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[78vh] overflow-y-auto px-4">
+          <section className="mb-2 rounded-2xl border border-green-200 bg-white p-4 shadow-2xl">
             <h2 className="mb-3 text-lg font-bold text-green-900">Accepted Ride</h2>
             <RideDetails ride={acceptedRide} />
             <PassengerBadge passengerId={acceptedRide.passengerId} revealed />
@@ -642,40 +800,75 @@ export function DriverDashboard() {
               </div>
             )}
           </section>
-        )}
+        </div>
+      )}
 
-        {rides.length === 0 && !acceptedRide && <p className="text-sm text-gray-500">No ride requests right now.</p>}
-
-        <div className="space-y-3">
-          {rides.map((ride) => (
-            <div key={ride.id} className="bg-white border border-orange-200 rounded-xl p-4 shadow-sm">
-              <RideDetails ride={ride} />
-              <PassengerBadge passengerId={ride.passengerId} revealed={false} />
-              <p className="text-gray-500 text-sm mb-3">Passenger: {ride.passengerId ?? 'test123'}</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <button
-                  onClick={() => navigateToPickup(ride)}
-                  className="w-full rounded-lg border border-orange-500 py-2 font-bold text-orange-600 hover:bg-orange-50"
-                >
-                  Open in Maps
-                </button>
-                <button
-                  onClick={() => void acceptRide(ride)}
-                  disabled={accepting === ride.id}
-                  className="w-full rounded-lg bg-orange-500 py-2 font-bold text-white disabled:opacity-60"
-                >
-                  {accepting === ride.id ? 'Accepting...' : 'Accept Ride'}
-                </button>
-                <button type="button" onClick={() => void declineRide(ride)} className="w-full rounded-lg border border-red-500 py-2 font-bold text-red-600 hover:bg-red-50">
-                  Decline if not equipped
-                </button>
+      {!hasActiveOverlay && (
+        <div className="absolute inset-x-0 bottom-16 z-10 rounded-t-3xl bg-[#1E2128] px-4 pb-4 pt-3 shadow-[0_-8px_24px_rgba(0,0,0,0.4)]">
+          <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-gray-600" />
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-2xl bg-[#2A2D36] p-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500/20">
+                <Zap size={20} className="text-[#00C853]" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white">Meet the new auto-accept</p>
+                <p className="text-xs text-gray-400">See what's changed</p>
               </div>
             </div>
-          ))}
+            <div className="flex items-center gap-3 rounded-2xl bg-[#2A2D36] p-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-500/20">
+                <Gift size={20} className="text-purple-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white">Earn R 800</p>
+                <p className="text-xs text-gray-400">Invite friends to drive</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-[#2A2D36] p-3">
+                <Lock size={16} className="mb-2 text-red-400" />
+                <p className="text-sm font-bold text-white">Bolt Rewards</p>
+                <p className="text-xs font-semibold text-red-400">Inactive</p>
+              </div>
+              <div className="rounded-2xl bg-[#2A2D36] p-3">
+                <p className="text-xs text-gray-400">Driver score</p>
+                <p className="text-lg font-bold text-white">90%</p>
+              </div>
+              <div className="rounded-2xl bg-[#2A2D36] p-3">
+                <Star size={16} className="mb-2 text-yellow-400" />
+                <p className="text-lg font-bold text-white">{Number(driverProfile?.avgRating ?? 4.94).toFixed(2)}</p>
+                <p className="text-xs text-gray-400">Star rating</p>
+              </div>
+              <div className="rounded-2xl bg-[#2A2D36] p-3">
+                <p className="text-xs text-gray-400">Acceptance rate</p>
+                <p className="text-lg font-bold text-white">74%</p>
+              </div>
+            </div>
+          </div>
         </div>
-      </main>
+      )}
+
+      <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-around bg-[#2A2D36] py-3">
+        <button type="button" className="flex flex-col items-center gap-1 text-white">
+          <HomeNav size={20} />
+          <span className="text-[11px] font-semibold">Home</span>
+        </button>
+        <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+          <Wallet size={20} />
+          <span className="text-[11px]">Earn more</span>
+        </button>
+        <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+          <CarPin size={20} />
+          <span className="text-[11px]">Rides</span>
+        </button>
+        <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+          <HelpCircle size={20} />
+          <span className="text-[11px]">Help</span>
+        </button>
+      </div>
+
       <EmergencyContacts userId={user.uid} />
-      <footer className="p-4 text-center text-xs text-gray-500">BuddyRide Safety: In emergency press SOS or call 10111 / 112</footer>
       <SOSButton rideId={acceptedRide?.id} userRole="driver" />
     </div>
   );
