@@ -46,7 +46,12 @@ export default function AppMap({ centerBtn }: { centerBtn: number }) {
       zoomControl={false}
       ref={setMap}
     >
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution="" maxZoom={20} />
+      <TileLayer
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution="&copy; OpenStreetMap contributors"
+        className="dark-tiles"
+        maxZoom={19}
+      />
       <Marker position={pos} icon={carIcon} />
       <Recenter pos={pos} />
     </MapContainer>

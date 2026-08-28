@@ -330,6 +330,11 @@ input {
   font-family: inherit;
 }
 
+/* Bolt-style dark map from free OpenStreetMap tiles - no API key required. */
+.dark-tiles {
+  filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7) !important;
+}
+
 .leaflet-control-attribution {
   font-size: 9px !important;
   background: rgba(10, 10, 10, 0.7) !important;
