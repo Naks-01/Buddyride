@@ -55,6 +55,17 @@ export const RIDE_CATEGORIES = [
     base: 90,
     perKm: 18,
   },
+  {
+    id: 'send',
+    name: 'Send',
+    emoji: '📦',
+    maxPassengers: 0,
+    icon: 'package',
+    description: 'Send parcels, documents',
+    base: 40,
+    perKm: 9,
+    isDelivery: true,
+  },
 ] as const;
 
 export type RideCategory = (typeof RIDE_CATEGORIES)[number];

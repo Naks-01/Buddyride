@@ -33,6 +33,12 @@ type RideRequest = {
   createdAt?: unknown;
   arrivedAt?: unknown;
   tipAmount?: number;
+  type?: 'ride' | 'send';
+  passengerCount?: number;
+  packageDescription?: string;
+  recipientName?: string;
+  recipientPhone?: string;
+  packageSize?: 'small' | 'medium' | 'large';
 };
 
 type Coordinates = { lat: number; lng: number };
@@ -539,12 +545,29 @@ function RideDetails({ ride }: { ride: RideRequest }) {
   const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE;
   const tipAmount = Number(ride.tipAmount ?? 0);
   const extrasFee = Number(ride.extrasFee ?? 0);
+  const isSend = ride.type === 'send';
   const extraLabels = (ride.extras ?? []).map((extra) => extra === 'pet' ? 'Pet' : extra === 'luggage' ? 'Luggage' : extra === 'childSeat' ? 'Child seat' : 'Extra stop');
   return (
     <div className="space-y-1 text-sm text-gray-700">
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${isSend ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'}`}>
+        {isSend ? `📦 SEND${ride.packageSize ? ` (${ride.packageSize})` : ''}` : `👤 ${ride.passengerCount ?? 1}`}
+      </span>
       <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>
       <p><span className="font-semibold">Dropoff:</span> {formatLocation(ride.dropoff)}</p>
       <p><span className="font-semibold">Distance:</span> {typeof ride.distance === 'number' ? `${ride.distance} km` : ride.distance ?? '—'}</p>
+      {isSend && (
+        <>
+          {ride.packageDescription && <p><span className="font-semibold">Sending:</span> {ride.packageDescription}</p>}
+          {ride.recipientName && <p><span className="font-semibold">Recipient:</span> {ride.recipientName}</p>}
+          {ride.recipientPhone && (
+            <p>
+              <span className="font-semibold">Recipient phone:</span>{' '}
+              <a href={`tel:${ride.recipientPhone}`} className="font-semibold text-orange-600 underline">{ride.recipientPhone}</a>
+              {' '}<span className="text-xs text-gray-500">(call on arrival)</span>
+            </p>
+          )}
+        </>
+      )}
       <p><span className="font-semibold">Fare:</span> R{total.toFixed(2)}</p>
       <p className="font-semibold text-green-700">You earn: R{driverPayout.toFixed(2)} (80%)</p>
       {extraLabels.length > 0 && <p className="font-semibold text-orange-700">⚠️ {extraLabels.join(' + ')}</p>}

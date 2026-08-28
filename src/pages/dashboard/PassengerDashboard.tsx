@@ -98,6 +98,13 @@ export function PassengerDashboard() {
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
   const [mapAddress, setMapAddress] = useState('');
   const [searchText, setSearchText] = useState('');
+  const [mode, setMode] = useState<'ride' | 'send'>('ride');
+  const [tripType, setTripType] = useState<'ride' | 'send'>('ride');
+  const [packageDescription, setPackageDescription] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [recipientPhone, setRecipientPhone] = useState('');
+  const [packageSize, setPackageSize] = useState<'small' | 'medium' | 'large'>('small');
+  const [sendPaymentMethod, setSendPaymentMethod] = useState<'cash' | 'card'>('cash');
   const [rideCategory, setRideCategory] = useState<RideCategoryId>('standard');
   const [passengerCount, setPassengerCount] = useState(3);
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
@@ -189,6 +196,17 @@ export function PassengerDashboard() {
       return;
     }
     setRideCategory(catId);
+  };
+
+  const selectMode = (nextMode: 'ride' | 'send') => {
+    setMode(nextMode);
+    setMessage('');
+    if (nextMode === 'send') {
+      setRideCategory('send');
+    } else if (rideCategory === 'send') {
+      setRideCategory('standard');
+      setPassengerCount(3);
+    }
   };
 
   const handleMapIdle = () => {
@@ -290,6 +308,10 @@ export function PassengerDashboard() {
     setLocationStep('pickup');
     setMapAddress('');
     setSearchText('');
+    setPackageDescription('');
+    setRecipientName('');
+    setRecipientPhone('');
+    setPackageSize('small');
   };
 
   const requestRide = async () => {
@@ -297,30 +319,62 @@ export function PassengerDashboard() {
       setMessage('Drop both a pickup (A) and dropoff (B) pin on the map.');
       return;
     }
+    if (mode === 'send' && (!packageDescription.trim() || !recipientName.trim() || !recipientPhone.trim())) {
+      setMessage('Tell us what you are sending and the recipient name + phone number.');
+      return;
+    }
     setRequesting(true);
     setMessage('');
     try {
-      const rideRef = await addDoc(collection(db, 'rides'), {
-        pickup: { address: pickupAddress || 'Seshego Zone X', lat: pickupLocation.lat, lng: pickupLocation.lng, source: 'manual_pin' },
-        dropoff: { address: dropoffAddress || 'Seshego Zone X', lat: dropoffLocation.lat, lng: dropoffLocation.lng, source: 'manual_pin' },
-        pickupLatLng: { lat: pickupLocation.lat, lng: pickupLocation.lng },
-        dropoffLatLng: { lat: dropoffLocation.lat, lng: dropoffLocation.lng },
-        distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
-        price: estimatedFare,
-        fare: estimatedFare - BOOKING_FEE - extrasFee,
-        totalFare: estimatedFare,
-        category: rideCategory,
-        passengerCount,
-        extras: selectedExtras,
-        extrasFee,
-        status: 'searching',
-        passengerId: profile?.id ?? 'test123',
-        pickupPlaceId: pickupPlaceId ?? null,
-        dropoffPlaceId: dropoffPlaceId ?? null,
-        createdAt: serverTimestamp(),
-      });
+      const rideRef = await addDoc(
+        collection(db, 'rides'),
+        mode === 'send'
+          ? {
+              type: 'send',
+              packageDescription: packageDescription.trim(),
+              recipientName: recipientName.trim(),
+              recipientPhone: recipientPhone.trim(),
+              packageSize,
+              pickup: { address: pickupAddress || 'Seshego Zone X', lat: pickupLocation.lat, lng: pickupLocation.lng, source: 'manual_pin' },
+              dropoff: { address: dropoffAddress || 'Seshego Zone X', lat: dropoffLocation.lat, lng: dropoffLocation.lng, source: 'manual_pin' },
+              pickupLatLng: { lat: pickupLocation.lat, lng: pickupLocation.lng },
+              dropoffLatLng: { lat: dropoffLocation.lat, lng: dropoffLocation.lng },
+              distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
+              price: estimatedFare,
+              fare: estimatedFare - BOOKING_FEE,
+              totalFare: estimatedFare,
+              category: 'send',
+              paymentMethod: sendPaymentMethod,
+              status: 'searching',
+              passengerId: profile?.id ?? 'test123',
+              pickupPlaceId: pickupPlaceId ?? null,
+              dropoffPlaceId: dropoffPlaceId ?? null,
+              createdAt: serverTimestamp(),
+            }
+          : {
+              type: 'ride',
+              pickup: { address: pickupAddress || 'Seshego Zone X', lat: pickupLocation.lat, lng: pickupLocation.lng, source: 'manual_pin' },
+              dropoff: { address: dropoffAddress || 'Seshego Zone X', lat: dropoffLocation.lat, lng: dropoffLocation.lng, source: 'manual_pin' },
+              pickupLatLng: { lat: pickupLocation.lat, lng: pickupLocation.lng },
+              dropoffLatLng: { lat: dropoffLocation.lat, lng: dropoffLocation.lng },
+              distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
+              price: estimatedFare,
+              fare: estimatedFare - BOOKING_FEE - extrasFee,
+              totalFare: estimatedFare,
+              category: rideCategory,
+              passengerCount,
+              extras: selectedExtras,
+              extrasFee,
+              status: 'searching',
+              passengerId: profile?.id ?? 'test123',
+              pickupPlaceId: pickupPlaceId ?? null,
+              dropoffPlaceId: dropoffPlaceId ?? null,
+              createdAt: serverTimestamp(),
+            }
+      );
 
       setRideId(rideRef.id);
+      setTripType(mode);
       setRideCreatedAt(Date.now());
       setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
       setRideStatus('searching');
@@ -335,7 +389,7 @@ export function PassengerDashboard() {
       setFare(null);
       setRated(false);
       setRatingValue(null);
-      setMessage('Ride requested! Looking for driver...');
+      setMessage(mode === 'send' ? 'Parcel request sent! Looking for a driver...' : 'Ride requested! Looking for driver...');
     } catch (err) {
       console.error(err);
       setMessage('Failed to request a ride. Please try again.');
@@ -374,10 +428,18 @@ export function PassengerDashboard() {
       const nextStatus = typeof data.status === 'string' ? data.status : null;
       setRideStatus(nextStatus);
 
+      if (data.type === 'send' || data.type === 'ride') {
+        setTripType(data.type);
+      }
+
       if (nextStatus === 'accepted') {
         const acceptedDriverName = typeof data.driverName === 'string' ? data.driverName : 'Driver';
         setDriverName(acceptedDriverName);
-        setMessage(`Driver on the way! ${acceptedDriverName} is heading to you.`);
+        setMessage(
+          data.type === 'send'
+            ? `Driver on the way! ${acceptedDriverName} is coming to collect your parcel.`
+            : `Driver on the way! ${acceptedDriverName} is heading to you.`
+        );
       }
 
       const pickupLatLng = data.pickupLatLng ?? data.pickup ?? null;
@@ -540,6 +602,16 @@ export function PassengerDashboard() {
 
       <main className="flex-1 flex flex-col">
         <div className="p-4 max-w-2xl w-full mx-auto">
+          {!rideId && !isActiveTrip && (
+            <div className="flex gap-2 p-2 bg-gray-100 rounded-xl mb-3">
+              <button type="button" onClick={() => selectMode('ride')} className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'ride' ? 'bg-black text-white' : 'bg-white text-gray-700'}`}>
+                🚗 Ride
+              </button>
+              <button type="button" onClick={() => selectMode('send')} className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'send' ? 'bg-black text-white' : 'bg-white text-gray-700'}`}>
+                📦 Send
+              </button>
+            </div>
+          )}
           {!hasGoogleMapsApiKey && (
             <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
               <p>VITE_GOOGLE_MAPS_API_KEY missing in .env file</p>
@@ -556,7 +628,9 @@ export function PassengerDashboard() {
           {isActiveTrip && (
             <>
               <p className="text-center text-sm mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-2 px-3">
-                {STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
+                {tripType === 'send' && (rideStatus === 'accepted' || rideStatus === 'in_progress')
+                  ? 'Driver is delivering your parcel'
+                  : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
               </p>
               {isShareableTrip && (
                 <div className="mb-3 flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
@@ -745,40 +819,98 @@ export function PassengerDashboard() {
 
           {!rideId && distance && estimatedFare > 0 && (
             <div className="bg-orange-100 p-3 rounded-lg mt-3">
-              <div className="flex gap-3 overflow-x-auto pb-3 snap-x scrollbar-hide px-2">
-                {RIDE_CATEGORIES.map((cat) => {
-                  const selected = rideCategory === cat.id;
-                  const price = cat.base + (distanceKm ?? 0) * cat.perKm + BOOKING_FEE + extrasFee;
-                  return (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => selectCategory(cat.id)}
-                      className={`min-w-[120px] snap-start rounded-xl p-3 border-2 flex flex-col items-center ${selected ? 'border-black bg-black text-white' : 'border-gray-200 bg-white'}`}
-                    >
-                      <div className="text-2xl">{cat.emoji}</div>
-                      <div className="font-bold text-sm mt-1">{cat.name.replace('Buddy ', '')}</div>
-                      <div className="text-xs opacity-70">👤 {cat.maxPassengers}</div>
-                      <div className="text-xs mt-1">{formatR(price)}</div>
-                      {'popular' in cat && cat.popular && <span className="text-[10px] bg-black text-white px-2 rounded mt-1">POPULAR</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mb-3">
-                <select value={passengerCount} onChange={(event) => setPassengerCount(Number(event.target.value))} className="rounded border px-2 text-sm">
-                  {Array.from({ length: 7 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} pax</option>)}
-                </select>
-              </div>
-              <p className="mb-2 font-semibold text-gray-700">Add extras</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {(Object.entries(RIDE_EXTRAS) as Array<[keyof typeof RIDE_EXTRAS, (typeof RIDE_EXTRAS)[keyof typeof RIDE_EXTRAS]]>).map(([key, extra]) => (
-                  <label key={key} className="flex items-center gap-2 rounded-lg bg-white p-2 text-sm"><input type="checkbox" checked={selectedExtras.includes(key)} onChange={() => setSelectedExtras((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /> <span>{extra.icon} {extra.label} +{formatR(extra.fee)}</span></label>
-                ))}
-              </div>
-              <p>Distance: {distance}</p>
-              <p>Ride {formatR(ridePrice)} + Booking {formatR(BOOKING_FEE)}{extrasFee > 0 ? ` + Extras ${formatR(extrasFee)}` : ''} = {formatR(roundedTotal)}</p>
-              {rideCategory === 'xl' && passengerCount === 6 && selectedExtras.includes('luggage') && <p className="mt-2 font-semibold text-green-700">Perfect for airport trip</p>}
+              {mode === 'ride' && (
+                <>
+                  <div className="flex gap-3 overflow-x-auto pb-3 snap-x scrollbar-hide px-2">
+                    {RIDE_CATEGORIES.filter((cat) => !('isDelivery' in cat && cat.isDelivery)).map((cat) => {
+                      const selected = rideCategory === cat.id;
+                      const price = cat.base + (distanceKm ?? 0) * cat.perKm + BOOKING_FEE + extrasFee;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => selectCategory(cat.id)}
+                          className={`min-w-[120px] snap-start rounded-xl p-3 border-2 flex flex-col items-center ${selected ? 'border-black bg-black text-white' : 'border-gray-200 bg-white'}`}
+                        >
+                          <div className="text-2xl">{cat.emoji}</div>
+                          <div className="font-bold text-sm mt-1">{cat.name.replace('Buddy ', '')}</div>
+                          <div className="text-xs opacity-70">👤 {cat.maxPassengers}</div>
+                          <div className="text-xs mt-1">{formatR(price)}</div>
+                          {'popular' in cat && cat.popular && <span className="text-[10px] bg-black text-white px-2 rounded mt-1">POPULAR</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mb-3">
+                    <select value={passengerCount} onChange={(event) => setPassengerCount(Number(event.target.value))} className="rounded border px-2 text-sm">
+                      {Array.from({ length: 7 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} pax</option>)}
+                    </select>
+                  </div>
+                  <p className="mb-2 font-semibold text-gray-700">Add extras</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(Object.entries(RIDE_EXTRAS) as Array<[keyof typeof RIDE_EXTRAS, (typeof RIDE_EXTRAS)[keyof typeof RIDE_EXTRAS]]>).map(([key, extra]) => (
+                      <label key={key} className="flex items-center gap-2 rounded-lg bg-white p-2 text-sm"><input type="checkbox" checked={selectedExtras.includes(key)} onChange={() => setSelectedExtras((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /> <span>{extra.icon} {extra.label} +{formatR(extra.fee)}</span></label>
+                    ))}
+                  </div>
+                  <p>Distance: {distance}</p>
+                  <p>Ride {formatR(ridePrice)} + Booking {formatR(BOOKING_FEE)}{extrasFee > 0 ? ` + Extras ${formatR(extrasFee)}` : ''} = {formatR(roundedTotal)}</p>
+                  {rideCategory === 'xl' && passengerCount === 6 && selectedExtras.includes('luggage') && <p className="mt-2 font-semibold text-green-700">Perfect for airport trip</p>}
+                </>
+              )}
+              {mode === 'send' && (
+                <>
+                  <p className="mb-2 flex items-center gap-2 text-sm font-bold text-gray-800">📦 Buddy Send - parcel delivery</p>
+                  <input
+                    value={packageDescription}
+                    onChange={(event) => setPackageDescription(event.target.value)}
+                    placeholder="What are you sending? (e.g. Documents, Food, Keys)"
+                    className="mb-2 w-full rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-800"
+                  />
+                  <div className="mb-2 grid gap-2 sm:grid-cols-2">
+                    <input
+                      value={recipientName}
+                      onChange={(event) => setRecipientName(event.target.value)}
+                      placeholder="Recipient name"
+                      className="w-full rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-800"
+                    />
+                    <input
+                      value={recipientPhone}
+                      onChange={(event) => setRecipientPhone(event.target.value)}
+                      placeholder="Recipient phone number"
+                      className="w-full rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-800"
+                    />
+                  </div>
+                  <p className="mb-1 text-sm font-semibold text-gray-700">Package size</p>
+                  <div className="mb-2 flex gap-2">
+                    {(['small', 'medium', 'large'] as const).map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => setPackageSize(size)}
+                        className={`flex-1 rounded-lg py-2 text-sm font-semibold capitalize ${packageSize === size ? 'bg-black text-white' : 'bg-white text-gray-700'}`}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mb-2 text-xs italic text-gray-600">Driver will call recipient</p>
+                  <p className="mb-1 text-sm font-semibold text-gray-700">Payment</p>
+                  <div className="mb-2 flex gap-2">
+                    {(['cash', 'card'] as const).map((method) => (
+                      <button
+                        key={method}
+                        type="button"
+                        onClick={() => setSendPaymentMethod(method)}
+                        className={`flex-1 rounded-lg py-2 text-sm font-semibold capitalize ${sendPaymentMethod === method ? 'bg-black text-white' : 'bg-white text-gray-700'}`}
+                      >
+                        {method}
+                      </button>
+                    ))}
+                  </div>
+                  <p>Distance: {distance}</p>
+                  <p>Delivery {formatR(estimatedFare - BOOKING_FEE)} + Booking {formatR(BOOKING_FEE)} = {formatR(roundedTotal)}</p>
+                </>
+              )}
             </div>
           )}
 
@@ -812,8 +944,12 @@ export function PassengerDashboard() {
               disabled={requesting}
               className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-3"
             >
-              <CarIcon size={20} />{' '}
-              {requesting ? 'Requesting...' : `Request BuddyRide - ${formatR(roundedTotal)}`}
+              {mode === 'send' ? <span>📦</span> : <CarIcon size={20} />}{' '}
+              {requesting
+                ? 'Requesting...'
+                : mode === 'send'
+                  ? `Send Parcel - ${formatR(roundedTotal)}`
+                  : `Request BuddyRide - ${formatR(roundedTotal)}`}
             </button>
           )}
         </div>
