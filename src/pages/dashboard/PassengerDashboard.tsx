@@ -14,6 +14,7 @@ import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { RatingModal } from '../../components/RatingModal';
+import { playSound } from '../../utils/sound';
 
 const formatR = (n: number) => `R${Number(n || 0).toFixed(2)}`;
 
@@ -419,6 +420,7 @@ export function PassengerDashboard() {
   }, [pickupLocation, dropoffLocation, extrasFee, rideCategory]);
 
   // Follow the requested ride's status and the driver's live location once accepted.
+  const lastSoundStatusRef = useRef<string | null>(null);
   useEffect(() => {
     if (!rideId) return;
     const unsubscribe = onSnapshot(doc(db, 'rides', rideId), (snapshot) => {
@@ -427,6 +429,13 @@ export function PassengerDashboard() {
 
       const nextStatus = typeof data.status === 'string' ? data.status : null;
       setRideStatus(nextStatus);
+
+      if (nextStatus && nextStatus !== lastSoundStatusRef.current) {
+        lastSoundStatusRef.current = nextStatus;
+        if (nextStatus === 'accepted') playSound('accepted');
+        else if (nextStatus === 'arrived_at_pickup' || nextStatus === 'driver_arrived') playSound('arrived');
+        else if (nextStatus === 'cancelled') playSound('cancel');
+      }
 
       if (data.type === 'send' || data.type === 'ride') {
         setTripType(data.type);

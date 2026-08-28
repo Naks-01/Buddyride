@@ -10,6 +10,7 @@ import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
+import { isSoundMuted, setSoundMuted, startRequestLoop, stopRequestLoop } from '../../utils/sound';
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
 
@@ -70,6 +71,19 @@ export function DriverDashboard() {
   const [error, setError] = useState('');
   const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
   const tipToastRef = useRef<string | null>(null);
+  const knownRideIdsRef = useRef<Set<string>>(new Set());
+  const [soundMuted, setSoundMutedState] = useState(isSoundMuted());
+
+  const toggleMute = () => {
+    const next = !soundMuted;
+    setSoundMutedState(next);
+    setSoundMuted(next);
+    if (next) stopRequestLoop();
+  };
+
+  useEffect(() => {
+    if ('Notification' in window) void Notification.requestPermission();
+  }, []);
 
   useEffect(() => {
     if (authLoading || !user) return;
@@ -114,6 +128,26 @@ export function DriverDashboard() {
           .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest));
         setRides(nextRides);
         console.log('Driver rides:', nextRides);
+
+        const newRides = nextRides.filter((ride) => !knownRideIdsRef.current.has(ride.id));
+        knownRideIdsRef.current = new Set(nextRides.map((ride) => ride.id));
+
+        if (!acceptedRide && nextRides.length > 0) {
+          startRequestLoop();
+        } else {
+          stopRequestLoop();
+        }
+
+        for (const ride of newRides) {
+          if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+          if ('Notification' in window && Notification.permission === 'granted') {
+            const pickupLabel = typeof ride.pickup === 'string' ? ride.pickup : ride.pickup?.address ?? 'Pickup';
+            const dropoffLabel = typeof ride.dropoff === 'string' ? ride.dropoff : ride.dropoff?.address ?? 'Dropoff';
+            new Notification('New Buddy Request! 🚗', {
+              body: `${pickupLabel} -> ${dropoffLabel} - R${Number(ride.price ?? ride.fare ?? 0).toFixed(2)}`,
+            });
+          }
+        }
       },
       (err) => {
         console.error(err);
@@ -132,6 +166,7 @@ export function DriverDashboard() {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
     setAccepting(ride.id);
+    stopRequestLoop();
     try {
       const location = await getDriverLocation();
       await updateDoc(doc(db, 'rides', ride.id), {
@@ -205,6 +240,7 @@ export function DriverDashboard() {
   const declineRide = async (ride: RideRequest) => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
+    stopRequestLoop();
     await updateRideStatus(ride.id, 'declined', { declinedBy: uid, declinedReason: 'driver_not_equipped' });
   };
 
@@ -360,9 +396,19 @@ export function DriverDashboard() {
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b border-gray-200 px-4 py-4 flex justify-between items-center">
         <Logo size={48} />
-        <button onClick={() => void logout()} className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-white hover:bg-red-700">
-          <LogOutIcon size={20} /> Logout
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleMute}
+            aria-label={soundMuted ? 'Unmute notifications' : 'Mute notifications'}
+            className="rounded-lg border border-gray-200 px-3 py-2 text-lg hover:bg-gray-50"
+          >
+            {soundMuted ? '🔇' : '🔊'}
+          </button>
+          <button onClick={() => void logout()} className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-white hover:bg-red-700">
+            <LogOutIcon size={20} /> Logout
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 p-4 max-w-2xl w-full mx-auto">
