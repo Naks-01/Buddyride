@@ -106,8 +106,8 @@ export function PassengerDashboard() {
   const [recipientPhone, setRecipientPhone] = useState('');
   const [packageSize, setPackageSize] = useState<'small' | 'medium' | 'large'>('small');
   const [sendPaymentMethod, setSendPaymentMethod] = useState<'cash' | 'card'>('cash');
-  const [rideCategory, setRideCategory] = useState<RideCategoryId>('standard');
-  const [passengerCount, setPassengerCount] = useState(3);
+  const [rideCategory, setRideCategory] = useState<RideCategoryId>('go');
+  const [passengerCount, setPassengerCount] = useState(1);
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const extrasFee = selectedExtras.reduce((total, extra) => total + RIDE_EXTRAS[extra].fee, 0);
@@ -205,8 +205,8 @@ export function PassengerDashboard() {
     if (nextMode === 'send') {
       setRideCategory('send');
     } else if (rideCategory === 'send') {
-      setRideCategory('standard');
-      setPassengerCount(3);
+      setRideCategory('go');
+      setPassengerCount(1);
     }
   };
 
