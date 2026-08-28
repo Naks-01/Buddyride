@@ -53,7 +53,7 @@ function getLocationCoordinates(location?: string | Location, fallback?: Coordin
 
 // Firestore for this project is provisioned in the africa-south1 region.
 export function DriverDashboard() {
-  const { loading: authLoading, signOut } = useAuth();
+  const { loading: authLoading, profile, signOut } = useAuth();
   const navigate = useNavigate();
   const user = auth.currentUser;
   const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
@@ -140,8 +140,11 @@ export function DriverDashboard() {
       await updateDoc(doc(db, 'rides', ride.id), {
         status: 'accepted',
         driverId: uid,
-        driverName: auth.currentUser?.displayName ?? 'Driver',
+        driverName: profile?.full_name || auth.currentUser?.displayName || 'Driver',
         driverPhone: auth.currentUser?.phoneNumber ?? null,
+        driverPhotoUrl: auth.currentUser?.photoURL ?? null,
+        carPlate: profile?.vehicle_plate ?? null,
+        driverRating: Number(driverProfile?.avgRating ?? 4.9),
         ...(location && {
           driverLocation: { ...location, updatedAt: serverTimestamp() },
           driverStatus: 'coming',

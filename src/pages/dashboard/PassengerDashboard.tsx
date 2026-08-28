@@ -70,6 +70,9 @@ export function PassengerDashboard() {
   const [driverPhone, setDriverPhone] = useState<string | null>(null);
   const [driverName, setDriverName] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
+  const [driverPhotoUrl, setDriverPhotoUrl] = useState<string | null>(null);
+  const [carPlate, setCarPlate] = useState<string | null>(null);
+  const [driverRating, setDriverRating] = useState(4.9);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [fare, setFare] = useState<number | null>(null);
   const [rated, setRated] = useState(false);
@@ -303,6 +306,9 @@ export function PassengerDashboard() {
       setTripDropoffLocation({ lat: dropoffLocation.lat, lng: dropoffLocation.lng });
       setTripDistanceKm(distanceKm);
       setDriverPhone(null);
+      setDriverPhotoUrl(null);
+      setCarPlate(null);
+      setDriverRating(4.9);
       setFare(null);
       setRated(false);
       setRatingValue(null);
@@ -375,6 +381,19 @@ export function PassengerDashboard() {
       if (typeof data.driverId === 'string') {
         setDriverId(data.driverId);
       }
+      if (typeof data.driverPhotoUrl === 'string') {
+        setDriverPhotoUrl(data.driverPhotoUrl);
+      } else if (data.driverPhotoUrl == null) {
+        setDriverPhotoUrl(null);
+      }
+      if (typeof data.carPlate === 'string') {
+        setCarPlate(data.carPlate);
+      } else if (data.carPlate == null) {
+        setCarPlate(null);
+      }
+      if (typeof data.driverRating === 'number' && Number.isFinite(data.driverRating)) {
+        setDriverRating(data.driverRating);
+      }
       if (typeof data.paymentMethod === 'string') {
         setPaymentMethod(data.paymentMethod);
       }
@@ -395,6 +414,7 @@ export function PassengerDashboard() {
 
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
+  const isShareableTrip = rideStatus === 'accepted' || rideStatus === 'in_progress';
   useEffect(() => {
     if (!isActiveTrip || rideCreatedAt == null) return;
     const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
@@ -436,6 +456,12 @@ export function PassengerDashboard() {
       console.error(err);
       setMessage('Unable to cancel ride. Please try again.');
     }
+  };
+
+  const shareTrip = () => {
+    if (!rideId) return;
+    const message = `I'm on BuddyRide! Driver ${driverName ?? 'Driver'} (${carPlate ?? 'Plate pending'}) is taking me from ${pickupAddress || 'my pickup'} to ${dropoffAddress || 'my destination'}. Track me: https://buddyride1.vercel.app/track/${rideId} - ETA ${driverEtaMinutes ?? 0} mins. Fare: ${formatR(fare ?? estimatedFare)}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
   };
 
   // Center the live map over every known point: pickup, dropoff, and the driver (once assigned).
@@ -509,10 +535,23 @@ export function PassengerDashboard() {
               <p className="text-center text-sm mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-2 px-3">
                 {STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
               </p>
-              {driverName && (
-                <div className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-                  <span className="font-semibold">Driver:</span> {driverName}
-                  {driverPhone && <span className="ml-2">• {driverPhone}</span>}
+              {isShareableTrip && (
+                <div className="mb-3 flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                  {driverPhotoUrl ? (
+                    <img src={driverPhotoUrl} alt="Driver" className="h-12 w-12 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-600 text-lg font-bold text-white">
+                      {(driverName ?? 'D').slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold">{driverName ?? 'Driver'}</p>
+                    <p className="truncate text-xs">{carPlate ?? 'Plate pending'} • Rating {driverRating.toFixed(1)}★</p>
+                    {driverPhone && <a href={`tel:${driverPhone}`} className="text-xs font-semibold text-green-800 underline">Call {driverPhone}</a>}
+                  </div>
+                  <button type="button" onClick={shareTrip} className="rounded-lg border border-green-700 px-3 py-2 text-sm font-bold text-green-800 hover:bg-green-100">
+                    🛡️ Share Trip
+                  </button>
                 </div>
               )}
               <div className="bg-white border border-gray-200 rounded-lg py-2 px-3 mb-3 text-sm text-gray-700">
