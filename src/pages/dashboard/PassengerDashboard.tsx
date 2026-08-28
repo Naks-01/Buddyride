@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Autocomplete, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
+import { LockKeyhole } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { CarIcon, LogOutIcon } from '../../components/Icons';
@@ -62,6 +63,8 @@ export function PassengerDashboard() {
   });
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
+  const geocodeTimerRef = useRef<number | null>(null);
+  const lastGeocodedLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [locating, setLocating] = useState(false);
   const [message, setMessage] = useState('');
@@ -97,6 +100,9 @@ export function PassengerDashboard() {
   const [locationStep, setLocationStep] = useState<'pickup' | 'dropoff'>('pickup');
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
   const [mapAddress, setMapAddress] = useState('');
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
+  const [isLocationLocked, setIsLocationLocked] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [mode, setMode] = useState<'ride' | 'send'>('ride');
   const [tripType, setTripType] = useState<'ride' | 'send'>('ride');
@@ -154,6 +160,21 @@ export function PassengerDashboard() {
     }
   };
 
+  const scheduleReverseGeocode = (location: { lat: number; lng: number }) => {
+    const previousLocation = lastGeocodedLocationRef.current;
+    if (previousLocation && calcDistance(previousLocation.lat, previousLocation.lng, location.lat, location.lng) < 0.02) return;
+
+    if (geocodeTimerRef.current) window.clearTimeout(geocodeTimerRef.current);
+    geocodeTimerRef.current = window.setTimeout(() => {
+      lastGeocodedLocationRef.current = location;
+      void reverseGeocode(location);
+    }, 1000);
+  };
+
+  useEffect(() => () => {
+    if (geocodeTimerRef.current) window.clearTimeout(geocodeTimerRef.current);
+  }, []);
+
   const calculateFare = () => {
     if (!pickupLocation || !dropoffLocation) return;
 
@@ -208,15 +229,6 @@ export function PassengerDashboard() {
     }
   };
 
-  const handleMapIdle = () => {
-    if (rideId || !mapRef.current) return;
-    const center = mapRef.current.getCenter();
-    if (!center) return;
-    const nextLocation = { lat: center.lat(), lng: center.lng() };
-    setMapLocation(nextLocation);
-    void reverseGeocode(nextLocation);
-  };
-
   const focusMapOnSelection = (location: { lat: number; lng: number }) => {
     const map = mapRef.current;
     if (!map) return;
@@ -253,6 +265,7 @@ export function PassengerDashboard() {
       setPickupLocation(mapLocation);
       setPickupAddress(mapAddress || 'Seshego Zone X');
       setPickupPlaceId(null);
+      setIsLocationLocked(true);
       setLocationStep('dropoff');
       setSearchText('');
       setMapAddress('');
@@ -274,19 +287,30 @@ export function PassengerDashboard() {
       navigator.geolocation.getCurrentPosition(resolve, reject, {
         enableHighAccuracy: true,
         timeout: 10000,
+        maximumAge: 0,
       });
     });
 
   const useCurrentLocation = async () => {
+    if (isLocationLocked) return;
     setLocating(true);
     setMessage('');
     try {
       const position = await getCurrentPosition();
-      const location = { lat: position.coords.latitude, lng: position.coords.longitude };
+      const { latitude, longitude, accuracy } = position.coords;
+      console.log('GPS accuracy:', accuracy);
+      if (accuracy > 50) {
+        setLocationAccuracy(accuracy);
+        setMessage(`Low GPS accuracy: ${Math.round(accuracy)}m. Move near a window and refresh.`);
+        return;
+      }
+      const location = { lat: latitude, lng: longitude };
+      setUserLocation(location);
+      setLocationAccuracy(accuracy);
       setMapLocation(location);
-      setMapAddress('Current location');
       setSearchText('Current location');
       focusMapOnSelection(location);
+      scheduleReverseGeocode(location);
     } catch (err) {
       console.error(err);
       setMessage(
@@ -305,6 +329,9 @@ export function PassengerDashboard() {
     setPickupAddress('');
     setDropoffAddress('');
     setLocationStep('pickup');
+    setUserLocation(null);
+    setLocationAccuracy(null);
+    setIsLocationLocked(false);
     setMapAddress('');
     setSearchText('');
     setPackageDescription('');
@@ -688,7 +715,16 @@ export function PassengerDashboard() {
               onLoad={(map) => {
                 mapRef.current = map;
               }}
-              onIdle={isActiveTrip || rideId ? undefined : handleMapIdle}
+              onClick={isActiveTrip || rideId ? undefined : (event) => {
+                const latLng = event.latLng;
+                if (!latLng) return;
+                const location = { lat: latLng.lat(), lng: latLng.lng() };
+                setIsLocationLocked(true);
+                setUserLocation(location);
+                setMapLocation(location);
+                setSearchText('Pinned location');
+                scheduleReverseGeocode(location);
+              }}
             >
               {isActiveTrip ? (
                 <>
@@ -761,14 +797,26 @@ export function PassengerDashboard() {
                     />
                   )}
                   {locationStep === 'pickup' && (
-                    <button
-                      type="button"
-                      onClick={() => void useCurrentLocation()}
-                      disabled={locating}
-                      className="mt-2 w-full rounded-xl border border-gray-200 py-2 text-sm font-semibold text-gray-700 disabled:opacity-60"
-                    >
-                      {locating ? 'Locating...' : 'Use my current location'}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void useCurrentLocation()}
+                        disabled={locating || isLocationLocked}
+                        className="mt-2 w-full rounded-xl border border-gray-200 py-2 text-sm font-semibold text-gray-700 disabled:opacity-60"
+                      >
+                        {locating ? 'Locating...' : userLocation ? 'Refresh location' : 'Use my current location'}
+                      </button>
+                      {locationAccuracy != null && (
+                        <p className={`mt-2 text-center text-xs font-semibold ${locationAccuracy <= 50 ? 'text-green-700' : 'text-orange-700'}`}>
+                          GPS Accuracy: {Math.round(locationAccuracy)}m {locationAccuracy <= 50 ? 'OK' : 'Needs improvement'}
+                        </p>
+                      )}
+                      {isLocationLocked && (
+                        <p className="mt-2 flex items-center justify-center gap-1 text-xs font-semibold text-gray-600">
+                          <LockKeyhole size={14} /> Pickup location locked
+                        </p>
+                      )}
+                    </>
                   )}
                   {searchText && searchPolokwanePlaces(searchText).length > 0 && (
                     <div className="mt-2 max-h-32 overflow-y-auto border-t border-gray-100 pt-1">
