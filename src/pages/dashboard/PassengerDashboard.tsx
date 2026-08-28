@@ -16,6 +16,18 @@ import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { RatingModal } from '../../components/RatingModal';
 
 const formatR = (n: number) => `R${Number(n || 0).toFixed(2)}`;
+
+// "Helen Joseph St, Seshego Ext 6, Polokwane, 0742, South Africa" -> "Helen Joseph St, Seshego"
+function shortAddress(full: string): string {
+  if (!full) return '';
+  const parts = full.split(',').map((part) => part.trim());
+  return parts.slice(0, 2).join(', ');
+}
+
+function formatForDisplay(place: { structured_formatting?: { main_text?: string }; formatted_address?: string; name?: string } | null | undefined): string {
+  if (!place) return '';
+  return place.structured_formatting?.main_text || shortAddress(place.formatted_address || place.name || '');
+}
 const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
   requested: 'Looking for a driver...',
@@ -204,7 +216,7 @@ export function PassengerDashboard() {
     const nextLocation = { lat: location.lat(), lng: location.lng() };
     const address = place?.formatted_address ?? place?.name ?? '';
     setMapAddress(address);
-    setSearchText(address);
+    setSearchText(formatForDisplay(place));
     setMapLocation(nextLocation);
     if (locationStep === 'pickup') setPickupPlaceId(place.place_id ?? null);
     else setDropoffPlaceId(place.place_id ?? null);
@@ -655,7 +667,7 @@ export function PassengerDashboard() {
                         value={searchText}
                         onChange={(event) => setSearchText(event.target.value)}
                         placeholder={locationStep === 'pickup' ? 'Where are you?' : 'Where to?'}
-                        className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
+                        className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
                       />
                     </Autocomplete>
                   ) : (
@@ -663,7 +675,7 @@ export function PassengerDashboard() {
                       value={searchText}
                       onChange={(event) => setSearchText(event.target.value)}
                       placeholder="Set location on map"
-                      className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800"
+                      className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800"
                     />
                   )}
                   {locationStep === 'pickup' && (
@@ -692,7 +704,9 @@ export function PassengerDashboard() {
                   )}
                   {mapAddress && (
                     <div className="mt-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
-                      <p><span className="font-semibold">{locationStep === 'pickup' ? 'Pickup' : 'Destination'}:</span> {mapAddress}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{locationStep === 'pickup' ? 'Pickup' : 'Destination'}</p>
+                      <p className="font-bold truncate">{shortAddress(mapAddress)}</p>
+                      <p className="truncate text-xs text-gray-500">{mapAddress}</p>
                       <button
                         type="button"
                         onClick={confirmMapLocation}
@@ -708,7 +722,7 @@ export function PassengerDashboard() {
                     </button>
                   )}
                   {locationStep === 'dropoff' && pickupAddress && (
-                    <p className="mt-2 text-xs text-gray-500">Pickup: {pickupAddress}</p>
+                    <p className="mt-2 truncate text-xs text-gray-500">Pickup: {shortAddress(pickupAddress)}</p>
                   )}
                 </div>
               </div>
