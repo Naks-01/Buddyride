@@ -19,12 +19,12 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
-import { LogOutIcon } from '../../components/Icons';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance, DARK_MAP_STYLE, DEFAULT_CENTER as DEFAULT_CENTER_ARR } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
-import { isSoundMuted, setSoundMuted, startRequestLoop, stopRequestLoop } from '../../utils/sound';
+import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
+import { DriverDrawer } from '../../components/driver/DriverDrawer';
 
 const DEFAULT_MAP_CENTER = { lat: DEFAULT_CENTER_ARR[0], lng: DEFAULT_CENTER_ARR[1] };
 
@@ -87,7 +87,7 @@ function getLocationCoordinates(location?: string | Location, fallback?: Coordin
 
 // Firestore for this project is provisioned in the africa-south1 region.
 export function DriverDashboard() {
-  const { loading: authLoading, profile, signOut } = useAuth();
+  const { loading: authLoading, profile } = useAuth();
   const navigate = useNavigate();
   const user = auth.currentUser;
   const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
@@ -100,10 +100,9 @@ export function DriverDashboard() {
   const [stopWaitingSeconds, setStopWaitingSeconds] = useState(0);
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
-  const [soundMuted, setSoundMutedState] = useState(isSoundMuted());
   const [isOnline, setIsOnline] = useState(false);
   const [showStats, setShowStats] = useState(true);
-  const [showMenu, setShowMenu] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -112,13 +111,6 @@ export function DriverDashboard() {
   const { isLoaded: mapsLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsApiKey.length > 0 ? googleMapsApiKey : 'missing-key',
   });
-
-  const toggleMute = () => {
-    const next = !soundMuted;
-    setSoundMutedState(next);
-    setSoundMuted(next);
-    if (next) stopRequestLoop();
-  };
 
   const toggleOnline = async () => {
     const next = !isOnline;
@@ -532,12 +524,6 @@ export function DriverDashboard() {
 
   const finishRide = () => setAcceptedRide(null);
 
-  const logout = async () => {
-    await signOut();
-    localStorage.clear();
-    navigate('/');
-  };
-
   if (authLoading) {
     return <div className="min-h-screen bg-[#121212] p-8 text-white">Loading...</div>;
   }
@@ -583,7 +569,7 @@ export function DriverDashboard() {
       <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 pt-4">
         <button
           type="button"
-          onClick={() => setShowMenu((prev) => !prev)}
+          onClick={() => setIsDrawerOpen(true)}
           aria-label="Menu"
           className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg"
         >
@@ -598,27 +584,14 @@ export function DriverDashboard() {
         </button>
       </div>
 
-      {showMenu && (
-        <div className="absolute left-4 top-16 z-30 w-52 rounded-xl bg-[#2A2D36] p-2 shadow-2xl">
-          <p className="px-2 py-1 text-xs text-gray-400">
-            Rating {Number(driverProfile?.avgRating ?? 0).toFixed(1)}★ ({Number(driverProfile?.totalRatings ?? 0)} trips)
-          </p>
-          <button
-            type="button"
-            onClick={toggleMute}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-white hover:bg-[#3A3D45]"
-          >
-            {soundMuted ? '🔇 Unmute notifications' : '🔊 Mute notifications'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-red-400 hover:bg-[#3A3D45]"
-          >
-            <LogOutIcon size={16} /> Logout
-          </button>
-        </div>
-      )}
+      <DriverDrawer
+        open={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        profile={profile}
+        driverProfile={driverProfile}
+        driverId={user.uid}
+        todayEarnings={todayEarnings}
+      />
 
       {error && (
         <div className="absolute inset-x-4 top-20 z-30 rounded-lg border border-red-500 bg-red-900/90 px-4 py-2 text-sm text-white shadow-lg">
