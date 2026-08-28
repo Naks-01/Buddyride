@@ -460,7 +460,7 @@ export function PassengerDashboard() {
 
   const shareTrip = () => {
     if (!rideId) return;
-    const message = `I'm on BuddyRide! Driver ${driverName ?? 'Driver'} (${carPlate ?? 'Plate pending'}) is taking me from ${pickupAddress || 'my pickup'} to ${dropoffAddress || 'my destination'}. Track me: https://buddyride1.vercel.app/track/${rideId} - ETA ${driverEtaMinutes ?? 0} mins. Fare: ${formatR(fare ?? estimatedFare)}`;
+    const message = `🚗 I'm on BuddyRide! Driver ${driverName ?? 'Driver'} (${carPlate ?? 'Plate pending'}) is taking me from ${pickupAddress || 'my pickup'} to ${dropoffAddress || 'my destination'}. Track me: https://buddyride1.vercel.app/track/${rideId} - ETA ${driverEtaMinutes ?? 0} mins. Fare: ${formatR(fare ?? estimatedFare)}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
   };
 

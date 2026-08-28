@@ -91,6 +91,7 @@ export default function App() {
           <Route path="/driver" element={<ProtectedDriverDashboard />} />
           <Route path="/driver/dashboard" element={<ProtectedDriverDashboard />} />
           <Route path="/dashboard/driver" element={<ProtectedDriverDashboard />} />
+          <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/admin/dashboard" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/admin/safety" element={<RequireAdmin><SafetyDashboard /></RequireAdmin>} />
           <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
