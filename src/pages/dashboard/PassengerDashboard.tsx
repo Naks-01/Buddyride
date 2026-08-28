@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Autocomplete, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
-import { ShieldCheck } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { CarIcon, LogOutIcon } from '../../components/Icons';
@@ -109,7 +108,6 @@ export function PassengerDashboard() {
   const [rideCategory, setRideCategory] = useState<RideCategoryId>('go');
   const [passengerCount, setPassengerCount] = useState(1);
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
-  const [showVerifyModal, setShowVerifyModal] = useState(false);
   const extrasFee = selectedExtras.reduce((total, extra) => total + RIDE_EXTRAS[extra].fee, 0);
   const total = estimatedFare;
   const roundedTotal = Math.round(total * 100) / 100;
@@ -400,10 +398,11 @@ export function PassengerDashboard() {
   };
 
   const handleRequestClick = () => {
-    if (!profile?.idNumberVerified || profile?.verificationStatus !== 'verified') {
-      setShowVerifyModal(true);
-      return;
-    }
+    // TODO: Re-enable after launch - SA NETA passenger verification
+    // if (!profile?.idNumberVerified || profile?.verificationStatus !== 'verified') {
+    //   setShowVerifyModal(true);
+    //   return;
+    // }
     void requestRide();
   };
 
@@ -968,29 +967,6 @@ export function PassengerDashboard() {
       <SOSButton rideId={rideId} userRole="passenger" />
       {showRating && driverId && profile?.id && rideId && (
         <RatingModal rideId={rideId} driverId={driverId} driverName={driverName} passengerId={profile.id} onSaved={(value) => { setRated(true); setRatingValue(value); setShowRating(false); }} />
-      )}
-      {showVerifyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
-            <ShieldCheck size={40} className="mx-auto mb-3 text-orange-500" />
-            <h3 className="mb-2 text-lg font-bold text-gray-900">Verification Required</h3>
-            <p className="mb-4 text-sm text-gray-600">
-              SA law requires passengers to verify ID + selfie like Bolt. Takes 1 min.
-            </p>
-            <button
-              onClick={() => navigate('/profile')}
-              className="mb-2 w-full rounded-lg bg-orange-500 py-2.5 font-bold text-white hover:bg-orange-600"
-            >
-              Verify Now
-            </button>
-            <button
-              onClick={() => setShowVerifyModal(false)}
-              className="w-full rounded-lg bg-gray-100 py-2.5 font-semibold text-gray-700 hover:bg-gray-200"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
       )}
     </div>
   );

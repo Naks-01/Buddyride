@@ -8,8 +8,7 @@ import { t } from '../lib/i18n';
 import { LangSelector } from '../components/LangSelector';
 import { LoadingScreen } from '../components/LoadingScreen';
 import { PhoneIcon, XIcon, CheckIcon } from '../components/Icons';
-import { IdVerificationForm } from '../components/IdVerificationForm';
-import type { AppRole, VerificationStatus } from '../types';
+import type { AppRole } from '../types';
 
 declare global {
   interface Window {
@@ -32,8 +31,6 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [fullName, setFullName] = useState('');
-  const [showVerification, setShowVerification] = useState(false);
-  const [verificationStatus, setVerificationStatus] = useState<VerificationStatus>('unverified');
   const confirmationRef = useRef<ConfirmationResult | null>(null);
   const verifierRef = useRef<RecaptchaVerifier | null>(null);
   const roleIcon = role === 'driver' ? '🚗' : role === 'admin' ? '🛡️' : '👤';
@@ -126,12 +123,6 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
         });
       } else {
         await setDoc(userRef, { name: fullName || existing.data().name, role }, { merge: true });
-        setVerificationStatus((existing.data().verificationStatus as VerificationStatus) || 'unverified');
-      }
-
-      if (role === 'passenger') {
-        setShowVerification(true);
-        return;
       }
 
       await refreshProfile();
@@ -142,12 +133,6 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleVerified = async () => {
-    await refreshProfile();
-    localStorage.setItem(`${role}LoggedIn`, 'true');
-    navigate('/passenger', { replace: true });
   };
 
   if (loading) {
@@ -226,8 +211,6 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
             {t('sendOtp', lang)}
           </button>
         </>
-      ) : showVerification ? (
-        <IdVerificationForm initialStatus={verificationStatus} onVerified={() => void handleVerified()} />
       ) : (
         <>
           <p className="role-subtitle">{t('enterOtp', lang)}</p>
