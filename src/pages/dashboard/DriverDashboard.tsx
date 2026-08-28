@@ -4,18 +4,14 @@ import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, up
 import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import {
   Car as CarPin,
-  Gift,
   HelpCircle,
   Home as HomeNav,
   LocateFixed,
-  Lock,
   Menu,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
-  Star,
   Wallet,
-  Zap,
 } from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -101,12 +97,10 @@ export function DriverDashboard() {
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
   const [isOnline, setIsOnline] = useState(false);
-  const [showStats, setShowStats] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const mapRef = useRef<google.maps.Map | null>(null);
-  const dragStartYRef = useRef<number | null>(null);
   const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
   const { isLoaded: mapsLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsApiKey.length > 0 ? googleMapsApiKey : 'missing-key',
@@ -115,23 +109,11 @@ export function DriverDashboard() {
   const toggleOnline = async () => {
     const next = !isOnline;
     setIsOnline(next);
-    if (next) setShowStats(false);
     if (user) {
       await updateDoc(doc(db, 'drivers', user.uid), { isOnline: next }).catch((err) => {
         console.error('Failed to update online status:', err);
       });
     }
-  };
-
-  const handleSheetDragStart = (event: React.TouchEvent) => {
-    dragStartYRef.current = event.touches[0]?.clientY ?? null;
-  };
-
-  const handleSheetDragEnd = (event: React.TouchEvent) => {
-    if (dragStartYRef.current == null) return;
-    const deltaY = event.changedTouches[0]?.clientY - dragStartYRef.current;
-    if (deltaY > 50) setShowStats(false);
-    dragStartYRef.current = null;
   };
 
   useEffect(() => {
@@ -600,7 +582,7 @@ export function DriverDashboard() {
       )}
 
       {!hasActiveOverlay && (
-        <div className="absolute right-4 bottom-[27rem] z-20 flex flex-col gap-3">
+        <div className="absolute right-4 bottom-24 z-20 flex flex-col gap-3">
           <button type="button" onClick={recenterMap} aria-label="Locate me" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
             <LocateFixed size={20} />
           </button>
@@ -611,34 +593,18 @@ export function DriverDashboard() {
       )}
 
       {!isOnline && !hasActiveOverlay && (
-        <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void toggleOnline()}
-            className="rounded-full bg-[#00C853] px-10 py-5 text-lg font-bold text-white shadow-2xl hover:bg-[#00b34b]"
-          >
-            Go online
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowStats((prev) => !prev)}
-            className="rounded-full bg-[#2A2D36] px-4 py-1.5 text-xs font-semibold text-gray-300 shadow-lg"
-          >
-            {showStats ? '^ Hide stats' : 'v Show stats'}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => void toggleOnline()}
+          className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#00C853] px-10 py-5 text-lg font-bold text-white shadow-2xl hover:bg-[#00b34b]"
+        >
+          Go online
+        </button>
       )}
 
       {isOnline && !hasActiveOverlay && (
-        <div className="absolute left-1/2 top-24 z-20 flex -translate-x-1/2 flex-col items-center gap-3">
-          <div className="rounded-full bg-[#00C853] px-4 py-1.5 text-xs font-bold text-white shadow-lg">You're online</div>
-          <button
-            type="button"
-            onClick={() => setShowStats((prev) => !prev)}
-            className="rounded-full bg-[#2A2D36] px-4 py-1.5 text-xs font-semibold text-gray-300 shadow-lg"
-          >
-            {showStats ? '^ Hide stats' : 'v Show stats'}
-          </button>
+        <div className="absolute left-1/2 top-24 z-20 -translate-x-1/2 rounded-full bg-[#00C853] px-4 py-1.5 text-xs font-bold text-white shadow-lg">
+          You're online
         </div>
       )}
 
@@ -803,58 +769,6 @@ export function DriverDashboard() {
               </div>
             )}
           </section>
-        </div>
-      )}
-
-      {!hasActiveOverlay && (
-        <div
-          className={`absolute inset-x-0 bottom-16 z-10 rounded-t-3xl bg-[#1E2128] px-4 pb-4 pt-3 shadow-[0_-8px_24px_rgba(0,0,0,0.4)] transition-all duration-300 ${showStats ? 'translate-y-0' : 'translate-y-full hidden'}`}
-        >
-          <div
-            onTouchStart={handleSheetDragStart}
-            onTouchEnd={handleSheetDragEnd}
-            className="mx-auto mb-3 h-1.5 w-10 cursor-grab rounded-full bg-gray-600 active:cursor-grabbing"
-          />
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 rounded-2xl bg-[#2A2D36] p-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500/20">
-                <Zap size={20} className="text-[#00C853]" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-white">Meet the new auto-accept</p>
-                <p className="text-xs text-gray-400">See what's changed</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 rounded-2xl bg-[#2A2D36] p-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-500/20">
-                <Gift size={20} className="text-purple-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-white">Earn R 800</p>
-                <p className="text-xs text-gray-400">Invite friends to drive</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-2xl bg-[#2A2D36] p-3">
-                <Lock size={16} className="mb-2 text-red-400" />
-                <p className="text-sm font-bold text-white">Bolt Rewards</p>
-                <p className="text-xs font-semibold text-red-400">Inactive</p>
-              </div>
-              <div className="rounded-2xl bg-[#2A2D36] p-3">
-                <p className="text-xs text-gray-400">Driver score</p>
-                <p className="text-lg font-bold text-white">90%</p>
-              </div>
-              <div className="rounded-2xl bg-[#2A2D36] p-3">
-                <Star size={16} className="mb-2 text-yellow-400" />
-                <p className="text-lg font-bold text-white">{Number(driverProfile?.avgRating ?? 4.94).toFixed(2)}</p>
-                <p className="text-xs text-gray-400">Star rating</p>
-              </div>
-              <div className="rounded-2xl bg-[#2A2D36] p-3">
-                <p className="text-xs text-gray-400">Acceptance rate</p>
-                <p className="text-lg font-bold text-white">74%</p>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
