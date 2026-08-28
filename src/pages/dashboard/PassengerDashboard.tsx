@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Autocomplete, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import { Autocomplete, DirectionsRenderer, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
 import { db } from '../../lib/firebase';
@@ -39,6 +39,19 @@ const STATUS_BANNER: Record<string, string> = {
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
 const MAP_HEIGHT = '70vh';
 const GOOGLE_MAPS_LIBRARIES: ('places' | 'marker')[] = ['places', 'marker'];
+const BASE_FARE = 25;
+const RATE_KM = 8;
+const RATE_MIN = 1;
+const STOP_FEE = 10;
+
+type Stop = { id: string; address: string; lat: number | null; lng: number | null };
+
+function toMillis(value: unknown): number | null {
+  if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') {
+    return value.toMillis();
+  }
+  return typeof value === 'number' ? value : null;
+}
 
 function GoogleMapsBillingHelp() {
   return (
@@ -90,6 +103,11 @@ export function PassengerDashboard() {
   const [driverRating, setDriverRating] = useState(4.9);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [fare, setFare] = useState<number | null>(null);
+  const [waitingSeconds, setWaitingSeconds] = useState(0);
+  const [waitingFare, setWaitingFare] = useState(0);
+  const [totalFare, setTotalFare] = useState<number | null>(null);
+  const [baseFare, setBaseFare] = useState<number | null>(null);
+  const [stopArrivalTime, setStopArrivalTime] = useState<unknown>(null);
   const [rated, setRated] = useState(false);
   const [ratingValue, setRatingValue] = useState<number | null>(null);
   const [showRating, setShowRating] = useState(false);
@@ -100,6 +118,12 @@ export function PassengerDashboard() {
   const [locationStep, setLocationStep] = useState<'pickup' | 'dropoff'>('pickup');
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
   const [mapAddress, setMapAddress] = useState('');
+  const [stops, setStops] = useState<Stop[]>([
+    { id: 'pickup', address: '', lat: null, lng: null },
+    { id: 'dropoff', address: '', lat: null, lng: null },
+  ]);
+  const [activeStopIndex, setActiveStopIndex] = useState(0);
+  const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
   const [isLocationLocked, setIsLocationLocked] = useState(false);
@@ -176,7 +200,7 @@ export function PassengerDashboard() {
   }, []);
 
   const calculateFare = () => {
-    if (!pickupLocation || !dropoffLocation) return;
+    if (stops.some((stop) => stop.lat == null || stop.lng == null)) return;
 
     const google = (window as any).google;
     if (!google?.maps?.DirectionsService) {
@@ -187,20 +211,24 @@ export function PassengerDashboard() {
     const directionsService = new google.maps.DirectionsService();
     directionsService.route(
       {
-        origin: pickupLocation,
-        destination: dropoffLocation,
+        origin: { lat: stops[0].lat!, lng: stops[0].lng! },
+        destination: { lat: stops[stops.length - 1].lat!, lng: stops[stops.length - 1].lng! },
+        waypoints: stops.slice(1, -1).map((stop) => ({ location: { lat: stop.lat!, lng: stop.lng! }, stopover: true })),
         travelMode: google.maps.TravelMode.DRIVING,
       },
       (result: any, status: string) => {
         if (status !== 'OK') return;
 
-        const leg = result?.routes?.[0]?.legs?.[0];
-        if (!leg) return;
+        const legs = result?.routes?.[0]?.legs;
+        if (!legs?.length) return;
 
-        const km = leg.distance.value / 1000;
-        const category = RIDE_CATEGORIES.find((c) => c.id === rideCategory) ?? RIDE_CATEGORIES[1];
-        const fareEstimate = category.base + km * category.perKm + BOOKING_FEE + extrasFee;
-        setDistance(leg.distance.text);
+        const distanceMeters = legs.reduce((sum: number, leg: any) => sum + Number(leg.distance?.value ?? 0), 0);
+        const durationSeconds = legs.reduce((sum: number, leg: any) => sum + Number(leg.duration?.value ?? 0), 0);
+        const km = distanceMeters / 1000;
+        const minutes = durationSeconds / 60;
+        const fareEstimate = BASE_FARE + km * RATE_KM + minutes * RATE_MIN + (stops.length - 2) * STOP_FEE;
+        setDirections(result);
+        setDistance(`${km.toFixed(1)} km`);
         setDistanceKm(km);
         setEstimatedFare(fareEstimate);
       }
@@ -261,21 +289,50 @@ export function PassengerDashboard() {
   };
 
   const confirmMapLocation = () => {
-    if (locationStep === 'pickup') {
+    const confirmedStop = { ...stops[activeStopIndex], address: mapAddress || 'Seshego Zone X', lat: mapLocation.lat, lng: mapLocation.lng };
+    setStops((current) => current.map((stop, index) => index === activeStopIndex ? confirmedStop : stop));
+    if (activeStopIndex === 0) {
       setPickupLocation(mapLocation);
       setPickupAddress(mapAddress || 'Seshego Zone X');
       setPickupPlaceId(null);
       setIsLocationLocked(true);
       setLocationStep('dropoff');
+      setActiveStopIndex(Math.min(1, stops.length - 1));
       setSearchText('');
       setMapAddress('');
-    } else {
+    } else if (activeStopIndex === stops.length - 1) {
       setDropoffLocation(mapLocation);
       setDropoffAddress(mapAddress || 'Seshego Zone X');
       setDropoffPlaceId(null);
       setSearchText('');
       setMapAddress('');
     }
+  };
+
+  const selectStop = (index: number) => {
+    setActiveStopIndex(index);
+    setLocationStep(index === 0 ? 'pickup' : 'dropoff');
+    const stop = stops[index];
+    setSearchText(stop.address);
+    setMapAddress(stop.address);
+    if (stop.lat != null && stop.lng != null) focusMapOnSelection({ lat: stop.lat, lng: stop.lng });
+  };
+
+  const addStop = () => {
+    if (stops.length >= 4) return;
+    const next = [...stops.slice(0, -1), { id: `stop-${Date.now()}`, address: '', lat: null, lng: null }, stops[stops.length - 1]];
+    setStops(next);
+    setActiveStopIndex(next.length - 2);
+    setLocationStep('dropoff');
+    setSearchText('');
+    setMapAddress('');
+  };
+
+  const removeStop = (index: number) => {
+    if (index === 0 || index === stops.length - 1) return;
+    const next = stops.filter((_, stopIndex) => stopIndex !== index);
+    setStops(next);
+    setActiveStopIndex(Math.min(activeStopIndex, next.length - 1));
   };
 
   const getCurrentPosition = (): Promise<GeolocationPosition> =>
@@ -328,6 +385,9 @@ export function PassengerDashboard() {
     setDropoffLocation(null);
     setPickupAddress('');
     setDropoffAddress('');
+    setStops([{ id: 'pickup', address: '', lat: null, lng: null }, { id: 'dropoff', address: '', lat: null, lng: null }]);
+    setActiveStopIndex(0);
+    setDirections(null);
     setLocationStep('pickup');
     setUserLocation(null);
     setLocationAccuracy(null);
@@ -341,10 +401,12 @@ export function PassengerDashboard() {
   };
 
   const requestRide = async () => {
-    if (!pickupLocation || !dropoffLocation) {
-      setMessage('Drop both a pickup (A) and dropoff (B) pin on the map.');
+    if (stops.some((stop) => stop.lat == null || stop.lng == null)) {
+      setMessage('Set a location for every stop before requesting a ride.');
       return;
     }
+    const pickup = stops[0];
+    const dropoff = stops[stops.length - 1];
     if (mode === 'send' && (!packageDescription.trim() || !recipientName.trim() || !recipientPhone.trim())) {
       setMessage('Tell us what you are sending and the recipient name + phone number.');
       return;
@@ -361,14 +423,20 @@ export function PassengerDashboard() {
               recipientName: recipientName.trim(),
               recipientPhone: recipientPhone.trim(),
               packageSize,
-              pickup: { address: pickupAddress || 'Seshego Zone X', lat: pickupLocation.lat, lng: pickupLocation.lng, source: 'manual_pin' },
-              dropoff: { address: dropoffAddress || 'Seshego Zone X', lat: dropoffLocation.lat, lng: dropoffLocation.lng, source: 'manual_pin' },
-              pickupLatLng: { lat: pickupLocation.lat, lng: pickupLocation.lng },
-              dropoffLatLng: { lat: dropoffLocation.lat, lng: dropoffLocation.lng },
+              pickup: { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' },
+              dropoff: { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' },
+              pickupLatLng: { lat: pickup.lat!, lng: pickup.lng! },
+              dropoffLatLng: { lat: dropoff.lat!, lng: dropoff.lng! },
               distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
               price: estimatedFare,
               fare: estimatedFare - BOOKING_FEE,
               totalFare: estimatedFare,
+              baseFare: estimatedFare,
+              stops,
+              currentStopIndex: 0,
+              stopArrivalTime: null,
+              waitingSeconds: 0,
+              waitingFare: 0,
               category: 'send',
               paymentMethod: sendPaymentMethod,
               status: 'searching',
@@ -379,14 +447,20 @@ export function PassengerDashboard() {
             }
           : {
               type: 'ride',
-              pickup: { address: pickupAddress || 'Seshego Zone X', lat: pickupLocation.lat, lng: pickupLocation.lng, source: 'manual_pin' },
-              dropoff: { address: dropoffAddress || 'Seshego Zone X', lat: dropoffLocation.lat, lng: dropoffLocation.lng, source: 'manual_pin' },
-              pickupLatLng: { lat: pickupLocation.lat, lng: pickupLocation.lng },
-              dropoffLatLng: { lat: dropoffLocation.lat, lng: dropoffLocation.lng },
+              pickup: { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' },
+              dropoff: { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' },
+              pickupLatLng: { lat: pickup.lat!, lng: pickup.lng! },
+              dropoffLatLng: { lat: dropoff.lat!, lng: dropoff.lng! },
               distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
               price: estimatedFare,
               fare: estimatedFare - BOOKING_FEE - extrasFee,
               totalFare: estimatedFare,
+              baseFare: estimatedFare,
+              stops,
+              currentStopIndex: 0,
+              stopArrivalTime: null,
+              waitingSeconds: 0,
+              waitingFare: 0,
               category: rideCategory,
               passengerCount,
               extras: selectedExtras,
@@ -405,8 +479,8 @@ export function PassengerDashboard() {
       setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
       setRideStatus('searching');
       setDriverLocation(null);
-      setTripPickupLocation({ lat: pickupLocation.lat, lng: pickupLocation.lng });
-      setTripDropoffLocation({ lat: dropoffLocation.lat, lng: dropoffLocation.lng });
+      setTripPickupLocation({ lat: pickup.lat!, lng: pickup.lng! });
+      setTripDropoffLocation({ lat: dropoff.lat!, lng: dropoff.lng! });
       setTripDistanceKm(distanceKm);
       setDriverPhone(null);
       setDriverPhotoUrl(null);
@@ -435,7 +509,7 @@ export function PassengerDashboard() {
 
   // Recompute the fare estimate whenever both pins are set.
   useEffect(() => {
-    if (pickupLocation && dropoffLocation) {
+    if (stops.every((stop) => stop.lat != null && stop.lng != null)) {
       calculateFare();
     } else {
       setDistance('');
@@ -443,7 +517,7 @@ export function PassengerDashboard() {
       setEstimatedFare(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickupLocation, dropoffLocation, extrasFee, rideCategory]);
+  }, [stops, extrasFee, rideCategory]);
 
   // Follow the requested ride's status and the driver's live location once accepted.
   const lastSoundStatusRef = useRef<string | null>(null);
@@ -523,6 +597,19 @@ export function PassengerDashboard() {
       if (typeof data.price === 'number') {
         setFare(data.price);
       }
+      if (typeof data.waitingSeconds === 'number') {
+        setWaitingSeconds(data.waitingSeconds);
+      }
+      if (typeof data.waitingFare === 'number') {
+        setWaitingFare(data.waitingFare);
+      }
+      if (typeof data.totalFare === 'number') {
+        setTotalFare(data.totalFare);
+      }
+      if (typeof data.baseFare === 'number') {
+        setBaseFare(data.baseFare);
+      }
+      setStopArrivalTime(data.stopArrivalTime ?? null);
       if (typeof data.distance === 'string') {
         setDistance(data.distance);
         const parsed = Number.parseFloat(data.distance);
@@ -531,6 +618,19 @@ export function PassengerDashboard() {
     });
     return () => unsubscribe();
   }, [rideId]);
+
+  useEffect(() => {
+    const arrivedAt = toMillis(stopArrivalTime);
+    if (rideStatus !== 'in_progress' || arrivedAt == null) return;
+    const updateWaiting = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
+      setWaitingSeconds(seconds);
+      setWaitingFare(seconds > 180 ? Math.ceil((seconds - 180) / 60) : 0);
+    };
+    updateWaiting();
+    const timer = window.setInterval(updateWaiting, 1000);
+    return () => window.clearInterval(timer);
+  }, [rideStatus, stopArrivalTime]);
 
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
@@ -688,8 +788,13 @@ export function PassengerDashboard() {
               )}
               <div className="bg-white border border-gray-200 rounded-lg py-2 px-3 mb-3 text-sm text-gray-700">
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
-                <span>Fare: {formatR(fare ?? 0)}</span>
+                <span>Fare: {formatR((baseFare ?? totalFare ?? fare ?? 0) + waitingFare)}</span>
               </div>
+              {rideStatus === 'in_progress' && (
+                <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
+                  Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
+                </p>
+              )}
               {driverDistanceKm != null && driverEtaMinutes != null && (
                 <p className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center text-sm font-semibold text-green-800">
                   Driver is {driverDistanceKm.toFixed(1)} km away - ETA {driverEtaMinutes} min{driverEtaMinutes === 1 ? '' : 's'}
@@ -750,7 +855,7 @@ export function PassengerDashboard() {
                     />
                   )}
                 </>
-              ) : null}
+              ) : directions ? <DirectionsRenderer directions={directions} /> : null}
             </GoogleMap>
           ) : (
             <div
@@ -772,8 +877,22 @@ export function PassengerDashboard() {
             {!rideId && !isActiveTrip && (
               <div className="relative z-20 -mt-28 px-3 pb-3">
                 <div className="pointer-events-auto rounded-2xl bg-white p-3 shadow-xl">
+                  <div className="mb-3 space-y-2">
+                    {stops.map((stop, index) => (
+                      <div key={stop.id} className="flex items-center gap-2">
+                        <button type="button" onClick={() => selectStop(index)} className={`w-5 text-sm font-bold ${activeStopIndex === index ? 'text-orange-600' : 'text-gray-400'}`} aria-label={`Select stop ${index + 1}`}>
+                          {index === 0 ? '●' : index === stops.length - 1 ? '■' : '○'}
+                        </button>
+                        <button type="button" onClick={() => selectStop(index)} className="min-w-0 flex-1 truncate text-left text-sm font-semibold text-gray-700">
+                          {stop.address || (index === 0 ? 'Pickup location' : index === stops.length - 1 ? 'Where to?' : `Add stop ${index}`)}
+                        </button>
+                        {index > 0 && index < stops.length - 1 && <button type="button" onClick={() => removeStop(index)} className="text-sm font-bold text-red-600" aria-label={`Remove stop ${index}`}>Remove</button>}
+                      </div>
+                    ))}
+                    {stops.length < 4 && <button type="button" onClick={addStop} className="text-sm font-bold text-orange-600">+ Add stop</button>}
+                  </div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    {locationStep === 'pickup' ? 'Set pickup location' : 'Set destination'}
+                    {activeStopIndex === 0 ? 'Set pickup location' : activeStopIndex === stops.length - 1 ? 'Set destination' : `Set stop ${activeStopIndex}`}
                   </p>
                   {mapsAvailable ? (
                     <Autocomplete
@@ -784,7 +903,7 @@ export function PassengerDashboard() {
                       <input
                         value={searchText}
                         onChange={(event) => setSearchText(event.target.value)}
-                        placeholder={locationStep === 'pickup' ? 'Where are you?' : 'Where to?'}
+                        placeholder={activeStopIndex === 0 ? 'Where are you?' : activeStopIndex === stops.length - 1 ? 'Where to?' : `Add stop ${activeStopIndex}`}
                         className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
                       />
                     </Autocomplete>
@@ -834,7 +953,7 @@ export function PassengerDashboard() {
                   )}
                   {mapAddress && (
                     <div className="mt-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{locationStep === 'pickup' ? 'Pickup' : 'Destination'}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{activeStopIndex === 0 ? 'Pickup' : activeStopIndex === stops.length - 1 ? 'Destination' : `Stop ${activeStopIndex}`}</p>
                       <p className="font-bold truncate">{shortAddress(mapAddress)}</p>
                       <p className="truncate text-xs text-gray-500">{mapAddress}</p>
                       <button
@@ -842,7 +961,7 @@ export function PassengerDashboard() {
                         onClick={confirmMapLocation}
                         className="mt-3 w-full rounded-xl bg-orange-500 py-3 font-bold text-white hover:bg-orange-600"
                       >
-                        Confirm {locationStep === 'pickup' ? 'Pickup' : 'Destination'}
+                        Confirm {activeStopIndex === 0 ? 'Pickup' : activeStopIndex === stops.length - 1 ? 'Destination' : `Stop ${activeStopIndex}`}
                       </button>
                     </div>
                   )}
@@ -994,7 +1113,7 @@ export function PassengerDashboard() {
               {message}
             </p>
           )}
-          {!rideId && pickupLocation && dropoffLocation && (
+          {!rideId && stops.every((stop) => stop.lat != null && stop.lng != null) && (
             <button
               onClick={handleRequestClick}
               disabled={requesting}

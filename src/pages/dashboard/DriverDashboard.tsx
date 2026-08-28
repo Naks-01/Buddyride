@@ -13,6 +13,7 @@ import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { isSoundMuted, setSoundMuted, startRequestLoop, stopRequestLoop } from '../../utils/sound';
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
+type Stop = { id: string; address: string; lat: number | null; lng: number | null };
 
 type RideRequest = {
   id: string;
@@ -40,6 +41,13 @@ type RideRequest = {
   recipientName?: string;
   recipientPhone?: string;
   packageSize?: 'small' | 'medium' | 'large';
+  stops?: Stop[];
+  currentStopIndex?: number;
+  stopArrivalTime?: unknown;
+  waitingSeconds?: number;
+  waitingFare?: number;
+  baseFare?: number;
+  totalFare?: number;
 };
 
 type Coordinates = { lat: number; lng: number };
@@ -70,6 +78,7 @@ export function DriverDashboard() {
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
+  const [stopWaitingSeconds, setStopWaitingSeconds] = useState(0);
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
   const [soundMuted, setSoundMutedState] = useState(isSoundMuted());
@@ -293,11 +302,57 @@ export function DriverDashboard() {
     return () => window.clearInterval(timer);
   }, [acceptedRide?.status, acceptedRide?.arrivedAt]);
   const startTrip = async (ride: RideRequest) => {
-    await updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp() });
+    await updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp(), currentStopIndex: 1 });
     await navigateToDestination(ride);
   };
   const completeTrip = (ride: RideRequest) =>
     void updateRideStatus(ride.id, 'completed', { completedAt: serverTimestamp() });
+
+  const waitFare = (seconds: number) => seconds > 180 ? Math.ceil((seconds - 180) / 60) : 0;
+
+  const arriveAtStop = async (ride: RideRequest) => {
+    await updateRideStatus(ride.id, 'in_progress', { stopArrivalTime: serverTimestamp(), waitingSeconds: 0 });
+  };
+
+  const continueToNextStop = async (ride: RideRequest) => {
+    const currentStopIndex = ride.currentStopIndex ?? 1;
+    await updateRideStatus(ride.id, 'in_progress', {
+      currentStopIndex: currentStopIndex + 1,
+      stopArrivalTime: null,
+      waitingSeconds: stopWaitingSeconds,
+      waitingFare: waitFare(stopWaitingSeconds),
+      totalFare: Number(ride.baseFare ?? ride.totalFare ?? ride.price ?? 0) + waitFare(stopWaitingSeconds),
+    });
+    setStopWaitingSeconds(0);
+    await navigateToDestination({ ...ride, currentStopIndex: currentStopIndex + 1, stopArrivalTime: null });
+  };
+
+  useEffect(() => {
+    const arrivedAt = toMillis(acceptedRide?.stopArrivalTime);
+    if (!acceptedRide || acceptedRide.status !== 'in_progress' || arrivedAt == null) {
+      setStopWaitingSeconds(0);
+      return;
+    }
+
+    const updateWaitingTime = () => {
+      const elapsed = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
+      setStopWaitingSeconds(elapsed);
+      if (elapsed > 0 && elapsed % 10 === 0) {
+        const waitingFare = waitFare(elapsed);
+        void updateDoc(doc(db, 'rides', acceptedRide.id), {
+          waitingSeconds: elapsed,
+          waitingFare,
+          totalFare: Number(acceptedRide.baseFare ?? acceptedRide.totalFare ?? acceptedRide.price ?? 0) + waitingFare,
+        }).catch((err) => {
+          console.error('Failed to update stop waiting fare:', err);
+          setError('Unable to update stop waiting time.');
+        });
+      }
+    };
+    updateWaitingTime();
+    const timer = window.setInterval(updateWaitingTime, 1000);
+    return () => window.clearInterval(timer);
+  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.stopArrivalTime]);
 
   const openNavigation = (destination: Coordinates, origin?: Coordinates) => {
     const originQuery = origin ? `&origin=${origin.lat},${origin.lng}` : '';
@@ -358,8 +413,12 @@ export function DriverDashboard() {
   };
 
   const navigateToDestination = async (ride: RideRequest) => {
+    const currentStopIndex = ride.currentStopIndex ?? 1;
+    const currentStop = ride.stops?.[currentStopIndex];
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
-    const destination = getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
+    const destination = currentStop && currentStop.lat != null && currentStop.lng != null
+      ? { lat: currentStop.lat, lng: currentStop.lng }
+      : getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
     if (!destination) {
       setError('Destination is missing coordinates.');
       return;
@@ -485,15 +544,53 @@ export function DriverDashboard() {
                 Cancel Ride (no fee before wait)
               </button>
             )}
-            {acceptedRide.status === 'in_progress' && (
-              <button
-                onClick={() => completeTrip(acceptedRide)}
-                disabled={updatingStatus}
-                className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
-              >
-                Complete Trip
-              </button>
-            )}
+            {acceptedRide.status === 'in_progress' && (() => {
+              const stops = acceptedRide.stops ?? [];
+              const currentStopIndex = acceptedRide.currentStopIndex ?? 1;
+              const hasNextStop = currentStopIndex < stops.length - 1;
+              const waitingFare = waitFare(stopWaitingSeconds);
+              return hasNextStop ? (
+                <>
+                  {acceptedRide.stopArrivalTime ? (
+                    <>
+                      <p className="mt-2 text-center text-sm font-semibold text-orange-700">
+                        Waiting: {Math.floor(stopWaitingSeconds / 60)}:{String(stopWaitingSeconds % 60).padStart(2, '0')} (R{waitingFare})
+                      </p>
+                      <p className="mt-1 text-center text-xs text-gray-600">First 3 minutes free, then R1 per started minute</p>
+                      <button
+                        onClick={() => void continueToNextStop(acceptedRide)}
+                        disabled={updatingStatus}
+                        className="mt-2 w-full rounded-lg bg-green-600 py-3 font-bold text-white disabled:opacity-60"
+                      >
+                        Continue to next
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => void arriveAtStop(acceptedRide)}
+                      disabled={updatingStatus}
+                      className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+                    >
+                      Arrived at Stop {currentStopIndex}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void navigateToDestination(acceptedRide)}
+                    className="mt-2 w-full rounded-lg border border-orange-500 py-2 font-bold text-orange-600 hover:bg-orange-50"
+                  >
+                    Navigate to Stop {currentStopIndex}
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => completeTrip(acceptedRide)}
+                  disabled={updatingStatus}
+                  className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+                >
+                  Complete Trip
+                </button>
+              );
+            })()}
             {acceptedRide.status === 'completed' && (
               <div className="mt-3 space-y-2">
                 <p className="text-center text-sm font-semibold text-green-800">
@@ -599,6 +696,9 @@ function RideDetails({ ride }: { ride: RideRequest }) {
         {isSend ? `📦 SEND${ride.packageSize ? ` (${ride.packageSize})` : ''}` : `👤 ${ride.passengerCount ?? 1}`}
       </span>
       <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>
+      {(ride.stops ?? []).slice(1, -1).map((stop, index) => (
+        <p key={stop.id}><span className="font-semibold">Stop {index + 1}:</span> {stop.address}</p>
+      ))}
       <p><span className="font-semibold">Dropoff:</span> {formatLocation(ride.dropoff)}</p>
       <p><span className="font-semibold">Distance:</span> {typeof ride.distance === 'number' ? `${ride.distance} km` : ride.distance ?? '—'}</p>
       {isSend && (
