@@ -63,9 +63,6 @@ export function DriverDashboard() {
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
-  const [acceptsPets, setAcceptsPets] = useState(false);
-  const [hasChildSeat, setHasChildSeat] = useState(false);
-  const [xlWithExtraBoot, setXlWithExtraBoot] = useState(false);
   const tipToastRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -79,9 +76,6 @@ export function DriverDashboard() {
           const profile = existing.data();
           setDriverProfile(profile);
           setDrivers([profile]);
-          setAcceptsPets(profile.petFriendly === true);
-          setHasChildSeat(profile.hasChildSeat === true);
-          setXlWithExtraBoot(profile.xlWithExtraBoot === true);
           return;
         }
 
@@ -111,10 +105,7 @@ export function DriverDashboard() {
       query(collection(db, 'rides'), where('status', '==', 'searching')),
       (snapshot) => {
         const nextRides = snapshot.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest))
-          .filter((ride) => !ride.extras?.includes('pet') || acceptsPets)
-          .filter((ride) => !ride.extras?.includes('childSeat') || hasChildSeat)
-          .filter((ride) => ride.category !== 'XL' || !ride.extras?.includes('luggage') || xlWithExtraBoot);
+          .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest));
         setRides(nextRides);
         console.log('Driver rides:', nextRides);
       },
@@ -129,7 +120,7 @@ export function DriverDashboard() {
       setError('Failed to load ride requests.');
       return undefined;
     }
-  }, [acceptsPets, authLoading, hasChildSeat, user, xlWithExtraBoot]);
+  }, [authLoading, user]);
 
   const acceptRide = async (ride: RideRequest) => {
     const uid = auth.currentUser?.uid;
@@ -209,18 +200,6 @@ export function DriverDashboard() {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
     await updateRideStatus(ride.id, 'declined', { declinedBy: uid, declinedReason: 'driver_not_equipped' });
-  };
-
-  const saveDriverSettings = async () => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    try {
-      await setDoc(doc(db, 'drivers', uid), { petFriendly: acceptsPets, hasChildSeat, xlWithExtraBoot }, { merge: true });
-      setError('Driver settings saved.');
-    } catch (err) {
-      console.error(err);
-      setError('Failed to save driver settings.');
-    }
   };
 
   const markArrivedAtPickup = async (ride: RideRequest) => {
@@ -384,13 +363,6 @@ export function DriverDashboard() {
         <p className="mb-3 rounded-lg bg-white p-3 text-sm font-semibold text-gray-700">
           Your rating: {Number(driverProfile?.avgRating ?? 0).toFixed(1)}★ ({Number(driverProfile?.totalRatings ?? 0)} trips)
         </p>
-        <section className="mb-4 rounded-lg bg-white p-3 text-sm text-gray-700">
-          <h3 className="font-bold">Vehicle capabilities</h3>
-          <label className="mt-2 block"><input type="checkbox" checked={acceptsPets} onChange={(event) => setAcceptsPets(event.target.checked)} /> I accept pets 🐶</label>
-          <label className="mt-2 block"><input type="checkbox" checked={hasChildSeat} onChange={(event) => setHasChildSeat(event.target.checked)} /> I have child seat 👶</label>
-          <label className="mt-2 block"><input type="checkbox" checked={xlWithExtraBoot} onChange={(event) => setXlWithExtraBoot(event.target.checked)} /> XL with extra boot</label>
-          <button type="button" onClick={() => void saveDriverSettings()} className="mt-3 rounded bg-gray-800 px-3 py-2 font-semibold text-white">Save settings</button>
-        </section>
         <h2 className="text-lg font-bold text-gray-800 mb-3">Incoming Ride Requests</h2>
 
         {error && (
