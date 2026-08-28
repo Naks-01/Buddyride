@@ -442,6 +442,10 @@ export function PassengerDashboard() {
   const knownPoints = [tripPickupLocation, tripDropoffLocation, driverLocation].filter(
     (point): point is { lat: number; lng: number } => point != null
   );
+  const driverDistanceKm = driverLocation && tripPickupLocation
+    ? calcDistance(driverLocation.lat, driverLocation.lng, tripPickupLocation.lat, tripPickupLocation.lng)
+    : null;
+  const driverEtaMinutes = driverDistanceKm == null ? null : Math.max(1, Math.ceil((driverDistanceKm / 30) * 60));
   const liveMapCenter =
     knownPoints.length > 0
       ? {
@@ -515,6 +519,11 @@ export function PassengerDashboard() {
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
                 <span>Fare: {formatR(fare ?? 0)}</span>
               </div>
+              {driverDistanceKm != null && driverEtaMinutes != null && (
+                <p className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center text-sm font-semibold text-green-800">
+                  Driver is {driverDistanceKm.toFixed(1)} km away - ETA {driverEtaMinutes} min{driverEtaMinutes === 1 ? '' : 's'}
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => void cancelRide()}

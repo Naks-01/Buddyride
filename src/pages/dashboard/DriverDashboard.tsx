@@ -136,11 +136,16 @@ export function DriverDashboard() {
     if (!uid) return;
     setAccepting(ride.id);
     try {
+      const location = await getDriverLocation();
       await updateDoc(doc(db, 'rides', ride.id), {
         status: 'accepted',
         driverId: uid,
         driverName: auth.currentUser?.displayName ?? 'Driver',
         driverPhone: auth.currentUser?.phoneNumber ?? null,
+        ...(location && {
+          driverLocation: { ...location, updatedAt: serverTimestamp() },
+          driverStatus: 'coming',
+        }),
         acceptedAt: serverTimestamp(),
       });
       const acceptedRide = { ...ride, status: 'accepted' };
@@ -288,6 +293,35 @@ export function DriverDashboard() {
         { enableHighAccuracy: true, timeout: 10000 },
       );
     });
+
+  useEffect(() => {
+    if (!acceptedRide || acceptedRide.status !== 'accepted' || !navigator.geolocation) return;
+
+    const rideId = acceptedRide.id;
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        void updateDoc(doc(db, 'rides', rideId), {
+          driverLocation: {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            updatedAt: serverTimestamp(),
+          },
+          driverStatus: 'coming',
+          status: 'accepted',
+        }).catch((err) => {
+          console.error('Failed to update driver location:', err);
+          setError('Unable to share your live location.');
+        });
+      },
+      (err) => {
+        console.error('Failed to watch driver location:', err);
+        setError('Location permission is required to share your route.');
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [acceptedRide?.id, acceptedRide?.status]);
 
   const navigateToPickup = async (ride: RideRequest) => {
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
