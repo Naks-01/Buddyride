@@ -521,7 +521,7 @@ export function DriverDashboard() {
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#121212] text-white">
       <div className="absolute inset-0 top-0 bottom-[72px] z-0">
-        <AppMap centerBtn={centerTrigger} />
+        <AppMap mode="driver" centerBtn={centerTrigger} />
       </div>
 
       <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-4 pointer-events-auto">

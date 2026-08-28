@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Autocomplete, DirectionsRenderer, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import { Autocomplete, useJsApiLoader } from '@react-google-maps/api';
 import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
 import { db } from '../../lib/firebase';
@@ -15,6 +15,7 @@ import { calcDistance } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { RatingModal } from '../../components/RatingModal';
 import { playSound } from '../../utils/sound';
+import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
 
 const formatR = (n: number) => `R${Number(n || 0).toFixed(2)}`;
 
@@ -39,8 +40,7 @@ const STATUS_BANNER: Record<string, string> = {
   in_progress: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
-const MAP_HEIGHT = '70vh';
-const GOOGLE_MAPS_LIBRARIES: ('places' | 'marker')[] = ['places', 'marker'];
+const GOOGLE_MAPS_LIBRARIES: ('places')[] = ['places'];
 const BASE_FARE = 25;
 const RATE_KM = 8;
 const RATE_MIN = 1;
@@ -55,18 +55,6 @@ function toMillis(value: unknown): number | null {
   return typeof value === 'number' ? value : null;
 }
 
-function GoogleMapsBillingHelp() {
-  return (
-    <button
-      type="button"
-      onClick={() => window.open('https://console.cloud.google.com/billing', '_blank', 'noopener,noreferrer')}
-      className="mt-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-bold text-white hover:bg-red-700"
-    >
-      Check Billing
-    </button>
-  );
-}
-
 export function PassengerDashboard() {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
@@ -77,7 +65,6 @@ export function PassengerDashboard() {
     libraries: GOOGLE_MAPS_LIBRARIES,
   });
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
   const geocodeTimerRef = useRef<number | null>(null);
   const lastGeocodedLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const [requesting, setRequesting] = useState(false);
@@ -262,14 +249,6 @@ export function PassengerDashboard() {
     }
   };
 
-  const focusMapOnSelection = (location: { lat: number; lng: number }) => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    map.panTo(location);
-    map.setZoom(17);
-  };
-
   const onPlaceChanged = () => {
     const place = autocompleteRef.current?.getPlace();
     const location = place?.geometry?.location;
@@ -282,7 +261,6 @@ export function PassengerDashboard() {
     setMapLocation(nextLocation);
     if (locationStep === 'pickup') setPickupPlaceId(place.place_id ?? null);
     else setDropoffPlaceId(place.place_id ?? null);
-    focusMapOnSelection(nextLocation);
   };
 
   const selectLocalPlace = (place: PolokwanePlace) => {
@@ -290,7 +268,6 @@ export function PassengerDashboard() {
     setMapAddress(place.address);
     setSearchText(place.name);
     setMapLocation(nextLocation);
-    focusMapOnSelection(nextLocation);
   };
 
   const confirmMapLocation = () => {
@@ -320,7 +297,7 @@ export function PassengerDashboard() {
     const stop = stops[index];
     setSearchText(stop.address);
     setMapAddress(stop.address);
-    if (stop.lat != null && stop.lng != null) focusMapOnSelection({ lat: stop.lat, lng: stop.lng });
+    if (stop.lat != null && stop.lng != null) setMapLocation({ lat: stop.lat, lng: stop.lng });
   };
 
   const addStop = () => {
@@ -371,7 +348,6 @@ export function PassengerDashboard() {
       setLocationAccuracy(accuracy);
       setMapLocation(location);
       setSearchText('Current location');
-      focusMapOnSelection(location);
       scheduleReverseGeocode(location);
     } catch (err) {
       console.error(err);
@@ -750,6 +726,27 @@ export function PassengerDashboard() {
     : googleMapsError ?? (loadError ? loadError.message : null);
   const mapsAvailable = hasGoogleMapsApiKey && isLoaded && !mapsError;
 
+  const handleMapClick = (lat: number, lng: number) => {
+    const location = { lat, lng };
+    setIsLocationLocked(true);
+    setUserLocation(location);
+    setMapLocation(location);
+    setSearchText('Pinned location');
+    scheduleReverseGeocode(location);
+  };
+
+  const tripMarkers: AppMapMarker[] = isActiveTrip
+    ? [
+        ...(tripPickupLocation ? [{ id: 'pickup', position: [tripPickupLocation.lat, tripPickupLocation.lng] as [number, number], color: '#1a73e8', emoji: 'A' }] : []),
+        ...(tripDropoffLocation ? [{ id: 'dropoff', position: [tripDropoffLocation.lat, tripDropoffLocation.lng] as [number, number], color: '#d93025', emoji: 'B' }] : []),
+        ...(driverLocation ? [{ id: 'driver', position: [driverLocation.lat, driverLocation.lng] as [number, number], color: '#00C853', emoji: '🚕' }] : []),
+      ]
+    : [];
+
+  const routePath: [number, number][] | undefined = directions?.routes?.[0]?.overview_path?.map(
+    (point) => [point.lat(), point.lng()] as [number, number],
+  );
+
   const logout = async () => { await signOut(); localStorage.clear(); navigate('/'); };
 
   return (
@@ -774,16 +771,14 @@ export function PassengerDashboard() {
             </div>
           )}
           {!hasGoogleMapsApiKey && (
-            <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-              <p>VITE_GOOGLE_MAPS_API_KEY missing in .env file</p>
-              <GoogleMapsBillingHelp />
+            <div className="mb-3 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-700">
+              <p>Address search is unavailable (VITE_GOOGLE_MAPS_API_KEY missing). The map still works using free OpenStreetMap.</p>
             </div>
           )}
           {hasGoogleMapsApiKey && mapsError && (
-            <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-              <p>Map failed to load. Common fix: Enable billing at console.cloud.google.com/billing</p>
+            <div className="mb-3 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-700">
+              <p>Address search failed to load. The map still works using free OpenStreetMap.</p>
               <p className="mt-1 break-words font-mono text-xs">{mapsError}</p>
-              <GoogleMapsBillingHelp />
             </div>
           )}
           {isActiveTrip && (
@@ -845,67 +840,22 @@ export function PassengerDashboard() {
             </>
           )}
 
-          {mapsAvailable ? (
-            <GoogleMap
-              mapContainerClassName="h-[70vh] w-full"
-              center={isActiveTrip ? liveMapCenter : mapLocation}
+          <div className="relative h-[70vh] w-full overflow-hidden rounded-lg">
+            <AppMap
+              mode="passenger"
+              center={isActiveTrip ? [liveMapCenter.lat, liveMapCenter.lng] : [mapLocation.lat, mapLocation.lng]}
               zoom={14}
-              onLoad={(map) => {
-                mapRef.current = map;
-              }}
-              onClick={isActiveTrip || rideId ? undefined : (event) => {
-                const latLng = event.latLng;
-                if (!latLng) return;
-                const location = { lat: latLng.lat(), lng: latLng.lng() };
-                setIsLocationLocked(true);
-                setUserLocation(location);
-                setMapLocation(location);
-                setSearchText('Pinned location');
-                scheduleReverseGeocode(location);
-              }}
-            >
-              {isActiveTrip ? (
-                <>
-                  {tripPickupLocation && (
-                    <Marker
-                      position={tripPickupLocation}
-                      label="A"
-                      icon="http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-                    />
-                  )}
-                  {tripDropoffLocation && (
-                    <Marker
-                      position={tripDropoffLocation}
-                      label="B"
-                      icon="http://maps.google.com/mapfiles/ms/icons/red-dot.png"
-                    />
-                  )}
-                  {driverLocation && (
-                    <Marker
-                      position={driverLocation}
-                      label="Driver"
-                      icon="https://maps.google.com/mapfiles/kml/shapes/cabs.png"
-                    />
-                  )}
-                </>
-              ) : directions ? <DirectionsRenderer directions={directions} /> : null}
-            </GoogleMap>
-          ) : (
-            <div
-              style={{ height: MAP_HEIGHT }}
-              className="w-full flex items-center justify-center bg-gray-100 rounded-lg text-gray-500"
-            >
-              {mapsError
-                ? 'Map failed to load. Common fix: Enable billing at console.cloud.google.com/billing'
-                : 'Loading map...'}
-            </div>
-          )}
+              markers={tripMarkers}
+              routePath={!isActiveTrip ? routePath : undefined}
+              onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
+            />
 
             {!rideId && !isActiveTrip && (
               <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full text-3xl">
                 📍
               </div>
             )}
+          </div>
 
             {!rideId && !isActiveTrip && (
               <div className="relative z-20 -mt-28 px-3 pb-3">
