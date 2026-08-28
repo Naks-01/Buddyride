@@ -15,6 +15,7 @@ import { calcDistance } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { RatingModal } from '../../components/RatingModal';
 
+const formatR = (n: number) => `R${Number(n || 0).toFixed(2)}`;
 const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
   requested: 'Looking for a driver...',
@@ -87,6 +88,9 @@ export function PassengerDashboard() {
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const extrasFee = selectedExtras.reduce((total, extra) => total + RIDE_EXTRAS[extra].fee, 0);
+  const total = estimatedFare;
+  const roundedTotal = Math.round(total * 100) / 100;
+  const ridePrice = total - BOOKING_FEE - extrasFee;
 
   useEffect(() => {
     if (!loadError) return;
@@ -423,7 +427,7 @@ export function PassengerDashboard() {
         cancellationBalanceDue: cancellationFee,
         cancelledAt: serverTimestamp(),
       });
-      setMessage(cancellationFee ? `Ride cancelled. Fee: R${cancellationFee.toFixed(2)}` : 'Ride cancelled for free.');
+      setMessage(cancellationFee ? `Ride cancelled. Fee: ${formatR(cancellationFee)}` : 'Ride cancelled for free.');
       setRideId(null);
       setRideStatus(null);
       setRideCreatedAt(null);
@@ -509,7 +513,7 @@ export function PassengerDashboard() {
               )}
               <div className="bg-white border border-gray-200 rounded-lg py-2 px-3 mb-3 text-sm text-gray-700">
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
-                <span>Fare: R{(fare ?? 0).toFixed(2)}</span>
+                <span>Fare: {formatR(fare ?? 0)}</span>
               </div>
               <button
                 type="button"
@@ -680,20 +684,19 @@ export function PassengerDashboard() {
               </div>
               <p className="mb-2 font-semibold text-gray-700">Add extras</p>
               <div className="grid gap-2 sm:grid-cols-2">
-                {(Object.entries(RIDE_EXTRAS) as Array<[keyof typeof RIDE_EXTRAS, (typeof RIDE_EXTRAS)[keyof typeof RIDE_EXTRAS]]>).map(([key, extra]) => {
-                  const enabled = key !== 'childSeat' || rideCategory === 'Comfort' || rideCategory === 'XL';
-                  return <label key={key} className={`flex items-center gap-2 rounded-lg bg-white p-2 text-sm ${!enabled ? 'opacity-40' : ''}`}><input type="checkbox" disabled={!enabled} checked={selectedExtras.includes(key)} onChange={() => setSelectedExtras((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /> <span>{extra.icon} {extra.label} +R{extra.fee}</span></label>;
-                })}
+                {(Object.entries(RIDE_EXTRAS) as Array<[keyof typeof RIDE_EXTRAS, (typeof RIDE_EXTRAS)[keyof typeof RIDE_EXTRAS]]>).map(([key, extra]) => (
+                  <label key={key} className="flex items-center gap-2 rounded-lg bg-white p-2 text-sm"><input type="checkbox" checked={selectedExtras.includes(key)} onChange={() => setSelectedExtras((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /> <span>{extra.icon} {extra.label} +{formatR(extra.fee)}</span></label>
+                ))}
               </div>
               <p>Distance: {distance}</p>
-              <p>Ride R{(estimatedFare - BOOKING_FEE - extrasFee).toFixed(2)} + Booking R{BOOKING_FEE.toFixed(2)}{extrasFee > 0 ? ` + Extras R${extrasFee.toFixed(2)}` : ''} = R{estimatedFare.toFixed(2)}</p>
+              <p>Ride {formatR(ridePrice)} + Booking {formatR(BOOKING_FEE)}{extrasFee > 0 ? ` + Extras ${formatR(extrasFee)}` : ''} = {formatR(roundedTotal)}</p>
               {rideCategory === 'XL' && passengerCount === 6 && selectedExtras.includes('luggage') && <p className="mt-2 font-semibold text-green-700">Perfect for airport trip</p>}
             </div>
           )}
 
           {isCompleted && (
             <div className="text-center mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-3 px-3">
-              <p className="mb-2">Trip Complete. Pay R{fare ?? 0} cash to driver</p>
+              <p className="mb-2">Trip Complete. Pay {formatR(fare ?? 0)} cash to driver</p>
               {driverId && !rated && (
                 <button type="button" onClick={() => setShowRating(true)} className="mb-2 rounded-lg bg-yellow-500 px-4 py-2 font-bold text-white">
                   Rate your driver
@@ -722,7 +725,7 @@ export function PassengerDashboard() {
               className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-3"
             >
               <CarIcon size={20} />{' '}
-              {requesting ? 'Requesting...' : `Request BuddyRide - R${estimatedFare}`}
+              {requesting ? 'Requesting...' : `Request BuddyRide - ${formatR(roundedTotal)}`}
             </button>
           )}
         </div>
