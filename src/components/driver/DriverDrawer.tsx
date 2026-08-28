@@ -29,11 +29,13 @@ type DriverDrawerProps = {
   driverProfile: Record<string, unknown> | null;
   driverId: string;
   todayEarnings: number;
+  isOnline: boolean;
+  onGoOffline: () => void;
 };
 
 type MenuAction = 'rides' | 'earnings' | 'performance' | 'vehicle' | 'documents' | 'safety' | 'promotions' | 'refer' | 'help' | 'settings' | 'logout';
 
-export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, todayEarnings }: DriverDrawerProps) {
+export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, todayEarnings, isOnline, onGoOffline }: DriverDrawerProps) {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const [showEarnings, setShowEarnings] = useState(false);
@@ -140,11 +142,16 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
             <p className="truncate text-sm text-gray-400">{profile?.phone ?? 'No phone on file'}</p>
             <div className="mt-1 flex items-center gap-2 text-xs">
               <span className="flex items-center gap-1 font-semibold text-[#2ECC71]">
-                <span className="h-2 w-2 rounded-full bg-[#2ECC71]" /> Online
+                <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-[#2ECC71]' : 'bg-gray-500'}`} /> {isOnline ? 'Online' : 'Offline'}
               </span>
               <span className="flex items-center gap-1 font-semibold text-yellow-400">
                 <Star size={12} className="fill-yellow-400" /> {rating.toFixed(2)}
               </span>
+              {isOnline && (
+                <button type="button" onClick={onGoOffline} className="font-semibold text-[#FF3B30] underline">
+                  Go Offline
+                </button>
+              )}
             </div>
           </div>
         </div>

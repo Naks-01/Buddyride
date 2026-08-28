@@ -116,6 +116,18 @@ export function DriverDashboard() {
     }
   };
 
+  const handleGoOffline = async () => {
+    if (!window.confirm('Stop receiving rides? You will go offline')) return;
+    setIsOnline(false);
+    setRides([]);
+    stopRequestLoop();
+    if (user) {
+      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: false, lastOffline: serverTimestamp() }).catch((err) => {
+        console.error('Failed to update offline status:', err);
+      });
+    }
+  };
+
   useEffect(() => {
     if ('Notification' in window) void Notification.requestPermission();
   }, []);
@@ -154,7 +166,11 @@ export function DriverDashboard() {
   }, [authLoading, user]);
 
   useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading || !user || !isOnline) {
+      setRides([]);
+      stopRequestLoop();
+      return;
+    }
 
     try {
     const unsubscribe = onSnapshot(
@@ -196,7 +212,7 @@ export function DriverDashboard() {
       setError('Failed to load ride requests.');
       return undefined;
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, isOnline]);
 
   const acceptRide = async (ride: RideRequest) => {
     const uid = auth.currentUser?.uid;
@@ -573,6 +589,8 @@ export function DriverDashboard() {
         driverProfile={driverProfile}
         driverId={user.uid}
         todayEarnings={todayEarnings}
+        isOnline={isOnline}
+        onGoOffline={() => void handleGoOffline()}
       />
 
       {error && (
@@ -596,15 +614,24 @@ export function DriverDashboard() {
         <button
           type="button"
           onClick={() => void toggleOnline()}
-          className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#00C853] px-10 py-5 text-lg font-bold text-white shadow-2xl hover:bg-[#00b34b]"
+          className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#00C853] px-8 py-4 text-lg font-bold text-white shadow-lg hover:bg-[#00b34b]"
         >
-          Go online
+          GO ONLINE
         </button>
       )}
 
       {isOnline && !hasActiveOverlay && (
-        <div className="absolute left-1/2 top-24 z-20 -translate-x-1/2 rounded-full bg-[#00C853] px-4 py-1.5 text-xs font-bold text-white shadow-lg">
-          You're online
+        <div className="absolute left-1/2 top-24 z-20 flex -translate-x-1/2 flex-col items-center gap-3">
+          <div className="flex items-center gap-2 rounded-full bg-[#00C853] px-6 py-2 font-bold text-white shadow-lg">
+            <span className="h-2 w-2 rounded-full bg-white" /> You're online
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleGoOffline()}
+            className="rounded-full border border-red-500 bg-[#1E2128] px-6 py-2 text-sm font-bold text-red-500 shadow-lg"
+          >
+            Go Offline
+          </button>
         </div>
       )}
 
