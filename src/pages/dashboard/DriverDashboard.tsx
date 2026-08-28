@@ -46,6 +46,8 @@ type RideRequest = {
   stopArrivalTime?: unknown;
   waitingSeconds?: number;
   waitingFare?: number;
+  pickupWaitSeconds?: number;
+  pickupWaitFare?: number;
   baseFare?: number;
   totalFare?: number;
 };
@@ -254,21 +256,18 @@ export function DriverDashboard() {
   };
 
   const markArrivedAtPickup = async (ride: RideRequest) => {
+    // Update local state immediately so the Start Trip button appears without waiting on the snapshot round-trip.
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'arrived_at_pickup', arrivedAt: Date.now() } : prev));
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
     const location = await getDriverLocation();
-    if (!pickup || !location) {
-      setError('GPS location is required to mark arrival.');
-      return;
-    }
-    const distanceKm = calcDistance(location.lat, location.lng, pickup.lat, pickup.lng);
-    if (distanceKm > 0.05) {
-      setError('You must be within 50m of the pickup location.');
-      return;
+    const distanceKm = pickup && location ? calcDistance(location.lat, location.lng, pickup.lat, pickup.lng) : null;
+    if (distanceKm != null && distanceKm > 0.05) {
+      setError('Note: GPS shows you are more than 50m from pickup.');
     }
     await updateRideStatus(ride.id, 'arrived_at_pickup', {
       arrivedAt: serverTimestamp(),
-      driverLocation: location,
-      arrivalDistanceM: distanceKm * 1000,
+      ...(location && { driverLocation: location }),
+      ...(distanceKm != null && { arrivalDistanceM: distanceKm * 1000 }),
     });
   };
   const driverCancelRide = async (ride: RideRequest) => {
@@ -301,21 +300,54 @@ export function DriverDashboard() {
     const timer = window.setInterval(updateWait, 1000);
     return () => window.clearInterval(timer);
   }, [acceptedRide?.status, acceptedRide?.arrivedAt]);
-  const startTrip = async (ride: RideRequest) => {
-    await updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp(), currentStopIndex: 1 });
-    await navigateToDestination(ride);
-  };
-  const completeTrip = (ride: RideRequest) =>
-    void updateRideStatus(ride.id, 'completed', { completedAt: serverTimestamp() });
 
   const waitFare = (seconds: number) => seconds > 180 ? Math.ceil((seconds - 180) / 60) : 0;
 
+  // Pickup wait timer: 3 min free, then R1/min - persisted to Firestore every 10s so the passenger sees it too.
+  const [pickupWaitSeconds, setPickupWaitSeconds] = useState(0);
+  useEffect(() => {
+    const arrivedAt = toMillis(acceptedRide?.arrivedAt);
+    if (!acceptedRide || acceptedRide.status !== 'arrived_at_pickup' || arrivedAt == null) {
+      setPickupWaitSeconds(0);
+      return;
+    }
+    const updatePickupWait = () => {
+      const elapsed = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
+      setPickupWaitSeconds(elapsed);
+      if (elapsed > 0 && elapsed % 10 === 0) {
+        const pickupWaitFare = waitFare(elapsed);
+        void updateDoc(doc(db, 'rides', acceptedRide.id), {
+          pickupWaitSeconds: elapsed,
+          pickupWaitFare,
+          totalFare: Number(acceptedRide.baseFare ?? acceptedRide.totalFare ?? acceptedRide.price ?? 0) + pickupWaitFare,
+        }).catch((err) => {
+          console.error('Failed to update pickup waiting fare:', err);
+        });
+      }
+    };
+    updatePickupWait();
+    const timer = window.setInterval(updatePickupWait, 1000);
+    return () => window.clearInterval(timer);
+  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.arrivedAt]);
+
+  const startTrip = async (ride: RideRequest) => {
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'in_progress', currentStopIndex: 1 } : prev));
+    await updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp(), currentStopIndex: 1 });
+    await navigateToDestination(ride);
+  };
+  const completeTrip = (ride: RideRequest) => {
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed' } : prev));
+    void updateRideStatus(ride.id, 'completed', { completedAt: serverTimestamp() });
+  };
+
   const arriveAtStop = async (ride: RideRequest) => {
+    setAcceptedRide((prev) => (prev ? { ...prev, stopArrivalTime: Date.now(), waitingSeconds: 0 } : prev));
     await updateRideStatus(ride.id, 'in_progress', { stopArrivalTime: serverTimestamp(), waitingSeconds: 0 });
   };
 
   const continueToNextStop = async (ride: RideRequest) => {
     const currentStopIndex = ride.currentStopIndex ?? 1;
+    setAcceptedRide((prev) => (prev ? { ...prev, currentStopIndex: currentStopIndex + 1, stopArrivalTime: undefined } : prev));
     await updateRideStatus(ride.id, 'in_progress', {
       currentStopIndex: currentStopIndex + 1,
       stopArrivalTime: null,
@@ -505,11 +537,16 @@ export function DriverDashboard() {
                 disabled={updatingStatus}
                 className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
               >
-                I've Arrived (GPS)
+                Arrived at Pickup
               </button>
             )}
             {acceptedRide.status === 'arrived_at_pickup' && (
               <>
+                <div className="mt-2 rounded-lg bg-orange-50 border border-orange-200 py-2 px-3 text-center text-sm font-semibold text-orange-700">
+                  {pickupWaitSeconds <= 180
+                    ? `Free wait: ${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')} remaining`
+                    : `Waiting: ${Math.floor(pickupWaitSeconds / 60)}:${String(pickupWaitSeconds % 60).padStart(2, '0')} - Extra R${waitFare(pickupWaitSeconds)}`}
+                </div>
                 <p className="mt-2 text-center text-sm font-semibold text-orange-700">
                   {waitSecondsRemaining > 0
                     ? `Wait ${Math.floor(waitSecondsRemaining / 60)}:${String(waitSecondsRemaining % 60).padStart(2, '0')} before marking no-show`
@@ -531,7 +568,7 @@ export function DriverDashboard() {
                   disabled={updatingStatus}
                   className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
                 >
-                  Passenger Picked Up
+                  Start Trip
                 </button>
               </>
             )}

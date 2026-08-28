@@ -29,11 +29,13 @@ function formatForDisplay(place: { structured_formatting?: { main_text?: string 
   if (!place) return '';
   return place.structured_formatting?.main_text || shortAddress(place.formatted_address || place.name || '');
 }
-const ACTIVE_TRIP_STATUSES = ['requested', 'accepted', 'driver_arrived', 'in_progress'];
+const ACTIVE_TRIP_STATUSES = ['searching', 'requested', 'accepted', 'driver_arrived', 'arrived_at_pickup', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
+  searching: 'Looking for a driver...',
   requested: 'Looking for a driver...',
   accepted: 'Driver is on the way',
-  driver_arrived: 'Driver has arrived',
+  driver_arrived: 'Driver has arrived - 3 min free wait',
+  arrived_at_pickup: 'Driver has arrived - 3 min free wait',
   in_progress: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
@@ -108,6 +110,9 @@ export function PassengerDashboard() {
   const [totalFare, setTotalFare] = useState<number | null>(null);
   const [baseFare, setBaseFare] = useState<number | null>(null);
   const [stopArrivalTime, setStopArrivalTime] = useState<unknown>(null);
+  const [pickupArrivedAt, setPickupArrivedAt] = useState<unknown>(null);
+  const [pickupWaitSeconds, setPickupWaitSeconds] = useState(0);
+  const [pickupWaitFare, setPickupWaitFare] = useState(0);
   const [rated, setRated] = useState(false);
   const [ratingValue, setRatingValue] = useState<number | null>(null);
   const [showRating, setShowRating] = useState(false);
@@ -610,6 +615,13 @@ export function PassengerDashboard() {
         setBaseFare(data.baseFare);
       }
       setStopArrivalTime(data.stopArrivalTime ?? null);
+      setPickupArrivedAt(data.arrivedAt ?? null);
+      if (typeof data.pickupWaitSeconds === 'number') {
+        setPickupWaitSeconds(data.pickupWaitSeconds);
+      }
+      if (typeof data.pickupWaitFare === 'number') {
+        setPickupWaitFare(data.pickupWaitFare);
+      }
       if (typeof data.distance === 'string') {
         setDistance(data.distance);
         const parsed = Number.parseFloat(data.distance);
@@ -618,6 +630,20 @@ export function PassengerDashboard() {
     });
     return () => unsubscribe();
   }, [rideId]);
+
+  // Live-count the 3 min free pickup wait, then R1/min extra, while the driver waits at pickup.
+  useEffect(() => {
+    const arrivedAt = toMillis(pickupArrivedAt);
+    if (rideStatus !== 'arrived_at_pickup' || arrivedAt == null) return;
+    const updatePickupWaiting = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
+      setPickupWaitSeconds(seconds);
+      setPickupWaitFare(seconds > 180 ? Math.ceil((seconds - 180) / 60) : 0);
+    };
+    updatePickupWaiting();
+    const timer = window.setInterval(updatePickupWaiting, 1000);
+    return () => window.clearInterval(timer);
+  }, [rideStatus, pickupArrivedAt]);
 
   useEffect(() => {
     const arrivedAt = toMillis(stopArrivalTime);
@@ -634,7 +660,7 @@ export function PassengerDashboard() {
 
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
-  const isShareableTrip = rideStatus === 'accepted' || rideStatus === 'in_progress';
+  const isShareableTrip = rideStatus === 'accepted' || rideStatus === 'arrived_at_pickup' || rideStatus === 'in_progress';
   useEffect(() => {
     if (!isActiveTrip || rideCreatedAt == null) return;
     const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
@@ -788,8 +814,15 @@ export function PassengerDashboard() {
               )}
               <div className="bg-white border border-gray-200 rounded-lg py-2 px-3 mb-3 text-sm text-gray-700">
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
-                <span>Fare: {formatR((baseFare ?? totalFare ?? fare ?? 0) + waitingFare)}</span>
+                <span>Fare: {formatR((baseFare ?? totalFare ?? fare ?? 0) + pickupWaitFare + waitingFare)}</span>
               </div>
+              {rideStatus === 'arrived_at_pickup' && (
+                <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
+                  {pickupWaitSeconds <= 180
+                    ? `Driver has arrived - 3 min free wait: ${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')}`
+                    : `Waiting: ${Math.floor(pickupWaitSeconds / 60)}:${String(pickupWaitSeconds % 60).padStart(2, '0')} - Extra ${formatR(pickupWaitFare)}`}
+                </p>
+              )}
               {rideStatus === 'in_progress' && (
                 <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
                   Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
