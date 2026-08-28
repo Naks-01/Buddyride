@@ -102,10 +102,12 @@ export function DriverDashboard() {
   const knownRideIdsRef = useRef<Set<string>>(new Set());
   const [soundMuted, setSoundMutedState] = useState(isSoundMuted());
   const [isOnline, setIsOnline] = useState(false);
+  const [showStats, setShowStats] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const mapRef = useRef<google.maps.Map | null>(null);
+  const dragStartYRef = useRef<number | null>(null);
   const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
   const { isLoaded: mapsLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsApiKey.length > 0 ? googleMapsApiKey : 'missing-key',
@@ -121,11 +123,23 @@ export function DriverDashboard() {
   const toggleOnline = async () => {
     const next = !isOnline;
     setIsOnline(next);
+    if (next) setShowStats(false);
     if (user) {
       await updateDoc(doc(db, 'drivers', user.uid), { isOnline: next }).catch((err) => {
         console.error('Failed to update online status:', err);
       });
     }
+  };
+
+  const handleSheetDragStart = (event: React.TouchEvent) => {
+    dragStartYRef.current = event.touches[0]?.clientY ?? null;
+  };
+
+  const handleSheetDragEnd = (event: React.TouchEvent) => {
+    if (dragStartYRef.current == null) return;
+    const deltaY = event.changedTouches[0]?.clientY - dragStartYRef.current;
+    if (deltaY > 50) setShowStats(false);
+    dragStartYRef.current = null;
   };
 
   useEffect(() => {
@@ -624,18 +638,34 @@ export function DriverDashboard() {
       )}
 
       {!isOnline && !hasActiveOverlay && (
-        <button
-          type="button"
-          onClick={() => void toggleOnline()}
-          className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#00C853] px-10 py-5 text-lg font-bold text-white shadow-2xl hover:bg-[#00b34b]"
-        >
-          Go online
-        </button>
+        <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void toggleOnline()}
+            className="rounded-full bg-[#00C853] px-10 py-5 text-lg font-bold text-white shadow-2xl hover:bg-[#00b34b]"
+          >
+            Go online
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowStats((prev) => !prev)}
+            className="rounded-full bg-[#2A2D36] px-4 py-1.5 text-xs font-semibold text-gray-300 shadow-lg"
+          >
+            {showStats ? '^ Hide stats' : 'v Show stats'}
+          </button>
+        </div>
       )}
 
       {isOnline && !hasActiveOverlay && (
-        <div className="absolute left-1/2 top-24 z-20 -translate-x-1/2 rounded-full bg-[#00C853] px-4 py-1.5 text-xs font-bold text-white shadow-lg">
-          You're online
+        <div className="absolute left-1/2 top-24 z-20 flex -translate-x-1/2 flex-col items-center gap-3">
+          <div className="rounded-full bg-[#00C853] px-4 py-1.5 text-xs font-bold text-white shadow-lg">You're online</div>
+          <button
+            type="button"
+            onClick={() => setShowStats((prev) => !prev)}
+            className="rounded-full bg-[#2A2D36] px-4 py-1.5 text-xs font-semibold text-gray-300 shadow-lg"
+          >
+            {showStats ? '^ Hide stats' : 'v Show stats'}
+          </button>
         </div>
       )}
 
@@ -804,8 +834,14 @@ export function DriverDashboard() {
       )}
 
       {!hasActiveOverlay && (
-        <div className="absolute inset-x-0 bottom-16 z-10 rounded-t-3xl bg-[#1E2128] px-4 pb-4 pt-3 shadow-[0_-8px_24px_rgba(0,0,0,0.4)]">
-          <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-gray-600" />
+        <div
+          className={`absolute inset-x-0 bottom-16 z-10 rounded-t-3xl bg-[#1E2128] px-4 pb-4 pt-3 shadow-[0_-8px_24px_rgba(0,0,0,0.4)] transition-all duration-300 ${showStats ? 'translate-y-0' : 'translate-y-full hidden'}`}
+        >
+          <div
+            onTouchStart={handleSheetDragStart}
+            onTouchEnd={handleSheetDragEnd}
+            className="mx-auto mb-3 h-1.5 w-10 cursor-grab rounded-full bg-gray-600 active:cursor-grabbing"
+          />
           <div className="space-y-3">
             <div className="flex items-center gap-3 rounded-2xl bg-[#2A2D36] p-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500/20">
