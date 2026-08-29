@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
+import type { DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
-import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
+import { createRide, cancelRide as cancelRideService, subscribeToRide, searchAddress } from '../../lib/rideService';
 import { CarIcon, LogOutIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
@@ -27,23 +27,12 @@ function shortAddress(full: string): string {
 
 type NominatimResult = { display_name: string; lat: string; lon: string };
 
-// Free OSM Nominatim address search, restricted to South Africa.
-async function searchAddress(query: string): Promise<NominatimResult[]> {
-  if (!query.trim()) return [];
-  const response = await fetch(
-    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=za&limit=5`
-  );
-  if (!response.ok) return [];
-  return response.json();
-}
-const ACTIVE_TRIP_STATUSES = ['searching', 'requested', 'accepted', 'driver_arrived', 'arrived_at_pickup', 'in_progress'];
+const ACTIVE_TRIP_STATUSES = ['requested', 'driver_assigned', 'arrived', 'on_trip'];
 const STATUS_BANNER: Record<string, string> = {
-  searching: 'Looking for a driver...',
   requested: 'Looking for a driver...',
-  accepted: 'Driver is on the way',
-  driver_arrived: 'Driver has arrived at pickup',
-  arrived_at_pickup: 'Driver has arrived at pickup',
-  in_progress: 'On trip to destination',
+  driver_assigned: 'Driver is on the way',
+  arrived: 'Driver has arrived at pickup',
+  on_trip: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
 const BASE_FARE = 25;
@@ -358,8 +347,12 @@ export function PassengerDashboard() {
     setRequesting(true);
     setMessage('');
     try {
-      const rideRef = await addDoc(
-        collection(db, 'rides'),
+      const pickupPoint = { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' };
+      const dropoffPoint = { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' };
+      const rideRef = await createRide(
+        pickupPoint,
+        dropoffPoint,
+        profile?.id ?? 'test123',
         mode === 'send'
           ? {
               type: 'send',
@@ -367,10 +360,6 @@ export function PassengerDashboard() {
               recipientName: recipientName.trim(),
               recipientPhone: recipientPhone.trim(),
               packageSize,
-              pickup: { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' },
-              dropoff: { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' },
-              pickupLatLng: { lat: pickup.lat!, lng: pickup.lng! },
-              dropoffLatLng: { lat: dropoff.lat!, lng: dropoff.lng! },
               distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
               price: estimatedFare,
               fare: estimatedFare - BOOKING_FEE,
@@ -383,18 +372,11 @@ export function PassengerDashboard() {
               waitingFare: 0,
               category: 'send',
               paymentMethod: sendPaymentMethod,
-              status: 'searching',
-              passengerId: profile?.id ?? 'test123',
               pickupPlaceId: pickupPlaceId ?? null,
               dropoffPlaceId: dropoffPlaceId ?? null,
-              createdAt: serverTimestamp(),
             }
           : {
               type: 'ride',
-              pickup: { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' },
-              dropoff: { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' },
-              pickupLatLng: { lat: pickup.lat!, lng: pickup.lng! },
-              dropoffLatLng: { lat: dropoff.lat!, lng: dropoff.lng! },
               distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
               price: estimatedFare,
               fare: estimatedFare - BOOKING_FEE - extrasFee,
@@ -409,11 +391,8 @@ export function PassengerDashboard() {
               passengerCount,
               extras: selectedExtras,
               extrasFee,
-              status: 'searching',
-              passengerId: profile?.id ?? 'test123',
               pickupPlaceId: pickupPlaceId ?? null,
               dropoffPlaceId: dropoffPlaceId ?? null,
-              createdAt: serverTimestamp(),
             }
       );
 
@@ -421,7 +400,7 @@ export function PassengerDashboard() {
       setTripType(mode);
       setRideCreatedAt(Date.now());
       setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
-      setRideStatus('searching');
+      setRideStatus('requested');
       setDriverLocation(null);
       setTripPickupLocation({ lat: pickup.lat!, lng: pickup.lng! });
       setTripDropoffLocation({ lat: dropoff.lat!, lng: dropoff.lng! });
@@ -467,7 +446,7 @@ export function PassengerDashboard() {
   const lastSoundStatusRef = useRef<string | null>(null);
   useEffect(() => {
     if (!rideId) return;
-    const unsubscribe = onSnapshot(doc(db, 'rides', rideId), (snapshot) => {
+    const unsubscribe = subscribeToRide(rideId, (snapshot: DocumentData) => {
       const data = snapshot.data() as DocumentData | undefined;
       if (!data) return;
 
@@ -476,8 +455,8 @@ export function PassengerDashboard() {
 
       if (nextStatus && nextStatus !== lastSoundStatusRef.current) {
         lastSoundStatusRef.current = nextStatus;
-        if (nextStatus === 'accepted') playSound('accepted');
-        else if (nextStatus === 'arrived_at_pickup' || nextStatus === 'driver_arrived') {
+        if (nextStatus === 'driver_assigned') playSound('accepted');
+        else if (nextStatus === 'arrived') {
           playSoundTimes('arrived', 3);
           if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
         } else if (nextStatus === 'cancelled') playSound('cancel');
@@ -487,7 +466,7 @@ export function PassengerDashboard() {
         setTripType(data.type);
       }
 
-      if (nextStatus === 'accepted') {
+      if (nextStatus === 'driver_assigned') {
         const acceptedDriverName = typeof data.driverName === 'string' ? data.driverName : 'Driver';
         setDriverName(acceptedDriverName);
         setMessage(
@@ -495,7 +474,7 @@ export function PassengerDashboard() {
             ? `Driver on the way! ${acceptedDriverName} is coming to collect your parcel.`
             : `Driver on the way! ${acceptedDriverName} is heading to you.`
         );
-      } else if (nextStatus === 'arrived_at_pickup' || nextStatus === 'driver_arrived') {
+      } else if (nextStatus === 'arrived') {
         setMessage('');
       }
 
@@ -577,7 +556,7 @@ export function PassengerDashboard() {
   // Live-count the 3 min free pickup wait, then R1/min extra, while the driver waits at pickup.
   useEffect(() => {
     const arrivedAt = toMillis(pickupArrivedAt);
-    if (rideStatus !== 'arrived_at_pickup' || arrivedAt == null) return;
+    if (rideStatus !== 'arrived' || arrivedAt == null) return;
     const updatePickupWaiting = () => {
       const seconds = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
       setPickupWaitSeconds(seconds);
@@ -590,7 +569,7 @@ export function PassengerDashboard() {
 
   useEffect(() => {
     const arrivedAt = toMillis(stopArrivalTime);
-    if (rideStatus !== 'in_progress' || arrivedAt == null) return;
+    if (rideStatus !== 'on_trip' || arrivedAt == null) return;
     const updateWaiting = () => {
       const seconds = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
       setWaitingSeconds(seconds);
@@ -603,7 +582,7 @@ export function PassengerDashboard() {
 
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
-  const isShareableTrip = rideStatus === 'accepted' || rideStatus === 'arrived_at_pickup' || rideStatus === 'in_progress';
+  const isShareableTrip = rideStatus === 'driver_assigned' || rideStatus === 'arrived' || rideStatus === 'on_trip';
   useEffect(() => {
     if (!isActiveTrip || rideCreatedAt == null) return;
     const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
@@ -615,7 +594,7 @@ export function PassengerDashboard() {
   const cancelRide = async () => {
     if (!rideId || !isActiveTrip) return;
     const elapsedSec = rideCreatedAt == null ? CANCELLATION.FREE_CANCEL_SEC : (Date.now() - rideCreatedAt) / 1000;
-    const arrived = rideStatus === 'driver_arrived' || rideStatus === 'arrived_at_pickup';
+    const arrived = rideStatus === 'arrived';
     const driverDistanceKm = driverLocation && tripPickupLocation
       ? calcDistance(driverLocation.lat, driverLocation.lng, tripPickupLocation.lat, tripPickupLocation.lng)
       : null;
@@ -627,14 +606,12 @@ export function PassengerDashboard() {
         ? CANCELLATION.LATE_CANCEL_FEE
         : 0;
     try {
-      await updateDoc(doc(db, 'rides', rideId), {
-        status: 'cancelled',
+      await cancelRideService(rideId, {
         cancellationFee,
         cancellationPlatformCut: cancellationFee * COMMISSION_RATE,
         cancellationDriverPayout: cancellationFee * DRIVER_RATE,
         paymentMethod: 'cash',
         cancellationBalanceDue: cancellationFee,
-        cancelledAt: serverTimestamp(),
       });
       setMessage(cancellationFee ? `Ride cancelled. Fee: ${formatR(cancellationFee)}` : 'Ride cancelled for free.');
       setRideId(null);
@@ -712,7 +689,7 @@ export function PassengerDashboard() {
           {isActiveTrip && (
             <>
               <p className="text-center text-sm mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-2 px-3">
-                {tripType === 'send' && (rideStatus === 'accepted' || rideStatus === 'in_progress')
+                {tripType === 'send' && (rideStatus === 'driver_assigned' || rideStatus === 'on_trip')
                   ? 'Driver is delivering your parcel'
                   : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
               </p>
@@ -739,7 +716,7 @@ export function PassengerDashboard() {
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
                 <span>Fare: {formatR((baseFare ?? totalFare ?? fare ?? 0) + pickupWaitFare + waitingFare)}</span>
               </div>
-              {rideStatus === 'arrived_at_pickup' && (
+              {rideStatus === 'arrived' && (
                 <div className="mb-3 rounded-xl border-2 border-green-500 bg-green-100 px-4 py-3 text-center animate-pulse">
                   <p className="text-lg font-extrabold text-green-800">🚗 Driver is outside!</p>
                   <p className="text-sm font-semibold text-green-800">
@@ -754,7 +731,7 @@ export function PassengerDashboard() {
                   )}
                 </div>
               )}
-              {rideStatus === 'in_progress' && (
+              {rideStatus === 'on_trip' && (
                 <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
                   Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
                 </p>

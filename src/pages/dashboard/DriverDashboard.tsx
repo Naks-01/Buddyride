@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, addDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import {
   Car as CarPin,
   HelpCircle,
@@ -21,6 +21,16 @@ import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import AppMap from '../../components/Map/AppMap';
+import {
+  acceptRide as acceptRideService,
+  cancelRide as cancelRideService,
+  completeRide as completeRideService,
+  markArrived,
+  startTrip as startTripService,
+  subscribeToRequestedRides,
+  subscribeToRide,
+  updateRideFields,
+} from '../../lib/rideService';
 
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
@@ -170,16 +180,15 @@ export function DriverDashboard() {
     }
 
     try {
-    const unsubscribe = onSnapshot(
-      query(collection(db, 'rides'), where('status', '==', 'searching')),
-      (snapshot) => {
+    const unsubscribe = subscribeToRequestedRides(
+      (snapshot: any) => {
         const nextRides = snapshot.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest));
+          .map((d: any) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest));
         setRides(nextRides);
         console.log('Driver rides:', nextRides);
 
-        const newRides = nextRides.filter((ride) => !knownRideIdsRef.current.has(ride.id));
-        knownRideIdsRef.current = new Set(nextRides.map((ride) => ride.id));
+        const newRides = nextRides.filter((ride: RideRequest) => !knownRideIdsRef.current.has(ride.id));
+        knownRideIdsRef.current = new Set(nextRides.map((ride: RideRequest) => ride.id));
 
         if (!acceptedRide && nextRides.length > 0) {
           startRequestLoop();
@@ -198,7 +207,7 @@ export function DriverDashboard() {
           }
         }
       },
-      (err) => {
+      (err: any) => {
         console.error(err);
         setError('Failed to load ride requests.');
       },
@@ -218,8 +227,7 @@ export function DriverDashboard() {
     stopRequestLoop();
     try {
       const location = await getDriverLocation();
-      await updateDoc(doc(db, 'rides', ride.id), {
-        status: 'accepted',
+      await acceptRideService(ride.id, {
         driverId: uid,
         driverName: profile?.full_name || auth.currentUser?.displayName || 'Driver',
         driverPhone: auth.currentUser?.phoneNumber ?? null,
@@ -230,9 +238,8 @@ export function DriverDashboard() {
           driverLocation: { ...location, updatedAt: serverTimestamp() },
           driverStatus: 'coming',
         }),
-        acceptedAt: serverTimestamp(),
       });
-      const acceptedRide = { ...ride, status: 'accepted' };
+      const acceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(acceptedRide);
       await navigateToPickup(acceptedRide);
     } catch (err) {
@@ -248,9 +255,9 @@ export function DriverDashboard() {
     if (!acceptedRide) return;
     let unsubscribe: () => void = () => {};
     try {
-      unsubscribe = onSnapshot(
-        doc(db, 'rides', acceptedRide.id),
-        (snapshot) => {
+      unsubscribe = subscribeToRide(
+        acceptedRide.id,
+        (snapshot: any) => {
           const data = snapshot.data() as Record<string, unknown> | undefined;
           if (!data) return;
           const tipAmount = Number(data.tipAmount ?? 0);
@@ -260,7 +267,7 @@ export function DriverDashboard() {
           }
           setAcceptedRide((prev) => (prev ? { ...prev, ...data } : prev));
         },
-        (err) => {
+        (err: unknown) => {
           console.error('Failed to load accepted ride:', err);
           setError('Failed to load accepted ride details.');
         },
@@ -274,23 +281,19 @@ export function DriverDashboard() {
 
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
-  const updateRideStatus = async (rideId: string, status: string, extra?: Record<string, unknown>) => {
+  const declineRide = async (ride: RideRequest) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    stopRequestLoop();
     setUpdatingStatus(true);
     try {
-      await updateDoc(doc(db, 'rides', rideId), { status, ...extra });
+      await updateRideFields(ride.id, { status: 'declined', declinedBy: uid, declinedReason: 'driver_not_equipped' });
     } catch (err) {
       console.error(err);
       setError('Failed to update ride status.');
     } finally {
       setUpdatingStatus(false);
     }
-  };
-
-  const declineRide = async (ride: RideRequest) => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    stopRequestLoop();
-    await updateRideStatus(ride.id, 'declined', { declinedBy: uid, declinedReason: 'driver_not_equipped' });
   };
 
   const markArrivedAtPickup = async (ride: RideRequest) => {
@@ -311,44 +314,46 @@ export function DriverDashboard() {
     }
 
     // Update local state immediately so the Start Trip button appears without waiting on the snapshot round-trip.
-    setAcceptedRide((prev) => (prev ? { ...prev, status: 'arrived_at_pickup', arrivedAt: Date.now() } : prev));
-    await updateRideStatus(ride.id, 'arrived_at_pickup', {
-      arrivedAt: serverTimestamp(),
-      driverLocation: location,
-      ...(distanceKm != null && { arrivalDistanceM: distanceKm * 1000 }),
-    });
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'arrived', arrivedAt: Date.now() } : prev));
+    setUpdatingStatus(true);
     try {
-      await addDoc(collection(db, 'notifications'), {
-        rideId: ride.id,
-        passengerId: ride.passengerId ?? null,
-        type: 'driver_arrived',
-        message: 'Driver has arrived at pickup',
-        createdAt: serverTimestamp(),
-        read: false,
+      await markArrived(ride.id, ride.passengerId, {
+        driverLocation: location,
+        ...(distanceKm != null && { arrivalDistanceM: distanceKm * 1000 }),
       });
     } catch (err) {
-      console.error('Failed to write passenger notification:', err);
+      console.error(err);
+      setError('Failed to update ride status.');
+    } finally {
+      setUpdatingStatus(false);
     }
   };
   const driverCancelRide = async (ride: RideRequest) => {
-    const arrivedAt = toMillis(ride.arrivedAt);
-    const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
-    if (waitedLongEnough) {
-      await updateRideStatus(ride.id, 'cancelled', {
-        cancellationFee: CANCELLATION.NO_SHOW_FEE,
-        cancellationPlatformCut: CANCELLATION.NO_SHOW_FEE * COMMISSION_RATE,
-        cancellationDriverPayout: CANCELLATION.NO_SHOW_FEE * DRIVER_RATE,
-        cancellationReason: 'passenger_no_show',
-        cancelledAt: serverTimestamp(),
-      });
-    } else {
-      await updateRideStatus(ride.id, 'cancelled', { cancellationFee: 0, cancellationReason: 'driver_cancelled', driverPenalty: true, cancelledAt: serverTimestamp() });
+    setUpdatingStatus(true);
+    try {
+      const arrivedAt = toMillis(ride.arrivedAt);
+      const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
+      if (waitedLongEnough) {
+        await cancelRideService(ride.id, {
+          cancellationFee: CANCELLATION.NO_SHOW_FEE,
+          cancellationPlatformCut: CANCELLATION.NO_SHOW_FEE * COMMISSION_RATE,
+          cancellationDriverPayout: CANCELLATION.NO_SHOW_FEE * DRIVER_RATE,
+          cancellationReason: 'passenger_no_show',
+        });
+      } else {
+        await cancelRideService(ride.id, { cancellationFee: 0, cancellationReason: 'driver_cancelled', driverPenalty: true });
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Failed to update ride status.');
+    } finally {
+      setUpdatingStatus(false);
     }
     setAcceptedRide(null);
   };
 
   useEffect(() => {
-    if (acceptedRide?.status !== 'arrived_at_pickup') {
+    if (acceptedRide?.status !== 'arrived') {
       setWaitSecondsRemaining(0);
       return;
     }
@@ -367,7 +372,7 @@ export function DriverDashboard() {
   const [pickupWaitSeconds, setPickupWaitSeconds] = useState(0);
   useEffect(() => {
     const arrivedAt = toMillis(acceptedRide?.arrivedAt);
-    if (!acceptedRide || acceptedRide.status !== 'arrived_at_pickup' || arrivedAt == null) {
+    if (!acceptedRide || acceptedRide.status !== 'arrived' || arrivedAt == null) {
       setPickupWaitSeconds(0);
       return;
     }
@@ -376,11 +381,11 @@ export function DriverDashboard() {
       setPickupWaitSeconds(elapsed);
       if (elapsed > 0 && elapsed % 10 === 0) {
         const pickupWaitFare = waitFare(elapsed);
-        void updateDoc(doc(db, 'rides', acceptedRide.id), {
+        void updateRideFields(acceptedRide.id, {
           pickupWaitSeconds: elapsed,
           pickupWaitFare,
           totalFare: Number(acceptedRide.baseFare ?? acceptedRide.totalFare ?? acceptedRide.price ?? 0) + pickupWaitFare,
-        }).catch((err) => {
+        }).catch((err: unknown) => {
           console.error('Failed to update pickup waiting fare:', err);
         });
       }
@@ -391,8 +396,16 @@ export function DriverDashboard() {
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.arrivedAt]);
 
   const startTrip = async (ride: RideRequest) => {
-    setAcceptedRide((prev) => (prev ? { ...prev, status: 'in_progress', currentStopIndex: 1 } : prev));
-    await updateRideStatus(ride.id, 'in_progress', { startedAt: serverTimestamp(), currentStopIndex: 1 });
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'on_trip', currentStopIndex: 1 } : prev));
+    setUpdatingStatus(true);
+    try {
+      await startTripService(ride.id, { currentStopIndex: 1 });
+    } catch (err) {
+      console.error(err);
+      setError('Failed to update ride status.');
+    } finally {
+      setUpdatingStatus(false);
+    }
     await navigateToDestination(ride);
   };
   const completeTrip = (ride: RideRequest) => {
@@ -400,18 +413,18 @@ export function DriverDashboard() {
     const total = Number(ride.fare ?? ride.price ?? 0);
     const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE + Number(ride.tipAmount ?? 0);
     setTodayEarnings((prev) => prev + driverPayout);
-    void updateRideStatus(ride.id, 'completed', { completedAt: serverTimestamp() });
+    void completeRideService(ride.id);
   };
 
   const arriveAtStop = async (ride: RideRequest) => {
     setAcceptedRide((prev) => (prev ? { ...prev, stopArrivalTime: Date.now(), waitingSeconds: 0 } : prev));
-    await updateRideStatus(ride.id, 'in_progress', { stopArrivalTime: serverTimestamp(), waitingSeconds: 0 });
+    await updateRideFields(ride.id, { stopArrivalTime: serverTimestamp(), waitingSeconds: 0 });
   };
 
   const continueToNextStop = async (ride: RideRequest) => {
     const currentStopIndex = ride.currentStopIndex ?? 1;
     setAcceptedRide((prev) => (prev ? { ...prev, currentStopIndex: currentStopIndex + 1, stopArrivalTime: undefined } : prev));
-    await updateRideStatus(ride.id, 'in_progress', {
+    await updateRideFields(ride.id, {
       currentStopIndex: currentStopIndex + 1,
       stopArrivalTime: null,
       waitingSeconds: stopWaitingSeconds,
@@ -424,7 +437,7 @@ export function DriverDashboard() {
 
   useEffect(() => {
     const arrivedAt = toMillis(acceptedRide?.stopArrivalTime);
-    if (!acceptedRide || acceptedRide.status !== 'in_progress' || arrivedAt == null) {
+    if (!acceptedRide || acceptedRide.status !== 'on_trip' || arrivedAt == null) {
       setStopWaitingSeconds(0);
       return;
     }
@@ -434,11 +447,11 @@ export function DriverDashboard() {
       setStopWaitingSeconds(elapsed);
       if (elapsed > 0 && elapsed % 10 === 0) {
         const waitingFare = waitFare(elapsed);
-        void updateDoc(doc(db, 'rides', acceptedRide.id), {
+        void updateRideFields(acceptedRide.id, {
           waitingSeconds: elapsed,
           waitingFare,
           totalFare: Number(acceptedRide.baseFare ?? acceptedRide.totalFare ?? acceptedRide.price ?? 0) + waitingFare,
-        }).catch((err) => {
+        }).catch((err: unknown) => {
           console.error('Failed to update stop waiting fare:', err);
           setError('Unable to update stop waiting time.');
         });
@@ -471,20 +484,20 @@ export function DriverDashboard() {
   const recenterMap = () => setCenterTrigger((prev) => prev + 1);
 
   useEffect(() => {
-    if (!acceptedRide || acceptedRide.status !== 'accepted' || !navigator.geolocation) return;
+    if (!acceptedRide || acceptedRide.status !== 'driver_assigned' || !navigator.geolocation) return;
 
     const rideId = acceptedRide.id;
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
-        void updateDoc(doc(db, 'rides', rideId), {
+        void updateRideFields(rideId, {
           driverLocation: {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
             updatedAt: serverTimestamp(),
           },
           driverStatus: 'coming',
-          status: 'accepted',
-        }).catch((err) => {
+          status: 'driver_assigned',
+        }).catch((err: unknown) => {
           console.error('Failed to update driver location:', err);
           setError('Unable to share your live location.');
         });
@@ -671,7 +684,7 @@ export function DriverDashboard() {
             >
               Navigate
             </button>
-            {acceptedRide.status === 'accepted' && (
+            {acceptedRide.status === 'driver_assigned' && (
               <button
                 onClick={() => void markArrivedAtPickup(acceptedRide)}
                 disabled={updatingStatus || checkingArrival}
@@ -680,7 +693,7 @@ export function DriverDashboard() {
                 {checkingArrival ? 'Checking your location...' : 'Arrived at Pickup'}
               </button>
             )}
-            {acceptedRide.status === 'arrived_at_pickup' && (
+            {acceptedRide.status === 'arrived' && (
               <>
                 <div className="mt-2 rounded-lg bg-orange-50 border border-orange-200 py-2 px-3 text-center text-sm font-semibold text-orange-700">
                   {pickupWaitSeconds <= 180
@@ -712,7 +725,7 @@ export function DriverDashboard() {
                 </button>
               </>
             )}
-            {(acceptedRide.status === 'accepted' || acceptedRide.status === 'arrived_at_pickup') && (
+            {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'arrived') && (
               <button
                 onClick={() => void driverCancelRide(acceptedRide)}
                 disabled={updatingStatus}
@@ -721,7 +734,7 @@ export function DriverDashboard() {
                 Cancel Ride (no fee before wait)
               </button>
             )}
-            {acceptedRide.status === 'in_progress' && (() => {
+            {acceptedRide.status === 'on_trip' && (() => {
               const stops = acceptedRide.stops ?? [];
               const currentStopIndex = acceptedRide.currentStopIndex ?? 1;
               const hasNextStop = currentStopIndex < stops.length - 1;
