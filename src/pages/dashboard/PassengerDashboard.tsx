@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Autocomplete, useJsApiLoader } from '@react-google-maps/api';
 import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, type DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
 import { db } from '../../lib/firebase';
@@ -26,9 +25,16 @@ function shortAddress(full: string): string {
   return parts.slice(0, 2).join(', ');
 }
 
-function formatForDisplay(place: { structured_formatting?: { main_text?: string }; formatted_address?: string; name?: string } | null | undefined): string {
-  if (!place) return '';
-  return place.structured_formatting?.main_text || shortAddress(place.formatted_address || place.name || '');
+type NominatimResult = { display_name: string; lat: string; lon: string };
+
+// Free OSM Nominatim address search, restricted to South Africa.
+async function searchAddress(query: string): Promise<NominatimResult[]> {
+  if (!query.trim()) return [];
+  const response = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=za&limit=5`
+  );
+  if (!response.ok) return [];
+  return response.json();
 }
 const ACTIVE_TRIP_STATUSES = ['searching', 'requested', 'accepted', 'driver_arrived', 'arrived_at_pickup', 'in_progress'];
 const STATUS_BANNER: Record<string, string> = {
@@ -40,7 +46,6 @@ const STATUS_BANNER: Record<string, string> = {
   in_progress: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
-const GOOGLE_MAPS_LIBRARIES: ('places')[] = ['places'];
 const BASE_FARE = 25;
 const RATE_KM = 8;
 const RATE_MIN = 1;
@@ -58,14 +63,8 @@ function toMillis(value: unknown): number | null {
 export function PassengerDashboard() {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
-  const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
-  const hasGoogleMapsApiKey = googleMapsApiKey.length > 0;
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: hasGoogleMapsApiKey ? googleMapsApiKey : 'missing-key',
-    libraries: GOOGLE_MAPS_LIBRARIES,
-  });
-  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
   const geocodeTimerRef = useRef<number | null>(null);
+  const searchTimerRef = useRef<number | null>(null);
   const lastGeocodedLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [locating, setLocating] = useState(false);
@@ -106,7 +105,6 @@ export function PassengerDashboard() {
   const [distance, setDistance] = useState<string>('');
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [estimatedFare, setEstimatedFare] = useState<number>(0);
-  const [googleMapsError, setGoogleMapsError] = useState<string | null>(null);
   const [locationStep, setLocationStep] = useState<'pickup' | 'dropoff'>('pickup');
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
   const [mapAddress, setMapAddress] = useState('');
@@ -115,11 +113,11 @@ export function PassengerDashboard() {
     { id: 'dropoff', address: '', lat: null, lng: null },
   ]);
   const [activeStopIndex, setActiveStopIndex] = useState(0);
-  const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
   const [isLocationLocked, setIsLocationLocked] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [nominatimResults, setNominatimResults] = useState<NominatimResult[]>([]);
   const [mode, setMode] = useState<'ride' | 'send'>('ride');
   const [tripType, setTripType] = useState<'ride' | 'send'>('ride');
   const [packageDescription, setPackageDescription] = useState('');
@@ -135,46 +133,34 @@ export function PassengerDashboard() {
   const roundedTotal = Math.round(total * 100) / 100;
   const ridePrice = total - BOOKING_FEE - extrasFee;
 
-  useEffect(() => {
-    if (!loadError) return;
-
-    try {
-      throw loadError;
-    } catch (error) {
-      const exactError = error instanceof Error ? error.message : String(error);
-      console.error('Google Maps load error:', error);
-      setGoogleMapsError(exactError);
-    }
-  }, [loadError]);
-
-  useEffect(() => {
-    const windowWithMapsAuth = window as Window & { gm_authFailure?: () => void };
-    const previousAuthFailure = windowWithMapsAuth.gm_authFailure;
-    windowWithMapsAuth.gm_authFailure = () => {
-      const exactError = 'Enable billing: console.cloud.google.com/billing';
-      console.error('Google Maps error code: gm_authFailure');
-      setGoogleMapsError(exactError);
-      previousAuthFailure?.();
-    };
-
-    return () => {
-      windowWithMapsAuth.gm_authFailure = previousAuthFailure;
-    };
-  }, []);
-
   const reverseGeocode = async (location: { lat: number; lng: number }) => {
     const fallback = searchPolokwanePlaces(`${location.lat.toFixed(3)} ${location.lng.toFixed(3)}`)[0];
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${location.lat},${location.lng}&key=${googleMapsApiKey}`
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${location.lat}&lon=${location.lng}`
       );
       const data = await response.json();
-      const address = data.results?.[0]?.formatted_address;
+      const address = data.display_name;
       setMapAddress(address || fallback?.address || `Seshego Zone X (${location.lat.toFixed(5)}, ${location.lng.toFixed(5)})`);
     } catch {
       setMapAddress(fallback?.address || `Seshego Zone X (${location.lat.toFixed(5)}, ${location.lng.toFixed(5)})`);
     }
   };
+
+  useEffect(() => {
+    if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
+    if (searchText.trim().length < 3) {
+      setNominatimResults([]);
+      return;
+    }
+    searchTimerRef.current = window.setTimeout(async () => {
+      const results = await searchAddress(searchText);
+      setNominatimResults(results);
+    }, 400);
+    return () => {
+      if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
+    };
+  }, [searchText]);
 
   const scheduleReverseGeocode = (location: { lat: number; lng: number }) => {
     const previousLocation = lastGeocodedLocationRef.current;
@@ -191,40 +177,22 @@ export function PassengerDashboard() {
     if (geocodeTimerRef.current) window.clearTimeout(geocodeTimerRef.current);
   }, []);
 
+  const calculateFareFallback = () => {
+    const origin = stops[0];
+    const dest = stops[stops.length - 1];
+    if (origin.lat == null || origin.lng == null || dest.lat == null || dest.lng == null) return;
+
+    const km = calcDistance(origin.lat, origin.lng, dest.lat, dest.lng);
+    const minutes = (km / 30) * 60; // assume ~30km/h average city speed
+    const fareEstimate = BASE_FARE + km * RATE_KM + minutes * RATE_MIN + (stops.length - 2) * STOP_FEE;
+    setDistance(`${km.toFixed(1)} km`);
+    setDistanceKm(km);
+    setEstimatedFare(fareEstimate);
+  };
+
   const calculateFare = () => {
     if (stops.some((stop) => stop.lat == null || stop.lng == null)) return;
-
-    const google = (window as any).google;
-    if (!google?.maps?.DirectionsService) {
-      setTimeout(calculateFare, 500);
-      return;
-    }
-
-    const directionsService = new google.maps.DirectionsService();
-    directionsService.route(
-      {
-        origin: { lat: stops[0].lat!, lng: stops[0].lng! },
-        destination: { lat: stops[stops.length - 1].lat!, lng: stops[stops.length - 1].lng! },
-        waypoints: stops.slice(1, -1).map((stop) => ({ location: { lat: stop.lat!, lng: stop.lng! }, stopover: true })),
-        travelMode: google.maps.TravelMode.DRIVING,
-      },
-      (result: any, status: string) => {
-        if (status !== 'OK') return;
-
-        const legs = result?.routes?.[0]?.legs;
-        if (!legs?.length) return;
-
-        const distanceMeters = legs.reduce((sum: number, leg: any) => sum + Number(leg.distance?.value ?? 0), 0);
-        const durationSeconds = legs.reduce((sum: number, leg: any) => sum + Number(leg.duration?.value ?? 0), 0);
-        const km = distanceMeters / 1000;
-        const minutes = durationSeconds / 60;
-        const fareEstimate = BASE_FARE + km * RATE_KM + minutes * RATE_MIN + (stops.length - 2) * STOP_FEE;
-        setDirections(result);
-        setDistance(`${km.toFixed(1)} km`);
-        setDistanceKm(km);
-        setEstimatedFare(fareEstimate);
-      }
-    );
+    calculateFareFallback();
   };
 
   const selectCategory = (catId: RideCategoryId) => {
@@ -249,18 +217,14 @@ export function PassengerDashboard() {
     }
   };
 
-  const onPlaceChanged = () => {
-    const place = autocompleteRef.current?.getPlace();
-    const location = place?.geometry?.location;
-    if (!location) return;
-
-    const nextLocation = { lat: location.lat(), lng: location.lng() };
-    const address = place?.formatted_address ?? place?.name ?? '';
-    setMapAddress(address);
-    setSearchText(formatForDisplay(place));
+  const selectNominatimResult = (result: NominatimResult) => {
+    const nextLocation = { lat: Number(result.lat), lng: Number(result.lon) };
+    setMapAddress(result.display_name);
+    setSearchText(shortAddress(result.display_name));
     setMapLocation(nextLocation);
-    if (locationStep === 'pickup') setPickupPlaceId(place.place_id ?? null);
-    else setDropoffPlaceId(place.place_id ?? null);
+    setNominatimResults([]);
+    if (locationStep === 'pickup') setPickupPlaceId(null);
+    else setDropoffPlaceId(null);
   };
 
   const selectLocalPlace = (place: PolokwanePlace) => {
@@ -368,7 +332,6 @@ export function PassengerDashboard() {
     setDropoffAddress('');
     setStops([{ id: 'pickup', address: '', lat: null, lng: null }, { id: 'dropoff', address: '', lat: null, lng: null }]);
     setActiveStopIndex(0);
-    setDirections(null);
     setLocationStep('pickup');
     setUserLocation(null);
     setLocationAccuracy(null);
@@ -702,30 +665,6 @@ export function PassengerDashboard() {
         }
       : DEFAULT_CENTER;
 
-  const getPolokwaneAutocompleteOptions = (): google.maps.places.AutocompleteOptions | undefined => {
-    const google = (window as any).google;
-    if (!google?.maps?.LatLngBounds) return undefined;
-
-    const polokwaneBounds = new google.maps.LatLngBounds(
-      new google.maps.LatLng(-24.1, 29.3),
-      new google.maps.LatLng(-23.8, 29.6)
-    );
-
-    return {
-      componentRestrictions: { country: 'za' },
-      bounds: polokwaneBounds,
-      strictBounds: false,
-      types: ['establishment', 'geocode'],
-      fields: ['geometry', 'formatted_address', 'place_id', 'name'],
-      locationBias: { lat: DEFAULT_CENTER.lat, lng: DEFAULT_CENTER.lng, radius: 50000 },
-    } as google.maps.places.AutocompleteOptions;
-  };
-
-  const mapsError = !hasGoogleMapsApiKey
-    ? 'VITE_GOOGLE_MAPS_API_KEY missing in .env file'
-    : googleMapsError ?? (loadError ? loadError.message : null);
-  const mapsAvailable = hasGoogleMapsApiKey && isLoaded && !mapsError;
-
   const handleMapClick = (lat: number, lng: number) => {
     const location = { lat, lng };
     setIsLocationLocked(true);
@@ -742,10 +681,6 @@ export function PassengerDashboard() {
         ...(driverLocation ? [{ id: 'driver', position: [driverLocation.lat, driverLocation.lng] as [number, number], color: '#00C853', emoji: '🚕' }] : []),
       ]
     : [];
-
-  const routePath: [number, number][] | undefined = directions?.routes?.[0]?.overview_path?.map(
-    (point) => [point.lat(), point.lng()] as [number, number],
-  );
 
   const logout = async () => { await signOut(); localStorage.clear(); navigate('/'); };
 
@@ -768,17 +703,6 @@ export function PassengerDashboard() {
               <button type="button" onClick={() => selectMode('send')} className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'send' ? 'bg-black text-white' : 'bg-white text-gray-700'}`}>
                 📦 Send
               </button>
-            </div>
-          )}
-          {!hasGoogleMapsApiKey && (
-            <div className="mb-3 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-700">
-              <p>Address search is unavailable (VITE_GOOGLE_MAPS_API_KEY missing). The map still works using free OpenStreetMap.</p>
-            </div>
-          )}
-          {hasGoogleMapsApiKey && mapsError && (
-            <div className="mb-3 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-700">
-              <p>Address search failed to load. The map still works using free OpenStreetMap.</p>
-              <p className="mt-1 break-words font-mono text-xs">{mapsError}</p>
             </div>
           )}
           {isActiveTrip && (
@@ -846,7 +770,6 @@ export function PassengerDashboard() {
               center={isActiveTrip ? [liveMapCenter.lat, liveMapCenter.lng] : [mapLocation.lat, mapLocation.lng]}
               zoom={14}
               markers={tripMarkers}
-              routePath={!isActiveTrip ? routePath : undefined}
               onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
             />
 
@@ -877,27 +800,12 @@ export function PassengerDashboard() {
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
                     {activeStopIndex === 0 ? 'Set pickup location' : activeStopIndex === stops.length - 1 ? 'Set destination' : `Set stop ${activeStopIndex}`}
                   </p>
-                  {mapsAvailable ? (
-                    <Autocomplete
-                      options={getPolokwaneAutocompleteOptions()}
-                      onLoad={(autocomplete) => (autocompleteRef.current = autocomplete)}
-                      onPlaceChanged={onPlaceChanged}
-                    >
-                      <input
-                        value={searchText}
-                        onChange={(event) => setSearchText(event.target.value)}
-                        placeholder={activeStopIndex === 0 ? 'Where are you?' : activeStopIndex === stops.length - 1 ? 'Where to?' : `Add stop ${activeStopIndex}`}
-                        className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
-                      />
-                    </Autocomplete>
-                  ) : (
-                    <input
-                      value={searchText}
-                      onChange={(event) => setSearchText(event.target.value)}
-                      placeholder="Set location on map"
-                      className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800"
-                    />
-                  )}
+                  <input
+                    value={searchText}
+                    onChange={(event) => setSearchText(event.target.value)}
+                    placeholder={activeStopIndex === 0 ? 'Where are you?' : activeStopIndex === stops.length - 1 ? 'Where to?' : `Add stop ${activeStopIndex}`}
+                    className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
+                  />
                   {locationStep === 'pickup' && (
                     <>
                       <button
@@ -930,6 +838,20 @@ export function PassengerDashboard() {
                           className="block w-full px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
                         >
                           {place.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {nominatimResults.length > 0 && (
+                    <div className="mt-2 max-h-32 overflow-y-auto border-t border-gray-100 pt-1">
+                      {nominatimResults.map((result) => (
+                        <button
+                          key={`${result.lat}-${result.lon}`}
+                          type="button"
+                          onClick={() => selectNominatimResult(result)}
+                          className="block w-full truncate px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
+                        >
+                          {shortAddress(result.display_name)}
                         </button>
                       ))}
                     </div>
