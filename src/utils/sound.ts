@@ -40,6 +40,21 @@ export const playSound = (type: SoundType): HTMLAudioElement => {
   return audio;
 };
 
+// Plays a sound repeatedly (sequentially, not overlapping) to grab attention, e.g. driver-arrived alert.
+export const playSoundTimes = (type: SoundType, times: number): void => {
+  if (muted || times <= 0) return;
+  let played = 0;
+  const playNext = () => {
+    played += 1;
+    const audio = playSound(type);
+    audio.loop = false;
+    if (played < times) {
+      audio.addEventListener('ended', playNext, { once: true });
+    }
+  };
+  playNext();
+};
+
 export let requestAudio: HTMLAudioElement | null = null;
 
 export const startRequestLoop = () => {

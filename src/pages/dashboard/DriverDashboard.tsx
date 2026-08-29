@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, addDoc } from 'firebase/firestore';
 import {
   Car as CarPin,
   HelpCircle,
@@ -65,6 +65,9 @@ type RideRequest = {
 
 type Coordinates = { lat: number; lng: number };
 
+// Driver must be within this radius of the pickup pin to confirm arrival (accounts for GPS drift).
+const ARRIVAL_RADIUS_KM = 0.2;
+
 function toMillis(value: unknown): number | null {
   if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') {
     return value.toMillis();
@@ -98,6 +101,7 @@ export function DriverDashboard() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [centerTrigger, setCenterTrigger] = useState(0);
+  const [checkingArrival, setCheckingArrival] = useState(false);
 
   const toggleOnline = async () => {
     const next = !isOnline;
@@ -290,19 +294,41 @@ export function DriverDashboard() {
   };
 
   const markArrivedAtPickup = async (ride: RideRequest) => {
+    setError('');
+    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
+    setCheckingArrival(true);
+    const location = await getDriverLocation();
+    setCheckingArrival(false);
+
+    if (!location) {
+      setError('Enable location access to confirm you are at the pickup point.');
+      return;
+    }
+    const distanceKm = pickup ? calcDistance(location.lat, location.lng, pickup.lat, pickup.lng) : null;
+    if (distanceKm != null && distanceKm > ARRIVAL_RADIUS_KM) {
+      setError(`You must be within ${ARRIVAL_RADIUS_KM * 1000}m of the pickup point to confirm arrival (currently ${(distanceKm * 1000).toFixed(0)}m away).`);
+      return;
+    }
+
     // Update local state immediately so the Start Trip button appears without waiting on the snapshot round-trip.
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'arrived_at_pickup', arrivedAt: Date.now() } : prev));
-    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
-    const location = await getDriverLocation();
-    const distanceKm = pickup && location ? calcDistance(location.lat, location.lng, pickup.lat, pickup.lng) : null;
-    if (distanceKm != null && distanceKm > 0.05) {
-      setError('Note: GPS shows you are more than 50m from pickup.');
-    }
     await updateRideStatus(ride.id, 'arrived_at_pickup', {
       arrivedAt: serverTimestamp(),
-      ...(location && { driverLocation: location }),
+      driverLocation: location,
       ...(distanceKm != null && { arrivalDistanceM: distanceKm * 1000 }),
     });
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        rideId: ride.id,
+        passengerId: ride.passengerId ?? null,
+        type: 'driver_arrived',
+        message: 'Driver has arrived at pickup',
+        createdAt: serverTimestamp(),
+        read: false,
+      });
+    } catch (err) {
+      console.error('Failed to write passenger notification:', err);
+    }
   };
   const driverCancelRide = async (ride: RideRequest) => {
     const arrivedAt = toMillis(ride.arrivedAt);
@@ -648,10 +674,10 @@ export function DriverDashboard() {
             {acceptedRide.status === 'accepted' && (
               <button
                 onClick={() => void markArrivedAtPickup(acceptedRide)}
-                disabled={updatingStatus}
+                disabled={updatingStatus || checkingArrival}
                 className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
               >
-                Arrived at Pickup
+                {checkingArrival ? 'Checking your location...' : 'Arrived at Pickup'}
               </button>
             )}
             {acceptedRide.status === 'arrived_at_pickup' && (

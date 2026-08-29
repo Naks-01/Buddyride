@@ -13,7 +13,7 @@ import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
 import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { RatingModal } from '../../components/RatingModal';
-import { playSound } from '../../utils/sound';
+import { playSound, playSoundTimes } from '../../utils/sound';
 import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
 
 const formatR = (n: number) => `R${Number(n || 0).toFixed(2)}`;
@@ -41,8 +41,8 @@ const STATUS_BANNER: Record<string, string> = {
   searching: 'Looking for a driver...',
   requested: 'Looking for a driver...',
   accepted: 'Driver is on the way',
-  driver_arrived: 'Driver has arrived - 3 min free wait',
-  arrived_at_pickup: 'Driver has arrived - 3 min free wait',
+  driver_arrived: 'Driver has arrived at pickup',
+  arrived_at_pickup: 'Driver has arrived at pickup',
   in_progress: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
@@ -477,8 +477,10 @@ export function PassengerDashboard() {
       if (nextStatus && nextStatus !== lastSoundStatusRef.current) {
         lastSoundStatusRef.current = nextStatus;
         if (nextStatus === 'accepted') playSound('accepted');
-        else if (nextStatus === 'arrived_at_pickup' || nextStatus === 'driver_arrived') playSound('arrived');
-        else if (nextStatus === 'cancelled') playSound('cancel');
+        else if (nextStatus === 'arrived_at_pickup' || nextStatus === 'driver_arrived') {
+          playSoundTimes('arrived', 3);
+          if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+        } else if (nextStatus === 'cancelled') playSound('cancel');
       }
 
       if (data.type === 'send' || data.type === 'ride') {
@@ -493,6 +495,8 @@ export function PassengerDashboard() {
             ? `Driver on the way! ${acceptedDriverName} is coming to collect your parcel.`
             : `Driver on the way! ${acceptedDriverName} is heading to you.`
         );
+      } else if (nextStatus === 'arrived_at_pickup' || nextStatus === 'driver_arrived') {
+        setMessage('');
       }
 
       const pickupLatLng = data.pickupLatLng ?? data.pickup ?? null;
@@ -736,11 +740,19 @@ export function PassengerDashboard() {
                 <span>Fare: {formatR((baseFare ?? totalFare ?? fare ?? 0) + pickupWaitFare + waitingFare)}</span>
               </div>
               {rideStatus === 'arrived_at_pickup' && (
-                <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
-                  {pickupWaitSeconds <= 180
-                    ? `Driver has arrived - 3 min free wait: ${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')}`
-                    : `Waiting: ${Math.floor(pickupWaitSeconds / 60)}:${String(pickupWaitSeconds % 60).padStart(2, '0')} - Extra ${formatR(pickupWaitFare)}`}
-                </p>
+                <div className="mb-3 rounded-xl border-2 border-green-500 bg-green-100 px-4 py-3 text-center animate-pulse">
+                  <p className="text-lg font-extrabold text-green-800">🚗 Driver is outside!</p>
+                  <p className="text-sm font-semibold text-green-800">
+                    He is waiting at pickup - Free wait: {pickupWaitSeconds <= 180
+                      ? `${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')}`
+                      : `0:00 (Extra ${formatR(pickupWaitFare)})`}
+                  </p>
+                  {driverPhone && (
+                    <a href={`tel:${driverPhone}`} className="mt-1 inline-block text-sm font-bold text-green-900 underline">
+                      Call driver: {driverPhone}
+                    </a>
+                  )}
+                </div>
               )}
               {rideStatus === 'in_progress' && (
                 <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
