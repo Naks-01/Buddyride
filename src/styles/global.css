@@ -326,8 +326,15 @@ input {
 }
 
 .leaflet-container {
+  height: 100% !important;
+  width: 100% !important;
   background: #1a1a1a;
   font-family: inherit;
+}
+
+/* Keep zoom controls clear of floating headers on the Bolt-style full-bleed map. */
+.leaflet-top.leaflet-right {
+  top: 80px;
 }
 
 /* Bolt-style dark map from free OpenStreetMap tiles - no API key required. */

@@ -4,15 +4,15 @@ import type { DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { createRide, cancelRide as cancelRideService, subscribeToRide, searchAddress } from '../../lib/rideService';
-import { CarIcon, LogOutIcon } from '../../components/Icons';
+import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane';
 import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE, RIDE_EXTRAS } from '../../config/pricing';
 import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
-import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { RatingModal } from '../../components/RatingModal';
+import { PassengerSettingsModal } from '../../components/PassengerSettingsModal';
 import { playSound, playSoundTimes } from '../../utils/sound';
 import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
 
@@ -27,12 +27,13 @@ function shortAddress(full: string): string {
 
 type NominatimResult = { display_name: string; lat: string; lon: string };
 
-const ACTIVE_TRIP_STATUSES = ['requested', 'driver_assigned', 'arrived', 'on_trip'];
+const ACTIVE_TRIP_STATUSES = ['searching', 'driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started'];
 const STATUS_BANNER: Record<string, string> = {
-  requested: 'Looking for a driver...',
-  driver_assigned: 'Driver is on the way',
-  arrived: 'Driver has arrived at pickup',
-  on_trip: 'On trip to destination',
+  searching: 'Looking for a driver...',
+  driver_assigned: 'Driver assigned - your driver is coming',
+  driver_en_route: 'Driver en route - on the way to you',
+  driver_arrived: 'Driver has arrived! 2 min wait',
+  trip_started: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
 const BASE_FARE = 25;
@@ -91,6 +92,7 @@ export function PassengerDashboard() {
   const [rated, setRated] = useState(false);
   const [ratingValue, setRatingValue] = useState<number | null>(null);
   const [showRating, setShowRating] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [distance, setDistance] = useState<string>('');
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [estimatedFare, setEstimatedFare] = useState<number>(0);
@@ -113,7 +115,7 @@ export function PassengerDashboard() {
   const [recipientName, setRecipientName] = useState('');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [packageSize, setPackageSize] = useState<'small' | 'medium' | 'large'>('small');
-  const [sendPaymentMethod, setSendPaymentMethod] = useState<'cash' | 'card'>('cash');
+  const [sendPaymentMethod] = useState<'cash'>('cash');
   const [rideCategory, setRideCategory] = useState<RideCategoryId>('go');
   const [passengerCount, setPassengerCount] = useState(1);
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
@@ -290,7 +292,6 @@ export function PassengerDashboard() {
     try {
       const position = await getCurrentPosition();
       const { latitude, longitude, accuracy } = position.coords;
-      console.log('GPS accuracy:', accuracy);
       if (accuracy > 50) {
         setLocationAccuracy(accuracy);
         setMessage(`Low GPS accuracy: ${Math.round(accuracy)}m. Move near a window and refresh.`);
@@ -400,7 +401,7 @@ export function PassengerDashboard() {
       setTripType(mode);
       setRideCreatedAt(Date.now());
       setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
-      setRideStatus('requested');
+      setRideStatus('searching');
       setDriverLocation(null);
       setTripPickupLocation({ lat: pickup.lat!, lng: pickup.lng! });
       setTripDropoffLocation({ lat: dropoff.lat!, lng: dropoff.lng! });
@@ -456,7 +457,7 @@ export function PassengerDashboard() {
       if (nextStatus && nextStatus !== lastSoundStatusRef.current) {
         lastSoundStatusRef.current = nextStatus;
         if (nextStatus === 'driver_assigned') playSound('accepted');
-        else if (nextStatus === 'arrived') {
+        else if (nextStatus === 'driver_arrived') {
           playSoundTimes('arrived', 3);
           if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
         } else if (nextStatus === 'cancelled') playSound('cancel');
@@ -474,7 +475,7 @@ export function PassengerDashboard() {
             ? `Driver on the way! ${acceptedDriverName} is coming to collect your parcel.`
             : `Driver on the way! ${acceptedDriverName} is heading to you.`
         );
-      } else if (nextStatus === 'arrived') {
+      } else if (nextStatus === 'driver_arrived') {
         setMessage('');
       }
 
@@ -490,6 +491,8 @@ export function PassengerDashboard() {
 
       if (typeof data.driverLocation?.lat === 'number' && typeof data.driverLocation?.lng === 'number') {
         setDriverLocation({ lat: data.driverLocation.lat, lng: data.driverLocation.lng });
+      } else if (typeof data.driverLat === 'number' && typeof data.driverLng === 'number') {
+        setDriverLocation({ lat: data.driverLat, lng: data.driverLng });
       }
       if (typeof data.driverPhone === 'string') {
         setDriverPhone(data.driverPhone);
@@ -556,7 +559,7 @@ export function PassengerDashboard() {
   // Live-count the 3 min free pickup wait, then R1/min extra, while the driver waits at pickup.
   useEffect(() => {
     const arrivedAt = toMillis(pickupArrivedAt);
-    if (rideStatus !== 'arrived' || arrivedAt == null) return;
+    if (rideStatus !== 'driver_arrived' || arrivedAt == null) return;
     const updatePickupWaiting = () => {
       const seconds = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
       setPickupWaitSeconds(seconds);
@@ -569,7 +572,7 @@ export function PassengerDashboard() {
 
   useEffect(() => {
     const arrivedAt = toMillis(stopArrivalTime);
-    if (rideStatus !== 'on_trip' || arrivedAt == null) return;
+    if (rideStatus !== 'trip_started' || arrivedAt == null) return;
     const updateWaiting = () => {
       const seconds = Math.max(0, Math.floor((Date.now() - arrivedAt) / 1000));
       setWaitingSeconds(seconds);
@@ -582,7 +585,7 @@ export function PassengerDashboard() {
 
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
-  const isShareableTrip = rideStatus === 'driver_assigned' || rideStatus === 'arrived' || rideStatus === 'on_trip';
+  const isShareableTrip = rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'driver_arrived' || rideStatus === 'trip_started';
   useEffect(() => {
     if (!isActiveTrip || rideCreatedAt == null) return;
     const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
@@ -594,7 +597,7 @@ export function PassengerDashboard() {
   const cancelRide = async () => {
     if (!rideId || !isActiveTrip) return;
     const elapsedSec = rideCreatedAt == null ? CANCELLATION.FREE_CANCEL_SEC : (Date.now() - rideCreatedAt) / 1000;
-    const arrived = rideStatus === 'arrived';
+    const arrived = rideStatus === 'driver_arrived';
     const driverDistanceKm = driverLocation && tripPickupLocation
       ? calcDistance(driverLocation.lat, driverLocation.lng, tripPickupLocation.lat, tripPickupLocation.lng)
       : null;
@@ -666,16 +669,38 @@ export function PassengerDashboard() {
   const logout = async () => { await signOut(); localStorage.clear(); navigate('/'); };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <header className="bg-white border-b border-gray-200 px-4 py-4 flex justify-between items-center">
+    <div className="relative h-[100dvh] w-full overflow-hidden bg-gray-50">
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-gray-200 bg-white/95 px-4 py-4 shadow-sm">
         <Logo size={48} />
-        <button onClick={() => void logout()} className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-white hover:bg-red-700">
-          <LogOutIcon size={20} /> Logout
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate('/passenger/rides')} aria-label="My Rides" className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-gray-700 hover:bg-gray-100">
+            <HistoryIcon size={20} />
+          </button>
+          <button onClick={() => setShowSettings(true)} aria-label="Settings" className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-gray-700 hover:bg-gray-100">
+            <SettingsIcon size={20} />
+          </button>
+          <button onClick={() => void logout()} className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-white hover:bg-red-700">
+            <LogOutIcon size={20} /> Logout
+          </button>
+        </div>
       </header>
 
-      <main className="flex-1 flex flex-col">
-        <div className="p-4 max-w-2xl w-full mx-auto">
+      <div className="absolute inset-0 z-[1]">
+        <AppMap
+          mode="passenger"
+          center={isActiveTrip ? [liveMapCenter.lat, liveMapCenter.lng] : [mapLocation.lat, mapLocation.lng]}
+          zoom={14}
+          markers={tripMarkers}
+          onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
+        />
+        {!rideId && !isActiveTrip && (
+          <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full text-3xl">
+            📍
+          </div>
+        )}
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 z-10 max-h-[45vh] min-h-[35vh] overflow-y-auto rounded-t-[20px] bg-white p-4 shadow-[0_-4px_20px_rgba(0,0,0,0.15)]">
           {!rideId && !isActiveTrip && (
             <div className="flex gap-2 p-2 bg-gray-100 rounded-xl mb-3">
               <button type="button" onClick={() => selectMode('ride')} className={`flex-1 rounded-lg py-2 text-sm font-bold ${mode === 'ride' ? 'bg-black text-white' : 'bg-white text-gray-700'}`}>
@@ -689,7 +714,7 @@ export function PassengerDashboard() {
           {isActiveTrip && (
             <>
               <p className="text-center text-sm mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-2 px-3">
-                {tripType === 'send' && (rideStatus === 'driver_assigned' || rideStatus === 'on_trip')
+                {tripType === 'send' && (rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'trip_started')
                   ? 'Driver is delivering your parcel'
                   : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
               </p>
@@ -716,7 +741,7 @@ export function PassengerDashboard() {
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
                 <span>Fare: {formatR((baseFare ?? totalFare ?? fare ?? 0) + pickupWaitFare + waitingFare)}</span>
               </div>
-              {rideStatus === 'arrived' && (
+              {rideStatus === 'driver_arrived' && (
                 <div className="mb-3 rounded-xl border-2 border-green-500 bg-green-100 px-4 py-3 text-center animate-pulse">
                   <p className="text-lg font-extrabold text-green-800">🚗 Driver is outside!</p>
                   <p className="text-sm font-semibold text-green-800">
@@ -731,7 +756,7 @@ export function PassengerDashboard() {
                   )}
                 </div>
               )}
-              {rideStatus === 'on_trip' && (
+              {rideStatus === 'trip_started' && (
                 <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
                   Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
                 </p>
@@ -753,25 +778,9 @@ export function PassengerDashboard() {
             </>
           )}
 
-          <div className="relative h-[70vh] w-full overflow-hidden rounded-lg">
-            <AppMap
-              mode="passenger"
-              center={isActiveTrip ? [liveMapCenter.lat, liveMapCenter.lng] : [mapLocation.lat, mapLocation.lng]}
-              zoom={14}
-              markers={tripMarkers}
-              onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
-            />
-
             {!rideId && !isActiveTrip && (
-              <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full text-3xl">
-                📍
-              </div>
-            )}
-          </div>
-
-            {!rideId && !isActiveTrip && (
-              <div className="relative z-20 -mt-28 px-3 pb-3">
-                <div className="pointer-events-auto rounded-2xl bg-white p-3 shadow-xl">
+              <div className="px-1 pb-3">
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <div className="mb-3 space-y-2">
                     {stops.map((stop, index) => (
                       <div key={stop.id} className="flex items-center gap-2">
@@ -963,19 +972,7 @@ export function PassengerDashboard() {
                     ))}
                   </div>
                   <p className="mb-2 text-xs italic text-gray-600">Driver will call recipient</p>
-                  <p className="mb-1 text-sm font-semibold text-gray-700">Payment</p>
-                  <div className="mb-2 flex gap-2">
-                    {(['cash', 'card'] as const).map((method) => (
-                      <button
-                        key={method}
-                        type="button"
-                        onClick={() => setSendPaymentMethod(method)}
-                        className={`flex-1 rounded-lg py-2 text-sm font-semibold capitalize ${sendPaymentMethod === method ? 'bg-black text-white' : 'bg-white text-gray-700'}`}
-                      >
-                        {method}
-                      </button>
-                    ))}
-                  </div>
+                  <p className="mb-1 text-sm font-semibold text-gray-700">Payment: Cash</p>
                   <p>Distance: {distance}</p>
                   <p>Delivery {formatR(estimatedFare - BOOKING_FEE)} + Booking {formatR(BOOKING_FEE)} = {formatR(roundedTotal)}</p>
                 </>
@@ -1021,14 +1018,11 @@ export function PassengerDashboard() {
                   : `Request BuddyRide - ${formatR(roundedTotal)}`}
             </button>
           )}
-        </div>
-      </main>
-      {profile?.id && <EmergencyContacts userId={profile.id} />}
-      <footer className="p-4 text-center text-xs text-gray-500">BuddyRide Safety: In emergency press SOS or call 10111 / 112</footer>
-      <SOSButton rideId={rideId} userRole="passenger" />
+      </div>
       {showRating && driverId && profile?.id && rideId && (
         <RatingModal rideId={rideId} driverId={driverId} driverName={driverName} passengerId={profile.id} onSaved={(value) => { setRated(true); setRatingValue(value); setShowRating(false); }} />
       )}
+      {showSettings && <PassengerSettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

@@ -33,8 +33,7 @@ export const playSound = (type: SoundType): HTMLAudioElement => {
   }
   if (!muted) {
     audio.play().catch(() => {
-      // autoplay blocked, need user interaction
-      console.log('Sound blocked - waiting for tap');
+      // autoplay blocked, needs a user tap before audio can play
     });
   }
   return audio;

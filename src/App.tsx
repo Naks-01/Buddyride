@@ -9,12 +9,12 @@ import { DriverDashboard } from './pages/dashboard/DriverDashboard';
 import { AdminDashboard } from './pages/dashboard/AdminDashboard';
 import { RideStatus } from './pages/RideStatus';
 import { Profile } from './pages/Profile';
+import { PassengerRides } from './pages/PassengerRides';
 import SafetyDashboard from './pages/admin/SafetyDashboard';
 import { DriverRides } from './pages/driver/DriverRides';
 import { DriverPerformance } from './pages/driver/DriverPerformance';
 import { DriverVehicle } from './pages/driver/DriverVehicle';
 import { DriverDocuments } from './pages/driver/DriverDocuments';
-import { DriverPromotions } from './pages/driver/DriverPromotions';
 import { DriverHelp } from './pages/driver/DriverHelp';
 import { DriverSettings } from './pages/driver/DriverSettings';
 import { LoadingScreen } from './components/LoadingScreen';
@@ -102,7 +102,6 @@ export default function App() {
           <Route path="/driver/performance" element={<RequireRole role="driver"><DriverPerformance /></RequireRole>} />
           <Route path="/driver/vehicle" element={<RequireRole role="driver"><DriverVehicle /></RequireRole>} />
           <Route path="/driver/documents" element={<RequireRole role="driver"><DriverDocuments /></RequireRole>} />
-          <Route path="/driver/promos" element={<RequireRole role="driver"><DriverPromotions /></RequireRole>} />
           <Route path="/driver/help" element={<RequireRole role="driver"><DriverHelp /></RequireRole>} />
           <Route path="/driver/settings" element={<RequireRole role="driver"><DriverSettings /></RequireRole>} />
           <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
@@ -110,6 +109,7 @@ export default function App() {
           <Route path="/admin/safety" element={<RequireAdmin><SafetyDashboard /></RequireAdmin>} />
           <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
+          <Route path="/passenger/rides" element={<RequireRole role="passenger"><PassengerRides /></RequireRole>} />
           <Route path="/profile" element={<RequireRole role="passenger"><Profile /></RequireRole>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

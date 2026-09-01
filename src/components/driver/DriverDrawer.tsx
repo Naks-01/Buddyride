@@ -9,18 +9,13 @@ import {
   LogOut,
   Route,
   Settings,
-  Shield,
   Star,
-  Tag,
-  UserPlus,
   Wallet,
   X,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import type { Profile } from '../../types';
 import { EarningsModal } from './EarningsModal';
-import { SafetyToolkitModal } from './SafetyToolkitModal';
-import { ReferFriendsModal } from './ReferFriendsModal';
 
 type DriverDrawerProps = {
   open: boolean;
@@ -33,14 +28,12 @@ type DriverDrawerProps = {
   onGoOffline: () => void;
 };
 
-type MenuAction = 'rides' | 'earnings' | 'performance' | 'vehicle' | 'documents' | 'safety' | 'promotions' | 'refer' | 'help' | 'settings' | 'logout';
+type MenuAction = 'rides' | 'earnings' | 'performance' | 'vehicle' | 'documents' | 'help' | 'settings' | 'logout';
 
 export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, todayEarnings, isOnline, onGoOffline }: DriverDrawerProps) {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const [showEarnings, setShowEarnings] = useState(false);
-  const [showSafety, setShowSafety] = useState(false);
-  const [showRefer, setShowRefer] = useState(false);
 
   const rating = Number(driverProfile?.avgRating ?? 4.94);
   const ridesCount = Number(driverProfile?.totalRatings ?? 0);
@@ -66,16 +59,6 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
         onClose();
         navigate('/driver/documents');
         break;
-      case 'safety':
-        setShowSafety(true);
-        break;
-      case 'promotions':
-        onClose();
-        navigate('/driver/promos');
-        break;
-      case 'refer':
-        setShowRefer(true);
-        break;
       case 'help':
         onClose();
         navigate('/driver/help');
@@ -99,9 +82,6 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
     { action: 'performance', label: 'Performance', icon: BarChart3 },
     { action: 'vehicle', label: 'Vehicle', icon: Car },
     { action: 'documents', label: 'Documents', icon: FileText },
-    { action: 'safety', label: 'Safety', icon: Shield },
-    { action: 'promotions', label: 'Promotions', icon: Tag },
-    { action: 'refer', label: 'Refer Friends', icon: UserPlus },
     { action: 'help', label: 'Help Center', icon: HelpCircle },
     { action: 'settings', label: 'Settings', icon: Settings },
   ];
@@ -203,8 +183,6 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
       </aside>
 
       {showEarnings && <EarningsModal driverId={driverId} onClose={() => setShowEarnings(false)} />}
-      {showSafety && <SafetyToolkitModal driverId={driverId} onClose={() => setShowSafety(false)} />}
-      {showRefer && <ReferFriendsModal onClose={() => setShowRefer(false)} />}
     </>
   );
 }

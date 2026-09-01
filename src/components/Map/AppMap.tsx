@@ -64,8 +64,8 @@ export default function AppMap({
     if (!navigator.geolocation) return;
     const watch = navigator.geolocation.watchPosition(
       (p) => setPos([p.coords.latitude, p.coords.longitude]),
-      (e) => console.log(e),
-      { enableHighAccuracy: true },
+      (e) => console.error('Failed to watch position:', e),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
     return () => navigator.geolocation.clearWatch(watch);
   }, []);

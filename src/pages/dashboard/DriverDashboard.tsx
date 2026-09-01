@@ -17,20 +17,22 @@ import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
-import { EmergencyContacts, SOSButton } from '../../components/SafetyTools';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
-import AppMap from '../../components/Map/AppMap';
+import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
 import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
   completeRide as completeRideService,
+  getFreeRoute,
   markArrived,
   startTrip as startTripService,
   subscribeToRequestedRides,
   subscribeToRide,
   updateRideFields,
 } from '../../lib/rideService';
+import { startDriverTracking, stopDriverTracking } from '../../services/rideService';
+import { getMapProvider, openNavigation as openExternalNavigation } from '../../lib/navigation';
 
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
@@ -107,17 +109,20 @@ export function DriverDashboard() {
   const [stopWaitingSeconds, setStopWaitingSeconds] = useState(0);
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
+  const driverTrackingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [centerTrigger, setCenterTrigger] = useState(0);
   const [checkingArrival, setCheckingArrival] = useState(false);
+  const [routePath, setRoutePath] = useState<[number, number][] | null>(null);
+  const [routeMarkers, setRouteMarkers] = useState<AppMapMarker[]>([]);
 
   const toggleOnline = async () => {
     const next = !isOnline;
     setIsOnline(next);
     if (user) {
-      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: next }).catch((err) => {
+      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: next, lastSeen: serverTimestamp() }).catch((err) => {
         console.error('Failed to update online status:', err);
       });
     }
@@ -129,11 +134,18 @@ export function DriverDashboard() {
     setRides([]);
     stopRequestLoop();
     if (user) {
-      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: false, lastOffline: serverTimestamp() }).catch((err) => {
+      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: false, lastOffline: serverTimestamp(), lastSeen: serverTimestamp() }).catch((err) => {
         console.error('Failed to update offline status:', err);
       });
     }
   };
+
+  // Stop the GPS-push interval if the dashboard unmounts mid-trip (e.g. driver navigates away).
+  useEffect(() => {
+    return () => {
+      if (driverTrackingIntervalRef.current) stopDriverTracking(driverTrackingIntervalRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if ('Notification' in window) void Notification.requestPermission();
@@ -185,7 +197,6 @@ export function DriverDashboard() {
         const nextRides = snapshot.docs
           .map((d: any) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as RideRequest));
         setRides(nextRides);
-        console.log('Driver rides:', nextRides);
 
         const newRides = nextRides.filter((ride: RideRequest) => !knownRideIdsRef.current.has(ride.id));
         knownRideIdsRef.current = new Set(nextRides.map((ride: RideRequest) => ride.id));
@@ -233,6 +244,8 @@ export function DriverDashboard() {
         driverPhone: auth.currentUser?.phoneNumber ?? null,
         driverPhotoUrl: auth.currentUser?.photoURL ?? null,
         carPlate: profile?.vehicle_plate ?? null,
+        driverCar: profile?.vehicle_model ?? null,
+        driverPlate: profile?.vehicle_plate ?? null,
         driverRating: Number(driverProfile?.avgRating ?? 4.9),
         ...(location && {
           driverLocation: { ...location, updatedAt: serverTimestamp() },
@@ -241,6 +254,17 @@ export function DriverDashboard() {
       });
       const acceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(acceptedRide);
+      if (driverTrackingIntervalRef.current) stopDriverTracking(driverTrackingIntervalRef.current);
+      driverTrackingIntervalRef.current = startDriverTracking(uid, ride.id);
+      window.setTimeout(() => {
+        setAcceptedRide((prev) => {
+          if (!prev || prev.id !== ride.id || prev.status !== 'driver_assigned') return prev;
+          void updateRideFields(ride.id, { status: 'driver_en_route' }).catch((err: unknown) => {
+            console.error('Failed to update ride status:', err);
+          });
+          return { ...prev, status: 'driver_en_route' };
+        });
+      }, 3000);
       await navigateToPickup(acceptedRide);
     } catch (err) {
       console.error(err);
@@ -314,7 +338,7 @@ export function DriverDashboard() {
     }
 
     // Update local state immediately so the Start Trip button appears without waiting on the snapshot round-trip.
-    setAcceptedRide((prev) => (prev ? { ...prev, status: 'arrived', arrivedAt: Date.now() } : prev));
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'driver_arrived', arrivedAt: Date.now() } : prev));
     setUpdatingStatus(true);
     try {
       await markArrived(ride.id, ride.passengerId, {
@@ -349,11 +373,13 @@ export function DriverDashboard() {
     } finally {
       setUpdatingStatus(false);
     }
+    stopDriverTracking(driverTrackingIntervalRef.current);
+    driverTrackingIntervalRef.current = null;
     setAcceptedRide(null);
   };
 
   useEffect(() => {
-    if (acceptedRide?.status !== 'arrived') {
+    if (acceptedRide?.status !== 'driver_arrived') {
       setWaitSecondsRemaining(0);
       return;
     }
@@ -372,7 +398,7 @@ export function DriverDashboard() {
   const [pickupWaitSeconds, setPickupWaitSeconds] = useState(0);
   useEffect(() => {
     const arrivedAt = toMillis(acceptedRide?.arrivedAt);
-    if (!acceptedRide || acceptedRide.status !== 'arrived' || arrivedAt == null) {
+    if (!acceptedRide || acceptedRide.status !== 'driver_arrived' || arrivedAt == null) {
       setPickupWaitSeconds(0);
       return;
     }
@@ -396,7 +422,7 @@ export function DriverDashboard() {
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.arrivedAt]);
 
   const startTrip = async (ride: RideRequest) => {
-    setAcceptedRide((prev) => (prev ? { ...prev, status: 'on_trip', currentStopIndex: 1 } : prev));
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'trip_started', currentStopIndex: 1 } : prev));
     setUpdatingStatus(true);
     try {
       await startTripService(ride.id, { currentStopIndex: 1 });
@@ -410,6 +436,8 @@ export function DriverDashboard() {
   };
   const completeTrip = (ride: RideRequest) => {
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed' } : prev));
+    stopDriverTracking(driverTrackingIntervalRef.current);
+    driverTrackingIntervalRef.current = null;
     const total = Number(ride.fare ?? ride.price ?? 0);
     const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE + Number(ride.tipAmount ?? 0);
     setTodayEarnings((prev) => prev + driverPayout);
@@ -437,7 +465,7 @@ export function DriverDashboard() {
 
   useEffect(() => {
     const arrivedAt = toMillis(acceptedRide?.stopArrivalTime);
-    if (!acceptedRide || acceptedRide.status !== 'on_trip' || arrivedAt == null) {
+    if (!acceptedRide || acceptedRide.status !== 'trip_started' || arrivedAt == null) {
       setStopWaitingSeconds(0);
       return;
     }
@@ -462,10 +490,20 @@ export function DriverDashboard() {
     return () => window.clearInterval(timer);
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.stopArrivalTime]);
 
-  const openNavigation = (destination: Coordinates, origin?: Coordinates) => {
-    const originQuery = origin ? `&origin=${origin.lat},${origin.lng}` : '';
-    const url = `https://www.google.com/maps/dir/?api=1${originQuery}&destination=${destination.lat},${destination.lng}&travelmode=driving`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+  // Google/Waze open the external app; 'inapp' draws the OSRM route on the Leaflet map instead.
+  const navigateTo = async (destination: Coordinates, origin?: Coordinates) => {
+    const provider = getMapProvider();
+    const openedExternally = openExternalNavigation(destination.lat, destination.lng, provider);
+    if (openedExternally) {
+      setRoutePath(null);
+      setRouteMarkers([]);
+      return;
+    }
+    setRouteMarkers([{ id: 'nav-destination', position: [destination.lat, destination.lng], color: '#FF3B30', emoji: '📍' }]);
+    if (origin) {
+      const route = await getFreeRoute(origin, destination);
+      setRoutePath(route?.polyline ?? null);
+    }
   };
 
   const getDriverLocation = (): Promise<Coordinates | undefined> =>
@@ -476,15 +514,20 @@ export function DriverDashboard() {
       }
       navigator.geolocation.getCurrentPosition(
         (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
-        () => resolve(undefined),
-        { enableHighAccuracy: true, timeout: 10000 },
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED) {
+            setError('Please enable location access to continue.');
+          }
+          resolve(undefined);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
       );
     });
 
   const recenterMap = () => setCenterTrigger((prev) => prev + 1);
 
   useEffect(() => {
-    if (!acceptedRide || acceptedRide.status !== 'driver_assigned' || !navigator.geolocation) return;
+    if (!acceptedRide || (acceptedRide.status !== 'driver_assigned' && acceptedRide.status !== 'driver_en_route') || !navigator.geolocation) return;
 
     const rideId = acceptedRide.id;
     const watchId = navigator.geolocation.watchPosition(
@@ -496,7 +539,6 @@ export function DriverDashboard() {
             updatedAt: serverTimestamp(),
           },
           driverStatus: 'coming',
-          status: 'driver_assigned',
         }).catch((err: unknown) => {
           console.error('Failed to update driver location:', err);
           setError('Unable to share your live location.');
@@ -506,7 +548,7 @@ export function DriverDashboard() {
         console.error('Failed to watch driver location:', err);
         setError('Location permission is required to share your route.');
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
@@ -519,7 +561,7 @@ export function DriverDashboard() {
       return;
     }
     window.speechSynthesis?.speak(new SpeechSynthesisUtterance('Navigating to pickup location'));
-    openNavigation(pickup, await getDriverLocation());
+    await navigateTo(pickup, await getDriverLocation());
   };
 
   const navigateToDestination = async (ride: RideRequest) => {
@@ -533,7 +575,7 @@ export function DriverDashboard() {
       setError('Destination is missing coordinates.');
       return;
     }
-    openNavigation(destination, pickup ?? undefined);
+    await navigateTo(destination, pickup ?? undefined);
   };
 
   const finishRide = () => setAcceptedRide(null);
@@ -558,9 +600,9 @@ export function DriverDashboard() {
   const hasActiveOverlay = Boolean(acceptedRide) || rides.length > 0;
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#121212] text-white">
+    <div className="relative h-[100dvh] w-full overflow-hidden bg-[#121212] text-white">
       <div className="absolute inset-0 top-0 bottom-[72px] z-0">
-        <AppMap mode="driver" centerBtn={centerTrigger} />
+        <AppMap mode="driver" centerBtn={centerTrigger} routePath={routePath ?? undefined} markers={routeMarkers} />
       </div>
 
       <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-4 pointer-events-auto">
@@ -635,7 +677,7 @@ export function DriverDashboard() {
       )}
 
       {!acceptedRide && rides.length > 0 && (
-        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[65vh] overflow-y-auto px-4">
+        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[40vh] overflow-y-auto rounded-t-[20px] bg-[#121212] px-4 pt-2 shadow-[0_-4px_20px_rgba(0,0,0,0.35)]">
           <div className="space-y-3 pb-2">
             {rides.map((ride) => (
               <div key={ride.id} className="rounded-2xl bg-white p-4 shadow-2xl">
@@ -667,7 +709,7 @@ export function DriverDashboard() {
       )}
 
       {acceptedRide && (
-        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[78vh] overflow-y-auto px-4">
+        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[40vh] overflow-y-auto rounded-t-[20px] bg-[#121212] px-4 pt-2 shadow-[0_-4px_20px_rgba(0,0,0,0.35)]">
           <section className="mb-2 rounded-2xl border border-green-200 bg-white p-4 shadow-2xl">
             <h2 className="mb-3 text-lg font-bold text-green-900">Accepted Ride</h2>
             <RideDetails ride={acceptedRide} />
@@ -684,7 +726,7 @@ export function DriverDashboard() {
             >
               Navigate
             </button>
-            {acceptedRide.status === 'driver_assigned' && (
+            {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && (
               <button
                 onClick={() => void markArrivedAtPickup(acceptedRide)}
                 disabled={updatingStatus || checkingArrival}
@@ -693,7 +735,7 @@ export function DriverDashboard() {
                 {checkingArrival ? 'Checking your location...' : 'Arrived at Pickup'}
               </button>
             )}
-            {acceptedRide.status === 'arrived' && (
+            {acceptedRide.status === 'driver_arrived' && (
               <>
                 <div className="mt-2 rounded-lg bg-orange-50 border border-orange-200 py-2 px-3 text-center text-sm font-semibold text-orange-700">
                   {pickupWaitSeconds <= 180
@@ -725,7 +767,7 @@ export function DriverDashboard() {
                 </button>
               </>
             )}
-            {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'arrived') && (
+            {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route' || acceptedRide.status === 'driver_arrived') && (
               <button
                 onClick={() => void driverCancelRide(acceptedRide)}
                 disabled={updatingStatus}
@@ -734,7 +776,7 @@ export function DriverDashboard() {
                 Cancel Ride (no fee before wait)
               </button>
             )}
-            {acceptedRide.status === 'on_trip' && (() => {
+            {acceptedRide.status === 'trip_started' && (() => {
               const stops = acceptedRide.stops ?? [];
               const currentStopIndex = acceptedRide.currentStopIndex ?? 1;
               const hasNextStop = currentStopIndex < stops.length - 1;
@@ -816,9 +858,6 @@ export function DriverDashboard() {
           <span className="text-[11px]">Help</span>
         </button>
       </div>
-
-      <EmergencyContacts userId={user.uid} />
-      <SOSButton rideId={acceptedRide?.id} userRole="driver" />
     </div>
   );
 }

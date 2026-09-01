@@ -5,7 +5,7 @@ const FAQS = [
   { q: 'How do I get paid?', a: 'You collect cash directly from passengers at the end of each trip. Card payouts are coming soon.' },
   { q: 'What if a passenger no-shows?', a: 'Wait 7 minutes at pickup, then use "Passenger no-show" to cancel and receive the R20 no-show fee.' },
   { q: 'How is my rating calculated?', a: 'Your rating is the average of your last 100 completed trips as rated by passengers.' },
-  { q: 'How do I report a safety issue?', a: 'Use the Safety option in your menu, or the SOS button on your dashboard at any time.' },
+  { q: 'How do I report a safety issue?', a: 'Message support on WhatsApp using the button below.' },
 ];
 
 export function DriverHelp() {

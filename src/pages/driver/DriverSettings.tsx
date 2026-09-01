@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { LangSelector } from '../../components/LangSelector';
+import { MapProviderSelector } from '../../components/MapProviderSelector';
 import { useAuth } from '../../context/AuthContext';
 import { isSoundMuted, setSoundMuted } from '../../utils/sound';
 import { DriverPageShell } from './DriverPageShell';
@@ -39,6 +40,12 @@ export function DriverSettings() {
         <div className="rounded-2xl bg-[#1E2128] p-4">
           <p className="mb-2 text-white">Language</p>
           <LangSelector />
+        </div>
+
+        <div className="rounded-2xl bg-[#1E2128] p-4">
+          <p className="mb-1 font-bold text-white">Navigation</p>
+          <p className="mb-3 text-sm text-gray-400">Choose Navigation App</p>
+          <MapProviderSelector theme="dark" />
         </div>
 
         <button type="button" onClick={() => void logout()} className="w-full rounded-2xl bg-[#FF3B30] py-3 font-bold text-white">

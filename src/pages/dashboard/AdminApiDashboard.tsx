@@ -90,8 +90,6 @@ export function AdminApiDashboard() {
   };
 
   useEffect(() => {
-    console.log('BuddyRide API URL:', API);
-
     const fetchRides = async () => {
       try {
         const response = await fetch(`${API}/api/rides/admin/all`);

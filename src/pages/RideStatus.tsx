@@ -8,10 +8,11 @@ const libraries: ('places' | 'geometry' | 'marker')[] = ['places', 'geometry', '
 const fallbackCenter = { lat: -23.9045, lng: 29.7167 };
 const statusLabels: Record<string, string> = {
   searching: 'Finding nearby drivers...',
-  driver_assigned: 'Driver assigned',
-  driver_arriving: 'Driver is on the way',
-  in_progress: 'Your ride is in progress',
-  completed: 'Ride completed',
+  driver_assigned: 'Driver assigned - your driver is coming',
+  driver_en_route: 'Driver en route - on the way to you',
+  driver_arrived: 'Driver has arrived! 2 min wait',
+  trip_started: 'On trip to destination',
+  completed: 'Trip completed - rate your driver',
   cancelled: 'Ride cancelled',
 };
 

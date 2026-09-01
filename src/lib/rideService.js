@@ -1,5 +1,5 @@
 // Centralized ride lifecycle + 100% free OSM helpers (Nominatim search, OSRM routing).
-// Lifecycle: requested -> driver_assigned -> arrived -> on_trip -> completed (or cancelled at any point).
+// Lifecycle: searching -> driver_assigned -> driver_en_route -> driver_arrived -> trip_started -> completed (or cancelled at any point).
 import { db } from './firebase';
 import {
   addDoc,
@@ -13,10 +13,11 @@ import {
 } from 'firebase/firestore';
 
 export const RIDE_STATUS = {
-  REQUESTED: 'requested',
+  REQUESTED: 'searching',
   DRIVER_ASSIGNED: 'driver_assigned',
-  ARRIVED: 'arrived',
-  ON_TRIP: 'on_trip',
+  EN_ROUTE: 'driver_en_route',
+  ARRIVED: 'driver_arrived',
+  ON_TRIP: 'trip_started',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',
 };
@@ -45,12 +46,12 @@ export async function getFreeRoute(from, to) {
       };
     }
   } catch (e) {
-    console.log(e);
+    console.error('Failed to fetch OSRM route:', e);
   }
   return null;
 }
 
-// CREATE RIDE - status: requested.
+// CREATE RIDE - status: searching.
 export async function createRide(pickup, dropoff, passengerId, extra = {}) {
   return addDoc(collection(db, 'rides'), {
     pickup,
