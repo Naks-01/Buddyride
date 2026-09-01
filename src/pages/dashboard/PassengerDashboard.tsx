@@ -8,7 +8,7 @@ import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces } from '../../lib/polokwane';
-import { searchLimpopo, retrieveMapboxSuggestion, ICON_BY_CATEGORY, type SearchPlace } from '../../lib/placeSearch';
+import { searchLimpopo, ICON_BY_TYPE, type SearchPlace } from '../../lib/placeSearch';
 import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE, RIDE_EXTRAS } from '../../config/pricing';
 import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
@@ -110,7 +110,6 @@ export function PassengerDashboard() {
   const [isLocationLocked, setIsLocationLocked] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState<SearchPlace[]>([]);
-  const mapboxSessionTokenRef = useRef(crypto.randomUUID());
   const [mode, setMode] = useState<'ride' | 'send'>('ride');
   const [tripType, setTripType] = useState<'ride' | 'send'>('ride');
   const [packageDescription, setPackageDescription] = useState('');
@@ -151,7 +150,7 @@ export function PassengerDashboard() {
       return;
     }
     searchTimerRef.current = window.setTimeout(async () => {
-      const results = await searchLimpopo(searchText, mapboxSessionTokenRef.current);
+      const results = await searchLimpopo(searchText);
       setSearchResults(results);
     }, 400);
     return () => {
@@ -214,17 +213,8 @@ export function PassengerDashboard() {
     }
   };
 
-  const selectSearchResult = async (result: SearchPlace) => {
-    let lat = result.lat;
-    let lng = result.lng;
-    if ((lat == null || lng == null) && result.source === 'mapbox' && result.mapboxId) {
-      const resolved = await retrieveMapboxSuggestion(result.mapboxId, mapboxSessionTokenRef.current);
-      if (!resolved) return;
-      lat = resolved.lat;
-      lng = resolved.lng;
-    }
-    if (lat == null || lng == null) return;
-    const nextLocation = { lat, lng };
+  const selectSearchResult = (result: SearchPlace) => {
+    const nextLocation = { lat: result.lat, lng: result.lng };
     setMapAddress(result.address);
     setSearchText(shortAddress(result.name));
     setMapLocation(nextLocation);
@@ -872,10 +862,10 @@ export function PassengerDashboard() {
                         <button
                           key={result.id}
                           type="button"
-                          onClick={() => void selectSearchResult(result)}
+                          onClick={() => selectSearchResult(result)}
                           className="flex w-full items-center gap-2 truncate px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
                         >
-                          <span>{ICON_BY_CATEGORY[result.category]}</span>
+                          <span>{ICON_BY_TYPE[result.type]}</span>
                           <span className="min-w-0 flex-1 truncate">
                             <span className="font-semibold">{result.name}</span>
                             {result.address && result.address !== result.name && (
