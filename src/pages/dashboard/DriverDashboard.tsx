@@ -31,8 +31,10 @@ import {
   subscribeToRide,
   updateRideFields,
 } from '../../lib/rideService';
-import { startDriverTracking, stopDriverTracking } from '../../services/rideService';
 import { getMapProvider, openNavigation as openExternalNavigation } from '../../lib/navigation';
+
+// Statuses during which the driver's live GPS position should keep broadcasting to the ride doc.
+const LOCATION_SHARING_STATUSES = new Set(['driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started']);
 
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
@@ -109,7 +111,6 @@ export function DriverDashboard() {
   const [stopWaitingSeconds, setStopWaitingSeconds] = useState(0);
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
-  const driverTrackingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
@@ -139,13 +140,6 @@ export function DriverDashboard() {
       });
     }
   };
-
-  // Stop the GPS-push interval if the dashboard unmounts mid-trip (e.g. driver navigates away).
-  useEffect(() => {
-    return () => {
-      if (driverTrackingIntervalRef.current) stopDriverTracking(driverTrackingIntervalRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     if ('Notification' in window) void Notification.requestPermission();
@@ -254,8 +248,6 @@ export function DriverDashboard() {
       });
       const acceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(acceptedRide);
-      if (driverTrackingIntervalRef.current) stopDriverTracking(driverTrackingIntervalRef.current);
-      driverTrackingIntervalRef.current = startDriverTracking(uid, ride.id);
       window.setTimeout(() => {
         setAcceptedRide((prev) => {
           if (!prev || prev.id !== ride.id || prev.status !== 'driver_assigned') return prev;
@@ -373,8 +365,6 @@ export function DriverDashboard() {
     } finally {
       setUpdatingStatus(false);
     }
-    stopDriverTracking(driverTrackingIntervalRef.current);
-    driverTrackingIntervalRef.current = null;
     setAcceptedRide(null);
   };
 
@@ -436,8 +426,6 @@ export function DriverDashboard() {
   };
   const completeTrip = (ride: RideRequest) => {
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed' } : prev));
-    stopDriverTracking(driverTrackingIntervalRef.current);
-    driverTrackingIntervalRef.current = null;
     const total = Number(ride.fare ?? ride.price ?? 0);
     const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE + Number(ride.tipAmount ?? 0);
     setTodayEarnings((prev) => prev + driverPayout);
@@ -526,8 +514,10 @@ export function DriverDashboard() {
 
   const recenterMap = () => setCenterTrigger((prev) => prev + 1);
 
+  // Single source of truth for the driver's live position - runs for the entire active ride
+  // (assigned through trip_started) so the passenger's driver marker never freezes mid-trip.
   useEffect(() => {
-    if (!acceptedRide || (acceptedRide.status !== 'driver_assigned' && acceptedRide.status !== 'driver_en_route') || !navigator.geolocation) return;
+    if (!acceptedRide || !LOCATION_SHARING_STATUSES.has(acceptedRide.status ?? '') || !navigator.geolocation) return;
 
     const rideId = acceptedRide.id;
     const watchId = navigator.geolocation.watchPosition(
@@ -536,9 +526,10 @@ export function DriverDashboard() {
           driverLocation: {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
+            heading: position.coords.heading ?? null,
             updatedAt: serverTimestamp(),
           },
-          driverStatus: 'coming',
+          driverStatus: acceptedRide.status === 'trip_started' ? 'on_trip' : 'coming',
         }).catch((err: unknown) => {
           console.error('Failed to update driver location:', err);
           setError('Unable to share your live location.');

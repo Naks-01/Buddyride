@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import type { DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { createRide, cancelRide as cancelRideService, subscribeToRide, searchAddress } from '../../lib/rideService';
+import { createRide, cancelRide as cancelRideService, subscribeToRide, getFreeRoute } from '../../lib/rideService';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
-import { searchPolokwanePlaces, type PolokwanePlace } from '../../lib/polokwane';
+import { searchPolokwanePlaces } from '../../lib/polokwane';
+import { searchLimpopo, retrieveMapboxSuggestion, ICON_BY_CATEGORY, type SearchPlace } from '../../lib/placeSearch';
 import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE, RIDE_EXTRAS } from '../../config/pricing';
 import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
@@ -24,8 +25,6 @@ function shortAddress(full: string): string {
   const parts = full.split(',').map((part) => part.trim());
   return parts.slice(0, 2).join(', ');
 }
-
-type NominatimResult = { display_name: string; lat: string; lon: string };
 
 const ACTIVE_TRIP_STATUSES = ['searching', 'driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started'];
 const STATUS_BANNER: Record<string, string> = {
@@ -92,6 +91,8 @@ export function PassengerDashboard() {
   const [rated, setRated] = useState(false);
   const [ratingValue, setRatingValue] = useState<number | null>(null);
   const [showRating, setShowRating] = useState(false);
+  const [driverRoutePath, setDriverRoutePath] = useState<[number, number][] | null>(null);
+  const lastRouteFetchRef = useRef(0);
   const [showSettings, setShowSettings] = useState(false);
   const [distance, setDistance] = useState<string>('');
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
@@ -108,7 +109,8 @@ export function PassengerDashboard() {
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
   const [isLocationLocked, setIsLocationLocked] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const [nominatimResults, setNominatimResults] = useState<NominatimResult[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchPlace[]>([]);
+  const mapboxSessionTokenRef = useRef(crypto.randomUUID());
   const [mode, setMode] = useState<'ride' | 'send'>('ride');
   const [tripType, setTripType] = useState<'ride' | 'send'>('ride');
   const [packageDescription, setPackageDescription] = useState('');
@@ -139,14 +141,18 @@ export function PassengerDashboard() {
   };
 
   useEffect(() => {
+    if ('Notification' in window) void Notification.requestPermission();
+  }, []);
+
+  useEffect(() => {
     if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
     if (searchText.trim().length < 3) {
-      setNominatimResults([]);
+      setSearchResults([]);
       return;
     }
     searchTimerRef.current = window.setTimeout(async () => {
-      const results = await searchAddress(searchText);
-      setNominatimResults(results);
+      const results = await searchLimpopo(searchText, mapboxSessionTokenRef.current);
+      setSearchResults(results);
     }, 400);
     return () => {
       if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
@@ -208,21 +214,23 @@ export function PassengerDashboard() {
     }
   };
 
-  const selectNominatimResult = (result: NominatimResult) => {
-    const nextLocation = { lat: Number(result.lat), lng: Number(result.lon) };
-    setMapAddress(result.display_name);
-    setSearchText(shortAddress(result.display_name));
+  const selectSearchResult = async (result: SearchPlace) => {
+    let lat = result.lat;
+    let lng = result.lng;
+    if ((lat == null || lng == null) && result.source === 'mapbox' && result.mapboxId) {
+      const resolved = await retrieveMapboxSuggestion(result.mapboxId, mapboxSessionTokenRef.current);
+      if (!resolved) return;
+      lat = resolved.lat;
+      lng = resolved.lng;
+    }
+    if (lat == null || lng == null) return;
+    const nextLocation = { lat, lng };
+    setMapAddress(result.address);
+    setSearchText(shortAddress(result.name));
     setMapLocation(nextLocation);
-    setNominatimResults([]);
+    setSearchResults([]);
     if (locationStep === 'pickup') setPickupPlaceId(null);
     else setDropoffPlaceId(null);
-  };
-
-  const selectLocalPlace = (place: PolokwanePlace) => {
-    const nextLocation = { lat: place.lat, lng: place.lng };
-    setMapAddress(place.address);
-    setSearchText(place.name);
-    setMapLocation(nextLocation);
   };
 
   const confirmMapLocation = () => {
@@ -460,6 +468,9 @@ export function PassengerDashboard() {
         else if (nextStatus === 'driver_arrived') {
           playSoundTimes('arrived', 3);
           if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Driver is outside', { body: 'Your driver has arrived at the pickup point.' });
+          }
         } else if (nextStatus === 'cancelled') playSound('cancel');
       }
 
@@ -586,6 +597,27 @@ export function PassengerDashboard() {
   const isCompleted = rideStatus === 'completed';
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
   const isShareableTrip = rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'driver_arrived' || rideStatus === 'trip_started';
+
+  // Draw the live route from the driver to wherever they're headed next: the pickup pin while
+  // approaching, then the dropoff pin once the trip has started - refetched as the driver moves.
+  useEffect(() => {
+    if (!driverLocation) return;
+    const target = rideStatus === 'trip_started' ? tripDropoffLocation : tripPickupLocation;
+    if (!target || (rideStatus !== 'driver_assigned' && rideStatus !== 'driver_en_route' && rideStatus !== 'trip_started')) {
+      setDriverRoutePath(null);
+      return;
+    }
+    const now = Date.now();
+    if (now - lastRouteFetchRef.current < 5000) return;
+    lastRouteFetchRef.current = now;
+    let cancelled = false;
+    void getFreeRoute(driverLocation, target).then((route) => {
+      if (!cancelled) setDriverRoutePath(route?.polyline ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [driverLocation, tripPickupLocation, tripDropoffLocation, rideStatus]);
   useEffect(() => {
     if (!isActiveTrip || rideCreatedAt == null) return;
     const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
@@ -637,8 +669,13 @@ export function PassengerDashboard() {
   const knownPoints = [tripPickupLocation, tripDropoffLocation, driverLocation].filter(
     (point): point is { lat: number; lng: number } => point != null
   );
-  const driverDistanceKm = driverLocation && tripPickupLocation
-    ? calcDistance(driverLocation.lat, driverLocation.lng, tripPickupLocation.lat, tripPickupLocation.lng)
+  const driverDistanceKm = driverLocation && (rideStatus === 'trip_started' ? tripDropoffLocation : tripPickupLocation)
+    ? calcDistance(
+        driverLocation.lat,
+        driverLocation.lng,
+        (rideStatus === 'trip_started' ? tripDropoffLocation! : tripPickupLocation!).lat,
+        (rideStatus === 'trip_started' ? tripDropoffLocation! : tripPickupLocation!).lng,
+      )
     : null;
   const driverEtaMinutes = driverDistanceKm == null ? null : Math.max(1, Math.ceil((driverDistanceKm / 30) * 60));
   const liveMapCenter =
@@ -691,6 +728,7 @@ export function PassengerDashboard() {
           center={isActiveTrip ? [liveMapCenter.lat, liveMapCenter.lng] : [mapLocation.lat, mapLocation.lng]}
           zoom={14}
           markers={tripMarkers}
+          routePath={driverRoutePath ?? undefined}
           onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
         />
         {!rideId && !isActiveTrip && (
@@ -716,7 +754,9 @@ export function PassengerDashboard() {
               <p className="text-center text-sm mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-2 px-3">
                 {tripType === 'send' && (rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'trip_started')
                   ? 'Driver is delivering your parcel'
-                  : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
+                  : rideStatus === 'trip_started'
+                    ? `Trip in progress${driverDistanceKm != null ? ` - ${driverDistanceKm.toFixed(1)}km to destination` : ''}`
+                    : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
               </p>
               {isShareableTrip && (
                 <div className="mb-3 flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
@@ -761,7 +801,7 @@ export function PassengerDashboard() {
                   Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
                 </p>
               )}
-              {driverDistanceKm != null && driverEtaMinutes != null && (
+              {driverDistanceKm != null && driverEtaMinutes != null && rideStatus !== 'trip_started' && (
                 <p className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center text-sm font-semibold text-green-800">
                   Driver is {driverDistanceKm.toFixed(1)} km away - ETA {driverEtaMinutes} min{driverEtaMinutes === 1 ? '' : 's'}
                 </p>
@@ -826,30 +866,22 @@ export function PassengerDashboard() {
                       )}
                     </>
                   )}
-                  {searchText && searchPolokwanePlaces(searchText).length > 0 && (
-                    <div className="mt-2 max-h-32 overflow-y-auto border-t border-gray-100 pt-1">
-                      {searchPolokwanePlaces(searchText).map((place) => (
+                  {searchResults.length > 0 && (
+                    <div className="mt-2 max-h-40 overflow-y-auto border-t border-gray-100 pt-1">
+                      {searchResults.map((result) => (
                         <button
-                          key={place.name}
+                          key={result.id}
                           type="button"
-                          onClick={() => selectLocalPlace(place)}
-                          className="block w-full px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
+                          onClick={() => void selectSearchResult(result)}
+                          className="flex w-full items-center gap-2 truncate px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
                         >
-                          {place.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {nominatimResults.length > 0 && (
-                    <div className="mt-2 max-h-32 overflow-y-auto border-t border-gray-100 pt-1">
-                      {nominatimResults.map((result) => (
-                        <button
-                          key={`${result.lat}-${result.lon}`}
-                          type="button"
-                          onClick={() => selectNominatimResult(result)}
-                          className="block w-full truncate px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
-                        >
-                          {shortAddress(result.display_name)}
+                          <span>{ICON_BY_CATEGORY[result.category]}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            <span className="font-semibold">{result.name}</span>
+                            {result.address && result.address !== result.name && (
+                              <span className="block truncate text-xs text-gray-500">{shortAddress(result.address)}</span>
+                            )}
+                          </span>
                         </button>
                       ))}
                     </div>
