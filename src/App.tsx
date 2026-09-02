@@ -1,61 +1,68 @@
-<MapContainer center={POLOKWANE} zoom={13} style={{ height: '100%', width: '100%' }}>
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap - Polokwane" />
-        <Marker position={pickup} icon={icon} />
-        {dest && <Marker position={dest} icon={icon} />}
-        {dest && <Polyline positions={[pickup, dest]} color="#000" weight={5} />}
-        <Recenter pos={dest || pickup} />
-      </MapContainer>
+import { useState } from 'react'
 
-      {dest && (
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          background: 'white', borderRadius: '20px 20px 0 0',
-          padding: 16, zIndex: 9999, pointerEvents: 'auto'
-        }}>
-          <div style={{ width: 40, height: 4, background: '#ddd', borderRadius: 2, margin: '0 auto 10px' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#666', marginBottom: 8 }}>
-            <span>{distance.toFixed(1)} km • {Math.round(distance*2)} min</span>
-            <span>👤 Pax: <select value={pax} onChange={e => setPax(Number(e.target.value))}>
-              {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
-            </select></span>
-          </div>
+const cats = [
+  { id: 'go', label: 'Go', seats: 2, price: 45 },
+  { id: 'comfort', label: 'Comfort', seats: 3, price: 65 },
+  { id: 'xl', label: 'XL', seats: 6, price: 95 },
+] as const
 
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            {cats.map(c => {
-              const p = Math.round(distance * c.rate + 20)
-              const active = category === c.id
-              return (
-                <button key={c.id} onClick={() => setCategory(c.id as any)}
-                  style={{ flex: 1, padding: '10px 4px', borderRadius: 14, border: 2px solid ${active?'#000':'#eee'}, background: active?'#000':'white', color: active?'white':'black' }}>
-                  <div style={{ fontWeight: 800 }}>{c.label}</div>
-                  <div style={{ fontSize: 10 }}>{c.sub}</div>
-                  <div style={{ fontWeight: 700, marginTop: 4 }}>R{p}</div>
-                </button>
-              )
-            })}
-          </div>
+type CategoryId = (typeof cats)[number]['id']
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 14 }}>
-            <span>Cash • {currentCat.label} • {pax} pax</span><b>R{price}</b>
-          </div>
+export default function App() {
+  const [category, setCategory] = useState<CategoryId>('go')
+  const [pax, setPax] = useState(1)
+  const [loading, setLoading] = useState(false)
+  const [requested, setRequested] = useState(false)
+  const [from] = useState('Polokwane')
+  const [to, setTo] = useState('Mall of the North')
+  const current = cats.find(c => c.id === category)!
+  const price = current.price * pax
 
-          <button
-            onClick={() => {
-              const current = cats.find(c => c.id === category)
-              if (pax > current.seats) { alert(current.label + ' max ' + current.seats); return }
-              setLoading(true)
-              setTimeout(() => { setLoading(false); setRequested(true) }, 800)
-            }}
-            style={{
-              width: '100%', background: 'black', color: 'white',
-              padding: 16, borderRadius: 12, fontSize: 18,
-              fontWeight: 800, border: 'none', pointerEvents: 'auto'
-            }}
-          >
-            Request BuddyRide • R{price}
-          </button>
+  if (requested) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center' }}>
+        <h1>Searching driver...</h1>
+        <p>{from} to {to}</p>
+        <p>{current.label} - {pax} pax - R{price}</p>
+        <button onClick={() => setRequested(false)} style={{ marginTop: 20, padding: 12, background: 'black', color: 'white', borderRadius: 8 }}>Cancel</button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      <div style={{ flex: 1, background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        Map - Polokwane
+        <div style={{ position: 'absolute', top: 20, left: 16, right: 16 }}>
+          <input value={to} onChange={event => setTo(event.target.value)} placeholder="Where to?" style={{ width: '100%', padding: 12, borderRadius: 12 }} />
         </div>
-      )}
+      </div>
+
+      <div style={{ background: 'white', borderRadius: '20px 20px 0 0', padding: 16, zIndex: 9999, pointerEvents: 'auto' }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          {cats.map(c => (
+            <button key={c.id} onClick={() => { setCategory(c.id); setPax(Math.min(pax, c.seats)) }} style={{ flex: 1, padding: 10, borderRadius: 10, background: category === c.id ? 'black' : '#eee', color: category === c.id ? 'white' : 'black' }}>
+              {c.label} ({c.seats})
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+          <span>Pax:</span>
+          <button onClick={() => setPax(Math.max(1, pax - 1))}>-</button>
+          <span style={{ fontWeight: 800 }}>{pax}</span>
+          <button onClick={() => setPax(Math.min(current.seats, pax + 1))}>+</button>
+          <span style={{ fontSize: 12, color: '#666' }}>Max {current.seats} for {current.label}</span>
+        </div>
+
+        <button onClick={() => {
+          if (pax > current.seats) { alert(current.label + ' max ' + current.seats + ' passengers'); return }
+          setLoading(true)
+          setTimeout(() => { setLoading(false); setRequested(true) }, 800)
+        }} style={{ width: '100%', background: 'black', color: 'white', padding: 16, borderRadius: 12, fontSize: 18, fontWeight: 800, border: 'none', pointerEvents: 'auto', cursor: 'pointer' }}>
+          {loading ? 'Loading...' : `Request BuddyRide - R${price}`}
+        </button>
+      </div>
     </div>
   )
 }
