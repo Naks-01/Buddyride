@@ -1,119 +1,61 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Component, type ReactNode } from 'react';
-import { useAuth } from './context/AuthContext';
-import { auth } from './lib/firebase';
-import { RoleSelect } from './pages/RoleSelect';
-import RolePasswordLogin from './pages/RolePasswordLogin';
-import { PassengerDashboard } from './pages/dashboard/PassengerDashboard';
-import { DriverDashboard } from './pages/dashboard/DriverDashboard';
-import { AdminDashboard } from './pages/dashboard/AdminDashboard';
-import { RideStatus } from './pages/RideStatus';
-import { Profile } from './pages/Profile';
-import { PassengerRides } from './pages/PassengerRides';
-import SafetyDashboard from './pages/admin/SafetyDashboard';
-import { DriverRides } from './pages/driver/DriverRides';
-import { DriverPerformance } from './pages/driver/DriverPerformance';
-import { DriverVehicle } from './pages/driver/DriverVehicle';
-import { DriverDocuments } from './pages/driver/DriverDocuments';
-import { DriverHelp } from './pages/driver/DriverHelp';
-import { DriverSettings } from './pages/driver/DriverSettings';
-import { LoadingScreen } from './components/LoadingScreen';
-import { SplashScreen } from './components/SplashScreen';
-import type { AppRole } from './types';
-import { ADMIN_EMAIL } from './config/admin';
+<MapContainer center={POLOKWANE} zoom={13} style={{ height: '100%', width: '100%' }}>
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap - Polokwane" />
+        <Marker position={pickup} icon={icon} />
+        {dest && <Marker position={dest} icon={icon} />}
+        {dest && <Polyline positions={[pickup, dest]} color="#000" weight={5} />}
+        <Recenter pos={dest || pickup} />
+      </MapContainer>
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null };
+      {dest && (
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          background: 'white', borderRadius: '20px 20px 0 0',
+          padding: 16, zIndex: 9999, pointerEvents: 'auto'
+        }}>
+          <div style={{ width: 40, height: 4, background: '#ddd', borderRadius: 2, margin: '0 auto 10px' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#666', marginBottom: 8 }}>
+            <span>{distance.toFixed(1)} km • {Math.round(distance*2)} min</span>
+            <span>👤 Pax: <select value={pax} onChange={e => setPax(Number(e.target.value))}>
+              {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+            </select></span>
+          </div>
 
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            {cats.map(c => {
+              const p = Math.round(distance * c.rate + 20)
+              const active = category === c.id
+              return (
+                <button key={c.id} onClick={() => setCategory(c.id as any)}
+                  style={{ flex: 1, padding: '10px 4px', borderRadius: 14, border: 2px solid ${active?'#000':'#eee'}, background: active?'#000':'white', color: active?'white':'black' }}>
+                  <div style={{ fontWeight: 800 }}>{c.label}</div>
+                  <div style={{ fontSize: 10 }}>{c.sub}</div>
+                  <div style={{ fontWeight: 700, marginTop: 4 }}>R{p}</div>
+                </button>
+              )
+            })}
+          </div>
 
-  render() {
-    if (this.state.error) {
-      return <div className="min-h-screen bg-black p-8 text-white">Driver dashboard error: {this.state.error.message}</div>;
-    }
-    return this.props.children;
-  }
-}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 14 }}>
+            <span>Cash • {currentCat.label} • {pax} pax</span><b>R{price}</b>
+          </div>
 
-export type { AppRole };
-
-function dashboardPath(role: AppRole): string {
-  return `/dashboard/${role}`;
-}
-
-function RequireRole({ role, children }: { role: AppRole; children: React.ReactNode }) {
-  const { profile, loading } = useAuth();
-  if (typeof window === 'undefined') return null;
-  if (loading) return <LoadingScreen />;
-  if (localStorage.getItem(`${role}LoggedIn`) !== 'true') return <Navigate to={`/login?role=${role}`} replace />;
-  if (profile && profile.role !== role) return <Navigate to={`/login?role=${role}`} replace />;
-  return <>{children}</>;
-}
-
-function RequireAdmin({ children }: { children: React.ReactNode }) {
-  const { loading } = useAuth();
-  if (typeof window === 'undefined') return null;
-  if (loading) return <LoadingScreen />;
-  const user = auth.currentUser;
-  if (!user) return <Navigate to="/login?role=admin" replace />;
-  if (user.email?.toLowerCase() !== ADMIN_EMAIL) {
-    console.warn('Blocked non-admin:', user.email);
-    return <Navigate to="/" replace />;
-  }
-  if (localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/login?role=admin" replace />;
-  return <>{children}</>;
-}
-
-function HomeOrRedirect() {
-  const { profile, loading } = useAuth();
-  if (typeof window === 'undefined') return null;
-  if (loading) return <LoadingScreen />;
-  const savedRole = (['passenger', 'driver', 'admin'] as AppRole[]).find((role) => localStorage.getItem(`${role}LoggedIn`) === 'true');
-  if (savedRole) return <Navigate to={dashboardPath(savedRole)} replace />;
-  if (profile) return <Navigate to={dashboardPath(profile.role)} replace />;
-  return <RoleSelect />;
-}
-
-function LoginRouter() {
-  return <RolePasswordLogin />;
-}
-
-function ProtectedDriverDashboard() {
-  return <RequireRole role="driver"><ErrorBoundary><DriverDashboard /></ErrorBoundary></RequireRole>;
-}
-
-export default function App() {
-  return (
-    <>
-      <SplashScreen />
-      <BrowserRouter basename="/" future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Routes>
-          <Route path="/" element={<HomeOrRedirect />} />
-          <Route path="/login" element={<LoginRouter />} />
-          <Route path="/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
-          <Route path="/passenger/dashboard" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
-          <Route path="/dashboard/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
-          <Route path="/driver" element={<ProtectedDriverDashboard />} />
-          <Route path="/driver/dashboard" element={<ProtectedDriverDashboard />} />
-          <Route path="/dashboard/driver" element={<ProtectedDriverDashboard />} />
-          <Route path="/driver/rides" element={<RequireRole role="driver"><DriverRides /></RequireRole>} />
-          <Route path="/driver/performance" element={<RequireRole role="driver"><DriverPerformance /></RequireRole>} />
-          <Route path="/driver/vehicle" element={<RequireRole role="driver"><DriverVehicle /></RequireRole>} />
-          <Route path="/driver/documents" element={<RequireRole role="driver"><DriverDocuments /></RequireRole>} />
-          <Route path="/driver/help" element={<RequireRole role="driver"><DriverHelp /></RequireRole>} />
-          <Route path="/driver/settings" element={<RequireRole role="driver"><DriverSettings /></RequireRole>} />
-          <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
-          <Route path="/admin/dashboard" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
-          <Route path="/admin/safety" element={<RequireAdmin><SafetyDashboard /></RequireAdmin>} />
-          <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
-          <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
-          <Route path="/passenger/rides" element={<RequireRole role="passenger"><PassengerRides /></RequireRole>} />
-          <Route path="/profile" element={<RequireRole role="passenger"><Profile /></RequireRole>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </>
-  );
+          <button
+            onClick={() => {
+              const current = cats.find(c => c.id === category)
+              if (pax > current.seats) { alert(current.label + ' max ' + current.seats); return }
+              setLoading(true)
+              setTimeout(() => { setLoading(false); setRequested(true) }, 800)
+            }}
+            style={{
+              width: '100%', background: 'black', color: 'white',
+              padding: 16, borderRadius: 12, fontSize: 18,
+              fontWeight: 800, border: 'none', pointerEvents: 'auto'
+            }}
+          >
+            Request BuddyRide • R{price}
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
