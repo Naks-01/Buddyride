@@ -1,5 +1,20 @@
 import { calcDistance, nearestTown } from './maps';
-import { BASE_FARE, BOOKING_FEE, COMMISSION_RATE, DRIVER_RATE, PER_KM_RATE } from '../config/pricing';
+import {
+  BASE_FARE,
+  BOOKING_FEE,
+  CATEGORY_FLAT_FEE,
+  CATEGORY_FLAT_START,
+  CATEGORY_PER_KM,
+  CATEGORY_PER_MIN,
+  COMMISSION_RATE,
+  DRIVER_RATE,
+  PER_KM_RATE,
+} from '../config/pricing';
+
+// Uber/Bolt-style category base price from a real OSRM route: distance (km) + duration (min).
+export function calculateCategoryBasePrice(distanceKm: number, durationMin: number): number {
+  return CATEGORY_FLAT_START + distanceKm * CATEGORY_PER_KM + durationMin * CATEGORY_PER_MIN + CATEGORY_FLAT_FEE;
+}
 
 export async function getFarePricing(lat: number, lng: number): Promise<{ baseFare: number; perKm: number; town: string }> {
   const town = nearestTown(lat, lng);

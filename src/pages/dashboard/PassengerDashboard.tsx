@@ -12,6 +12,8 @@ import { searchLimpopo, ICON_BY_TYPE, type SearchPlace } from '../../lib/placeSe
 import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE, RIDE_EXTRAS } from '../../config/pricing';
 import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
+import { calculateCategoryBasePrice } from '../../lib/pricing';
+import { UserIcon } from '../../components/Icons';
 import { RatingModal } from '../../components/RatingModal';
 import { PassengerSettingsModal } from '../../components/PassengerSettingsModal';
 import { playSound, playSoundTimes } from '../../utils/sound';
@@ -35,9 +37,6 @@ const STATUS_BANNER: Record<string, string> = {
   trip_started: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
-const BASE_FARE = 25;
-const RATE_KM = 8;
-const RATE_MIN = 1;
 const STOP_FEE = 10;
 
 type Stop = { id: string; address: string; lat: number | null; lng: number | null };
@@ -96,6 +95,8 @@ export function PassengerDashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const [distance, setDistance] = useState<string>('');
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
+  const [durationMin, setDurationMin] = useState<number | null>(null);
+  const [plannedRoutePath, setPlannedRoutePath] = useState<[number, number][] | null>(null);
   const [estimatedFare, setEstimatedFare] = useState<number>(0);
   const [locationStep, setLocationStep] = useState<'pickup' | 'dropoff'>('pickup');
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
@@ -121,7 +122,8 @@ export function PassengerDashboard() {
   const [passengerCount, setPassengerCount] = useState(1);
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
   const extrasFee = selectedExtras.reduce((total, extra) => total + RIDE_EXTRAS[extra].fee, 0);
-  const total = estimatedFare;
+  const categoryMultiplier = RIDE_CATEGORIES.find((c) => c.id === rideCategory)?.multiplier ?? 1;
+  const total = estimatedFare * categoryMultiplier;
   const roundedTotal = Math.round(total * 100) / 100;
   const ridePrice = total - BOOKING_FEE - extrasFee;
 
@@ -173,6 +175,7 @@ export function PassengerDashboard() {
     if (geocodeTimerRef.current) window.clearTimeout(geocodeTimerRef.current);
   }, []);
 
+  // Straight-line estimate used only while the real OSRM route is being fetched (or if it fails).
   const calculateFareFallback = () => {
     const origin = stops[0];
     const dest = stops[stops.length - 1];
@@ -180,25 +183,52 @@ export function PassengerDashboard() {
 
     const km = calcDistance(origin.lat, origin.lng, dest.lat, dest.lng);
     const minutes = (km / 30) * 60; // assume ~30km/h average city speed
-    const fareEstimate = BASE_FARE + km * RATE_KM + minutes * RATE_MIN + (stops.length - 2) * STOP_FEE;
     setDistance(`${km.toFixed(1)} km`);
     setDistanceKm(km);
-    setEstimatedFare(fareEstimate);
+    setDurationMin(minutes);
+    setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
   };
 
-  const calculateFare = () => {
+  // Real route via OSRM (distance + duration), used for the actual quoted price and the planned polyline.
+  const calculateFare = async () => {
     if (stops.some((stop) => stop.lat == null || stop.lng == null)) return;
+    const origin = stops[0];
+    const dest = stops[stops.length - 1];
     calculateFareFallback();
+    try {
+      const route = await getFreeRoute(
+        { lat: origin.lat!, lng: origin.lng! },
+        { lat: dest.lat!, lng: dest.lng! }
+      );
+      if (!route) return;
+      const km = route.distance / 1000;
+      const minutes = route.duration / 60;
+      setDistance(`${km.toFixed(1)} km`);
+      setDistanceKm(km);
+      setDurationMin(minutes);
+      setPlannedRoutePath(route.polyline);
+      setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
+    } catch (err) {
+      console.error('Failed to fetch OSRM route:', err);
+    }
   };
 
   const selectCategory = (catId: RideCategoryId) => {
     const cat = RIDE_CATEGORIES.find((c) => c.id === catId);
     if (!cat) return;
-    if (catId === 'go' && passengerCount > cat.maxPassengers) {
-      setRideCategory('standard');
-      setMessage('Go is max 2, moved to Standard');
+    if (passengerCount > cat.maxPassengers) {
+      const nextUp = RIDE_CATEGORIES.find((c) => !('isDelivery' in c && c.isDelivery) && c.maxPassengers >= passengerCount);
+      setMessage(
+        catId === 'go'
+          ? 'Go Hatch max 2 riders, choose Sedan'
+          : catId === 'sedan'
+            ? 'Sedan max 3 riders, choose XL'
+            : `${cat.name} max ${cat.maxPassengers} riders`
+      );
+      if (nextUp) setRideCategory(nextUp.id);
       return;
     }
+    setMessage('');
     setRideCategory(catId);
   };
 
@@ -360,10 +390,10 @@ export function PassengerDashboard() {
               recipientPhone: recipientPhone.trim(),
               packageSize,
               distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
-              price: estimatedFare,
-              fare: estimatedFare - BOOKING_FEE,
-              totalFare: estimatedFare,
-              baseFare: estimatedFare,
+              price: total,
+              fare: total - BOOKING_FEE,
+              totalFare: total,
+              baseFare: total,
               stops,
               currentStopIndex: 0,
               stopArrivalTime: null,
@@ -377,10 +407,10 @@ export function PassengerDashboard() {
           : {
               type: 'ride',
               distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
-              price: estimatedFare,
-              fare: estimatedFare - BOOKING_FEE - extrasFee,
-              totalFare: estimatedFare,
-              baseFare: estimatedFare,
+              price: total,
+              fare: total - BOOKING_FEE - extrasFee,
+              totalFare: total,
+              baseFare: total,
               stops,
               currentStopIndex: 0,
               stopArrivalTime: null,
@@ -432,14 +462,24 @@ export function PassengerDashboard() {
   // Recompute the fare estimate whenever both pins are set.
   useEffect(() => {
     if (stops.every((stop) => stop.lat != null && stop.lng != null)) {
-      calculateFare();
+      void calculateFare();
     } else {
       setDistance('');
       setDistanceKm(null);
+      setDurationMin(null);
+      setPlannedRoutePath(null);
       setEstimatedFare(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stops, extrasFee, rideCategory]);
+  }, [stops]);
+
+  // Force an up-size if the selected category can no longer fit the chosen passenger count.
+  useEffect(() => {
+    const current = RIDE_CATEGORIES.find((c) => c.id === rideCategory);
+    if (!current || mode !== 'ride' || passengerCount <= current.maxPassengers) return;
+    const nextUp = RIDE_CATEGORIES.find((c) => !('isDelivery' in c && c.isDelivery) && c.maxPassengers >= passengerCount);
+    if (nextUp) setRideCategory(nextUp.id);
+  }, [passengerCount, rideCategory, mode]);
 
   // Follow the requested ride's status and the driver's live location once accepted.
   const lastSoundStatusRef = useRef<string | null>(null);
@@ -651,7 +691,7 @@ export function PassengerDashboard() {
 
   const shareTrip = () => {
     if (!rideId) return;
-    const message = `🚗 I'm on BuddyRide! Driver ${driverName ?? 'Driver'} (${carPlate ?? 'Plate pending'}) is taking me from ${pickupAddress || 'my pickup'} to ${dropoffAddress || 'my destination'}. Track me: https://buddyride1.vercel.app/track/${rideId} - ETA ${driverEtaMinutes ?? 0} mins. Fare: ${formatR(fare ?? estimatedFare)}`;
+    const message = `🚗 I'm on BuddyRide! Driver ${driverName ?? 'Driver'} (${carPlate ?? 'Plate pending'}) is taking me from ${pickupAddress || 'my pickup'} to ${dropoffAddress || 'my destination'}. Track me: https://buddyride1.vercel.app/track/${rideId} - ETA ${driverEtaMinutes ?? 0} mins. Fare: ${formatR(fare ?? total)}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
   };
 
@@ -691,7 +731,16 @@ export function PassengerDashboard() {
         ...(tripDropoffLocation ? [{ id: 'dropoff', position: [tripDropoffLocation.lat, tripDropoffLocation.lng] as [number, number], color: '#d93025', emoji: 'B' }] : []),
         ...(driverLocation ? [{ id: 'driver', position: [driverLocation.lat, driverLocation.lng] as [number, number], color: '#00C853', emoji: '🚕' }] : []),
       ]
-    : [];
+    : !rideId
+      ? stops
+          .filter((stop): stop is Stop & { lat: number; lng: number } => stop.lat != null && stop.lng != null)
+          .map((stop, index, arr) => ({
+            id: stop.id,
+            position: [stop.lat, stop.lng] as [number, number],
+            color: index === 0 ? '#1a73e8' : index === arr.length - 1 ? '#d93025' : '#f9a825',
+            emoji: index === 0 ? 'A' : index === arr.length - 1 ? 'B' : String(index),
+          }))
+      : [];
 
   const logout = async () => { await signOut(); localStorage.clear(); navigate('/'); };
 
@@ -718,7 +767,7 @@ export function PassengerDashboard() {
           center={isActiveTrip ? [liveMapCenter.lat, liveMapCenter.lng] : [mapLocation.lat, mapLocation.lng]}
           zoom={14}
           markers={tripMarkers}
-          routePath={driverRoutePath ?? undefined}
+          routePath={(isActiveTrip ? driverRoutePath : plannedRoutePath) ?? undefined}
           onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
         />
         {!rideId && !isActiveTrip && (
@@ -842,7 +891,7 @@ export function PassengerDashboard() {
                         disabled={locating || isLocationLocked}
                         className="mt-2 w-full rounded-xl border border-gray-200 py-2 text-sm font-semibold text-gray-700 disabled:opacity-60"
                       >
-                        {locating ? 'Locating...' : userLocation ? 'Refresh location' : 'Use my current location'}
+                        {locating ? 'Locating...' : userLocation ? '📍 Refresh Location' : '📍 Use Current Location'}
                       </button>
                       {locationAccuracy != null && (
                         <p className={`mt-2 text-center text-xs font-semibold ${locationAccuracy <= 50 ? 'text-green-700' : 'text-orange-700'}`}>
@@ -921,29 +970,42 @@ export function PassengerDashboard() {
             <div className="bg-orange-100 p-3 rounded-lg mt-3">
               {mode === 'ride' && (
                 <>
-                  <div className="flex gap-3 overflow-x-auto pb-3 snap-x scrollbar-hide px-2">
+                  <div className="flex flex-col gap-2 mb-3">
                     {RIDE_CATEGORIES.filter((cat) => !('isDelivery' in cat && cat.isDelivery)).map((cat) => {
                       const selected = rideCategory === cat.id;
-                      const price = cat.base + (distanceKm ?? 0) * cat.perKm + BOOKING_FEE + extrasFee;
+                      const basePrice = calculateCategoryBasePrice(distanceKm ?? 0, durationMin ?? 0);
+                      const price = basePrice * cat.multiplier;
+                      const tooSmall = passengerCount > cat.maxPassengers;
                       return (
                         <button
                           key={cat.id}
                           type="button"
                           onClick={() => selectCategory(cat.id)}
-                          className={`min-w-[120px] snap-start rounded-xl p-3 border-2 flex flex-col items-center ${selected ? 'border-black bg-black text-white' : 'border-gray-200 bg-white'}`}
+                          className={`w-full snap-start rounded-xl p-3 border-2 flex items-center gap-3 text-left ${selected ? 'border-black bg-black text-white' : 'border-gray-200 bg-white'} ${tooSmall ? 'opacity-60' : ''}`}
                         >
-                          <div className="text-2xl">{cat.emoji}</div>
-                          <div className="font-bold text-sm mt-1">{cat.name.replace('Buddy ', '')}</div>
-                          <div className="text-xs opacity-70">👤 {cat.maxPassengers}</div>
-                          <div className="text-xs mt-1">{formatR(price)}</div>
-                          {'popular' in cat && cat.popular && <span className="text-[10px] bg-black text-white px-2 rounded mt-1">POPULAR</span>}
+                          <div className="text-3xl">{cat.emoji}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm">{cat.name}</span>
+                              {'popular' in cat && cat.popular && <span className="text-[10px] bg-black text-white px-2 rounded">POPULAR</span>}
+                            </div>
+                            <div className={`text-xs ${selected ? 'text-gray-200' : 'text-gray-500'}`}>{cat.subtitle}</div>
+                            <div className="mt-1 flex items-center gap-1" aria-label={`${cat.maxPassengers} seats`}>
+                              {Array.from({ length: cat.maxPassengers }, (_, index) => (
+                                <UserIcon key={index} size={12} />
+                              ))}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right text-sm font-bold">
+                            {formatR(price)} • {cat.maxPassengers} • {cat.etaAwayMin} min away
+                          </div>
                         </button>
                       );
                     })}
                   </div>
                   <div className="mb-3">
                     <select value={passengerCount} onChange={(event) => setPassengerCount(Number(event.target.value))} className="rounded border px-2 text-sm">
-                      {Array.from({ length: 7 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} pax</option>)}
+                      {Array.from({ length: 6 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} pax</option>)}
                     </select>
                   </div>
                   <p className="mb-2 font-semibold text-gray-700">Add extras</p>
@@ -996,7 +1058,7 @@ export function PassengerDashboard() {
                   <p className="mb-2 text-xs italic text-gray-600">Driver will call recipient</p>
                   <p className="mb-1 text-sm font-semibold text-gray-700">Payment: Cash</p>
                   <p>Distance: {distance}</p>
-                  <p>Delivery {formatR(estimatedFare - BOOKING_FEE)} + Booking {formatR(BOOKING_FEE)} = {formatR(roundedTotal)}</p>
+                  <p>Delivery {formatR(total - BOOKING_FEE)} + Booking {formatR(BOOKING_FEE)} = {formatR(roundedTotal)}</p>
                 </>
               )}
             </div>

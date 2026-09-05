@@ -32,6 +32,7 @@ import {
   updateRideFields,
 } from '../../lib/rideService';
 import { getMapProvider, openNavigation as openExternalNavigation } from '../../lib/navigation';
+import { RIDE_CATEGORIES } from '../../config/categories';
 
 // Statuses during which the driver's live GPS position should keep broadcasting to the ride doc.
 const LOCATION_SHARING_STATUSES = new Set(['driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started']);
@@ -111,6 +112,7 @@ export function DriverDashboard() {
   const [stopWaitingSeconds, setStopWaitingSeconds] = useState(0);
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
+  const lastLocationUpdateRef = useRef(0);
   const [isOnline, setIsOnline] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
@@ -522,6 +524,9 @@ export function DriverDashboard() {
     const rideId = acceptedRide.id;
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
+        const now = Date.now();
+        if (now - lastLocationUpdateRef.current < 5000) return;
+        lastLocationUpdateRef.current = now;
         void updateRideFields(rideId, {
           driverLocation: {
             lat: position.coords.latitude,
@@ -898,12 +903,20 @@ function RideDetails({ ride }: { ride: RideRequest }) {
   const tipAmount = Number(ride.tipAmount ?? 0);
   const extrasFee = Number(ride.extrasFee ?? 0);
   const isSend = ride.type === 'send';
+  const rideCategoryMeta = RIDE_CATEGORIES.find((c) => c.id === ride.category);
   const extraLabels = (ride.extras ?? []).map((extra) => extra === 'pet' ? 'Pet' : extra === 'luggage' ? 'Luggage' : extra === 'childSeat' ? 'Child seat' : 'Extra stop');
   return (
     <div className="space-y-1 text-sm text-gray-700">
-      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${isSend ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'}`}>
-        {isSend ? `📦 SEND${ride.packageSize ? ` (${ride.packageSize})` : ''}` : `👤 ${ride.passengerCount ?? 1}`}
-      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${isSend ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'}`}>
+          {isSend ? `📦 SEND${ride.packageSize ? ` (${ride.packageSize})` : ''}` : `👤 ${ride.passengerCount ?? 1}`}
+        </span>
+        {!isSend && rideCategoryMeta && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-700">
+            {rideCategoryMeta.emoji} {rideCategoryMeta.name}
+          </span>
+        )}
+      </div>
       <p><span className="font-semibold">Pickup:</span> {formatLocation(ride.pickup)}</p>
       {(ride.stops ?? []).slice(1, -1).map((stop, index) => (
         <p key={stop.id}><span className="font-semibold">Stop {index + 1}:</span> {stop.address}</p>
