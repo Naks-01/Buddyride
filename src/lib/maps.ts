@@ -10,23 +10,7 @@ export const LIMPOPO_TOWNS = {
 export const DEFAULT_CENTER: [number, number] = [-23.9045, 29.7167];
 export const DEFAULT_ZOOM = 13;
 
-// Bolt-style dark Google Maps theme for the driver app.
-export const DARK_MAP_STYLE: google.maps.MapTypeStyle[] = [
-  { elementType: 'geometry', stylers: [{ color: '#1d1d1d' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1d1d1d' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a8a' }] },
-  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#3c3c3c' }] },
-  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#262626' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2c2c2c' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a1a1a' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#7a7a7a' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a3a3a' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1f1f1f' }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2a2a2a' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1a26' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#5a6b73' }] },
-];
+// Google Maps removed (billing risk) - map rendering is OSM/Leaflet-only via components/Map/AppMap.tsx.
 
 // Haversine distance calculation in km
 export function calcDistance(
@@ -52,12 +36,6 @@ function toRad(deg: number): number {
 export function formatDistance(km: number): string {
   if (km < 1) return `${Math.round(km * 1000)}m`;
   return `${km.toFixed(1)}km`;
-}
-
-// Open Google Maps navigation for driver
-export function openGoogleMapsNav(lat: number, lng: number, label?: string) {
-  const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}${label ? `&destination_place_id=${encodeURIComponent(label)}` : ''}&travelmode=driving`;
-  window.open(url, '_blank');
 }
 
 // Find nearest town based on coordinates

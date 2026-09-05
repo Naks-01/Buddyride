@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { doc, onSnapshot, type DocumentData } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { db } from '../lib/firebase';
+import AppMap, { type AppMapMarker } from '../components/Map/AppMap';
 
-const libraries: ('places' | 'geometry' | 'marker')[] = ['places', 'geometry', 'marker'];
-const fallbackCenter = { lat: -23.9045, lng: 29.7167 };
+const fallbackCenter: [number, number] = [-23.9045, 29.7167];
 const statusLabels: Record<string, string> = {
   searching: 'Finding nearby drivers...',
   driver_assigned: 'Driver assigned - your driver is coming',
@@ -28,8 +27,6 @@ export function RideStatus() {
   const { id } = useParams<{ id: string }>();
   const [ride, setRide] = useState<DocumentData | null>(null);
   const [error, setError] = useState('');
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
-  const { isLoaded } = useJsApiLoader({ googleMapsApiKey: apiKey || 'missing-key', libraries });
 
   useEffect(() => {
     if (!id) return;
@@ -46,8 +43,14 @@ export function RideStatus() {
   const pickup = readPoint(ride?.pickup);
   const destination = readPoint(ride?.destination);
   const driver = readPoint(ride?.driverLocation ?? ride?.driver_location);
-  const center = driver ?? pickup ?? destination ?? fallbackCenter;
+  const center = driver ?? pickup ?? destination ?? { lat: fallbackCenter[0], lng: fallbackCenter[1] };
   const status = typeof ride?.status === 'string' ? ride.status : 'searching';
+
+  const markers: AppMapMarker[] = [
+    ...(pickup ? [{ id: 'pickup', position: [pickup.lat, pickup.lng] as [number, number], color: '#1a73e8', emoji: 'A' }] : []),
+    ...(destination ? [{ id: 'destination', position: [destination.lat, destination.lng] as [number, number], color: '#d93025', emoji: 'B' }] : []),
+    ...(driver ? [{ id: 'driver', position: [driver.lat, driver.lng] as [number, number], color: '#00C853', emoji: '🚕' }] : []),
+  ];
 
   return (
     <main className="min-h-screen bg-gray-50 p-4">
@@ -61,15 +64,9 @@ export function RideStatus() {
 
         {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-        {isLoaded && apiKey ? (
-          <GoogleMap mapContainerStyle={{ width: '100%', height: '430px' }} center={center} zoom={14}>
-            {pickup && <Marker position={pickup} label="A" />}
-            {destination && <Marker position={destination} label="B" />}
-            {driver && <Marker position={driver} label="Driver" />}
-          </GoogleMap>
-        ) : (
-          <div className="flex h-[430px] items-center justify-center rounded-xl bg-gray-200 text-gray-600">Map unavailable</div>
-        )}
+        <div className="h-[430px] overflow-hidden rounded-xl">
+          <AppMap mode="passenger" center={[center.lat, center.lng]} zoom={14} markers={markers} />
+        </div>
 
         <div className="rounded-xl bg-white p-4 text-sm text-gray-700 shadow-sm">
           <p><span className="font-semibold">Pickup:</span> {String(ride?.pickup?.address ?? 'Pending')}</p>

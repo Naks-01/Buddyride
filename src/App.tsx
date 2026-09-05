@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Component, type ReactNode } from 'react';
+import { Component, useEffect, useState, type ReactNode } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { auth } from './lib/firebase';
 import { RoleSelect } from './pages/RoleSelect';
@@ -84,10 +86,46 @@ function ProtectedDriverDashboard() {
   return <RequireRole role="driver"><ErrorBoundary><DriverDashboard /></ErrorBoundary></RequireRole>;
 }
 
+function BackButtonHandler() {
+  const [showExitToast, setShowExitToast] = useState(false);
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let lastBackPress = 0;
+    let toastTimer: number | undefined;
+    const listenerPromise = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack) {
+        window.history.back();
+        return;
+      }
+      const now = Date.now();
+      if (now - lastBackPress < 2000) {
+        CapacitorApp.exitApp();
+        return;
+      }
+      lastBackPress = now;
+      setShowExitToast(true);
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => setShowExitToast(false), 2000);
+    });
+    return () => {
+      window.clearTimeout(toastTimer);
+      void listenerPromise.then((listener) => listener.remove());
+    };
+  }, []);
+
+  if (!showExitToast) return null;
+  return (
+    <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[9999] bg-black/80 text-white text-sm px-4 py-2 rounded-full shadow-lg">
+      Press back again to exit
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <>
       <SplashScreen />
+      <BackButtonHandler />
       <BrowserRouter basename="/" future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/" element={<HomeOrRedirect />} />

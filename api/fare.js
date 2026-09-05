@@ -1,6 +1,9 @@
-const BASE_FARE = 30;
-const PER_KILOMETER = 12;
-const PER_MINUTE = 2;
+// Google Distance Matrix (paid, billed) removed - replaced with the free OSRM public router.
+const BASE_FARE = 20;
+const PER_KILOMETER = 8.5;
+const PER_MINUTE = 1.2;
+const FLAT_FEE = 5;
+const OSRM_URL = process.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -15,35 +18,20 @@ export default async function handler(req, res) {
     });
   }
 
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  if (!apiKey || apiKey === 'PASTE_YOUR_GOOGLE_KEY_HERE') {
-    return res.status(500).json({
-      error: 'GOOGLE_MAPS_API_KEY is not configured on the server.',
-    });
-  }
-
-  const params = new URLSearchParams({
-    origins: `${pickup.lat},${pickup.lng}`,
-    destinations: `${dropoff.lat},${dropoff.lng}`,
-    mode: 'driving',
-    key: apiKey,
-  });
-
   try {
-    const response = await fetch(
-      `https://maps.googleapis.com/maps/api/distancematrix/json?${params}`,
-    );
+    const url = `${OSRM_URL}/route/v1/driving/${pickup.lng},${pickup.lat};${dropoff.lng},${dropoff.lat}?overview=false`;
+    const response = await fetch(url);
     const data = await response.json();
-    const element = data.rows?.[0]?.elements?.[0];
+    const route = data.routes?.[0];
 
-    if (!response.ok || data.status !== 'OK' || element?.status !== 'OK') {
-      return res.status(502).json({ error: 'Google Maps could not calculate this route.' });
+    if (!response.ok || data.code !== 'Ok' || !route) {
+      return res.status(502).json({ error: 'Route not found for these coordinates.' });
     }
 
-    const distanceKm = element.distance.value / 1000;
-    const durationMin = element.duration.value / 60;
+    const distanceKm = route.distance / 1000;
+    const durationMin = route.duration / 60;
     const fare = Number(
-      (BASE_FARE + distanceKm * PER_KILOMETER + durationMin * PER_MINUTE).toFixed(2),
+      (BASE_FARE + distanceKm * PER_KILOMETER + durationMin * PER_MINUTE + FLAT_FEE).toFixed(2),
     );
 
     return res.status(200).json({ distanceKm, durationMin, fare });

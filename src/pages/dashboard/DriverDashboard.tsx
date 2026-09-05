@@ -359,7 +359,12 @@ export function DriverDashboard() {
           cancellationReason: 'passenger_no_show',
         });
       } else {
-        await cancelRideService(ride.id, { cancellationFee: 0, cancellationReason: 'driver_cancelled', driverPenalty: true });
+        await cancelRideService(ride.id, {
+          status: 'cancelled_by_driver',
+          cancellationFee: 0,
+          cancellationReason: 'driver_cancelled',
+          driverPenalty: true,
+        });
       }
     } catch (err) {
       console.error(err);

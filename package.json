@@ -6,13 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:build": "npm run build && npx cap copy android && npx cap open android",
+    "apk:debug": "npm run build && npx cap copy android && cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/cli": "^8.5.0",
     "@capacitor/core": "^8.5.0",
-    "@react-google-maps/api": "^2.20.8",
+    "@capacitor/local-notifications": "^8.3.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "firebase": "^12.18.0",

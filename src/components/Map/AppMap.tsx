@@ -9,6 +9,7 @@ export type AppMapMarker = {
   label?: string;
   color?: string;
   emoji?: string;
+  rotation?: number;
 };
 
 const carIcon = L.divIcon({
@@ -17,6 +18,16 @@ const carIcon = L.divIcon({
   iconSize: [48, 48],
   iconAnchor: [24, 24],
 });
+
+// Smoothly-moving, heading-rotated car marker used for the live driver position on the passenger map.
+function driverCarIcon(rotation?: number) {
+  return L.divIcon({
+    html: `<div style="width:44px;height:44px;transform:rotate(${rotation ?? 0}deg);transition:transform 0.5s linear"><div style="background:#00C853;width:44px;height:44px;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">🚕</div></div>`,
+    className: 'driver-marker-icon',
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+  });
+}
 
 function pinIcon(color: string, emoji: string) {
   return L.divIcon({
@@ -36,6 +47,16 @@ function ClickHandler({ onMapClick }: { onMapClick?: (lat: number, lng: number) 
   return null;
 }
 
+// Notifies the parent when the user manually drags the map, so it can stop auto-following the driver.
+function DragHandler({ onUserInteraction }: { onUserInteraction?: () => void }) {
+  useMapEvents({
+    dragstart() {
+      onUserInteraction?.();
+    },
+  });
+  return null;
+}
+
 type AppMapProps = {
   mode?: 'driver' | 'passenger';
   centerBtn?: number;
@@ -45,6 +66,7 @@ type AppMapProps = {
   markers?: AppMapMarker[];
   routePath?: [number, number][];
   onMapClick?: (lat: number, lng: number) => void;
+  onUserInteraction?: () => void;
   showControls?: boolean;
 };
 
@@ -56,7 +78,7 @@ const TILE_LAYERS = {
   },
   humanitarian: {
     label: 'Humanitarian',
-    url: 'https://{s}.tile-cyclosm.openstreetmap.fr/tiles/cyclosm/{z}/{x}/{y}.png',
+    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
     attribution: '&copy; OpenStreetMap contributors, tiles courtesy of Humanitarian OpenStreetMap Team',
   },
 } as const;
@@ -115,6 +137,7 @@ export default function AppMap({
   markers = [],
   routePath,
   onMapClick,
+  onUserInteraction,
   showControls = true,
 }: AppMapProps) {
   const [pos, setPos] = useState<[number, number]>([-25.7479, 28.2293]); // Pretoria default
@@ -186,10 +209,15 @@ export default function AppMap({
         />
         {showSelfMarker && <Marker position={pos} icon={carIcon} />}
         {markers.map((marker) => (
-          <Marker key={marker.id} position={marker.position} icon={pinIcon(marker.color ?? '#FF3B30', marker.emoji ?? '📍')} />
+          <Marker
+            key={marker.id}
+            position={marker.position}
+            icon={marker.id === 'driver' ? driverCarIcon(marker.rotation) : pinIcon(marker.color ?? '#FF3B30', marker.emoji ?? '📍')}
+          />
         ))}
         {routePath && routePath.length > 1 && <Polyline positions={routePath} color="#2ECC71" weight={5} opacity={0.8} />}
         <ClickHandler onMapClick={onMapClick} />
+        <DragHandler onUserInteraction={onUserInteraction} />
       </MapContainer>
       {showControls && (
         <MapControls map={map} layer={tileLayer} onLayerChange={setTileLayer} onMyLocation={handleMyLocation} onCompass={handleCompass} />

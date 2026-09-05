@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
 import { createRide, cancelRide as cancelRideService, subscribeToRide, getFreeRoute } from '../../lib/rideService';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
@@ -15,6 +16,7 @@ import { calcDistance } from '../../lib/maps';
 import { calculateCategoryBasePrice } from '../../lib/pricing';
 import { UserIcon } from '../../components/Icons';
 import { RatingModal } from '../../components/RatingModal';
+import { Spinner } from '../../components/Spinner';
 import { PassengerSettingsModal } from '../../components/PassengerSettingsModal';
 import { playSound, playSoundTimes } from '../../utils/sound';
 import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
@@ -46,6 +48,19 @@ function toMillis(value: unknown): number | null {
     return value.toMillis();
   }
   return typeof value === 'number' ? value : null;
+}
+
+// Bearing in degrees (0=north) from one lat/lng point to another, used to rotate the driver marker.
+function bearingBetween(from: { lat: number; lng: number }, to: { lat: number; lng: number }): number | null {
+  if (from.lat === to.lat && from.lng === to.lng) return null;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const toDeg = (rad: number) => (rad * 180) / Math.PI;
+  const dLng = toRad(to.lng - from.lng);
+  const lat1 = toRad(from.lat);
+  const lat2 = toRad(to.lat);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
 export function PassengerDashboard() {
@@ -91,12 +106,19 @@ export function PassengerDashboard() {
   const [ratingValue, setRatingValue] = useState<number | null>(null);
   const [showRating, setShowRating] = useState(false);
   const [driverRoutePath, setDriverRoutePath] = useState<[number, number][] | null>(null);
+  const [driverRouteDurationSec, setDriverRouteDurationSec] = useState<number | null>(null);
+  const [driverHeading, setDriverHeading] = useState<number | null>(null);
+  const [isFollowingDriver, setIsFollowingDriver] = useState(true);
+  const [centerTrigger, setCenterTrigger] = useState(0);
   const lastRouteFetchRef = useRef(0);
+  const lastDriverPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [distance, setDistance] = useState<string>('');
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [durationMin, setDurationMin] = useState<number | null>(null);
   const [plannedRoutePath, setPlannedRoutePath] = useState<[number, number][] | null>(null);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceError, setPriceError] = useState('');
   const [estimatedFare, setEstimatedFare] = useState<number>(0);
   const [locationStep, setLocationStep] = useState<'pickup' | 'dropoff'>('pickup');
   const [mapLocation, setMapLocation] = useState(DEFAULT_CENTER);
@@ -130,8 +152,9 @@ export function PassengerDashboard() {
   const reverseGeocode = async (location: { lat: number; lng: number }) => {
     const fallback = searchPolokwanePlaces(`${location.lat.toFixed(3)} ${location.lng.toFixed(3)}`)[0];
     try {
+      const nominatimUrl = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${location.lat}&lon=${location.lng}`
+        `${nominatimUrl}/reverse?format=json&lat=${location.lat}&lon=${location.lng}`
       );
       const data = await response.json();
       const address = data.display_name;
@@ -175,7 +198,7 @@ export function PassengerDashboard() {
     if (geocodeTimerRef.current) window.clearTimeout(geocodeTimerRef.current);
   }, []);
 
-  // Straight-line estimate used only while the real OSRM route is being fetched (or if it fails).
+  // Straight-line estimate used only internally (map centering) while the real OSRM route loads.
   const calculateFareFallback = () => {
     const origin = stops[0];
     const dest = stops[stops.length - 1];
@@ -183,10 +206,8 @@ export function PassengerDashboard() {
 
     const km = calcDistance(origin.lat, origin.lng, dest.lat, dest.lng);
     const minutes = (km / 30) * 60; // assume ~30km/h average city speed
-    setDistance(`${km.toFixed(1)} km`);
     setDistanceKm(km);
     setDurationMin(minutes);
-    setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
   };
 
   // Real route via OSRM (distance + duration), used for the actual quoted price and the planned polyline.
@@ -195,12 +216,17 @@ export function PassengerDashboard() {
     const origin = stops[0];
     const dest = stops[stops.length - 1];
     calculateFareFallback();
+    setPriceLoading(true);
+    setPriceError('');
     try {
       const route = await getFreeRoute(
         { lat: origin.lat!, lng: origin.lng! },
         { lat: dest.lat!, lng: dest.lng! }
       );
-      if (!route) return;
+      if (!route) {
+        setPriceError('Route not found. Try a different pickup or destination.');
+        return;
+      }
       const km = route.distance / 1000;
       const minutes = route.duration / 60;
       setDistance(`${km.toFixed(1)} km`);
@@ -210,6 +236,9 @@ export function PassengerDashboard() {
       setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
     } catch (err) {
       console.error('Failed to fetch OSRM route:', err);
+      setPriceError('Route not found. Try a different pickup or destination.');
+    } finally {
+      setPriceLoading(false);
     }
   };
 
@@ -469,6 +498,8 @@ export function PassengerDashboard() {
       setDurationMin(null);
       setPlannedRoutePath(null);
       setEstimatedFare(0);
+      setPriceError('');
+      setPriceLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stops]);
@@ -502,6 +533,37 @@ export function PassengerDashboard() {
             new Notification('Driver is outside', { body: 'Your driver has arrived at the pickup point.' });
           }
         } else if (nextStatus === 'cancelled') playSound('cancel');
+        else if (nextStatus === 'cancelled_by_driver') {
+          playSound('cancel');
+          setMessage('Driver cancelled the ride. Searching for a new driver...');
+          void LocalNotifications.checkPermissions().then(async (perm) => {
+            if (perm.display !== 'granted') {
+              perm = await LocalNotifications.requestPermissions();
+            }
+            if (perm.display === 'granted') {
+              void LocalNotifications.schedule({
+                notifications: [
+                  {
+                    id: Date.now() % 2147483647,
+                    title: 'Driver cancelled',
+                    body: 'Your driver cancelled the ride. You can request another one.',
+                  },
+                ],
+              }).catch((err: unknown) => console.error('Failed to schedule local notification:', err));
+            }
+          }).catch((err: unknown) => console.error('Failed to check notification permissions:', err));
+          setRideId(null);
+          setRideStatus(null);
+          setRideCreatedAt(null);
+          setCancelSecondsRemaining(0);
+          setDriverLocation(null);
+          setDriverRoutePath(null);
+          setDriverName(null);
+          setDriverPhone(null);
+          setDriverId(null);
+          setDriverPhotoUrl(null);
+          setCarPlate(null);
+        }
       }
 
       if (data.type === 'send' || data.type === 'ride') {
@@ -531,9 +593,18 @@ export function PassengerDashboard() {
       }
 
       if (typeof data.driverLocation?.lat === 'number' && typeof data.driverLocation?.lng === 'number') {
-        setDriverLocation({ lat: data.driverLocation.lat, lng: data.driverLocation.lng });
+        const next = { lat: data.driverLocation.lat, lng: data.driverLocation.lng };
+        const reportedHeading = typeof data.driverLocation.heading === 'number' ? data.driverLocation.heading : null;
+        const prev = lastDriverPosRef.current;
+        setDriverHeading(reportedHeading ?? (prev ? bearingBetween(prev, next) : null));
+        lastDriverPosRef.current = next;
+        setDriverLocation(next);
       } else if (typeof data.driverLat === 'number' && typeof data.driverLng === 'number') {
-        setDriverLocation({ lat: data.driverLat, lng: data.driverLng });
+        const next = { lat: data.driverLat, lng: data.driverLng };
+        const prev = lastDriverPosRef.current;
+        setDriverHeading((h) => h ?? (prev ? bearingBetween(prev, next) : null));
+        lastDriverPosRef.current = next;
+        setDriverLocation(next);
       }
       if (typeof data.driverPhone === 'string') {
         setDriverPhone(data.driverPhone);
@@ -628,21 +699,33 @@ export function PassengerDashboard() {
   const isActiveTrip = rideStatus != null && ACTIVE_TRIP_STATUSES.includes(rideStatus);
   const isShareableTrip = rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'driver_arrived' || rideStatus === 'trip_started';
 
-  // Draw the live route from the driver to wherever they're headed next: the pickup pin while
-  // approaching, then the dropoff pin once the trip has started - refetched as the driver moves.
+  // Reset follow-mode and driver-heading tracking whenever a new active ride starts.
+  useEffect(() => {
+    if (!rideId) return;
+    setIsFollowingDriver(true);
+    setDriverHeading(null);
+    lastDriverPosRef.current = null;
+  }, [rideId]);
+
+  // Draw the live route from the driver to wherever they're headed next (pickup while
+  // approaching, dropoff once the trip has started) and refresh the ETA every 10s via OSRM -
+  // auto, no user action, mirrors Bolt's live-tracking behavior.
   useEffect(() => {
     if (!driverLocation) return;
     const target = rideStatus === 'trip_started' ? tripDropoffLocation : tripPickupLocation;
     if (!target || (rideStatus !== 'driver_assigned' && rideStatus !== 'driver_en_route' && rideStatus !== 'trip_started')) {
       setDriverRoutePath(null);
+      setDriverRouteDurationSec(null);
       return;
     }
     const now = Date.now();
-    if (now - lastRouteFetchRef.current < 5000) return;
+    if (now - lastRouteFetchRef.current < 10000) return;
     lastRouteFetchRef.current = now;
     let cancelled = false;
     void getFreeRoute(driverLocation, target).then((route) => {
-      if (!cancelled) setDriverRoutePath(route?.polyline ?? null);
+      if (cancelled) return;
+      setDriverRoutePath(route?.polyline ?? null);
+      setDriverRouteDurationSec(typeof route?.duration === 'number' ? route.duration : null);
     });
     return () => {
       cancelled = true;
@@ -707,14 +790,21 @@ export function PassengerDashboard() {
         (rideStatus === 'trip_started' ? tripDropoffLocation! : tripPickupLocation!).lng,
       )
     : null;
-  const driverEtaMinutes = driverDistanceKm == null ? null : Math.max(1, Math.ceil((driverDistanceKm / 30) * 60));
-  const liveMapCenter =
-    knownPoints.length > 0
-      ? {
-          lat: knownPoints.reduce((sum, p) => sum + p.lat, 0) / knownPoints.length,
-          lng: knownPoints.reduce((sum, p) => sum + p.lng, 0) / knownPoints.length,
-        }
-      : DEFAULT_CENTER;
+  const driverEtaMinutes = driverRouteDurationSec != null
+    ? Math.max(1, Math.ceil(driverRouteDurationSec / 60))
+    : driverDistanceKm == null
+      ? null
+      : Math.max(1, Math.ceil((driverDistanceKm / 30) * 60));
+  const liveMapCenter = driverLocation ?? (knownPoints.length > 0
+    ? {
+        lat: knownPoints.reduce((sum, p) => sum + p.lat, 0) / knownPoints.length,
+        lng: knownPoints.reduce((sum, p) => sum + p.lng, 0) / knownPoints.length,
+      }
+    : DEFAULT_CENTER);
+  // Progress % along the current leg (pickup->dropoff once on trip) for the Bolt-style progress bar.
+  const tripProgressPercent = rideStatus === 'trip_started' && tripDistanceKm != null && tripDistanceKm > 0 && driverDistanceKm != null
+    ? Math.max(0, Math.min(100, Math.round((1 - driverDistanceKm / tripDistanceKm) * 100)))
+    : null;
 
   const handleMapClick = (lat: number, lng: number) => {
     const location = { lat, lng };
@@ -729,7 +819,7 @@ export function PassengerDashboard() {
     ? [
         ...(tripPickupLocation ? [{ id: 'pickup', position: [tripPickupLocation.lat, tripPickupLocation.lng] as [number, number], color: '#1a73e8', emoji: 'A' }] : []),
         ...(tripDropoffLocation ? [{ id: 'dropoff', position: [tripDropoffLocation.lat, tripDropoffLocation.lng] as [number, number], color: '#d93025', emoji: 'B' }] : []),
-        ...(driverLocation ? [{ id: 'driver', position: [driverLocation.lat, driverLocation.lng] as [number, number], color: '#00C853', emoji: '🚕' }] : []),
+        ...(driverLocation ? [{ id: 'driver', position: [driverLocation.lat, driverLocation.lng] as [number, number], color: '#00C853', emoji: '🚕', rotation: driverHeading ?? undefined }] : []),
       ]
     : !rideId
       ? stops
@@ -764,16 +854,36 @@ export function PassengerDashboard() {
       <div className="absolute inset-0 z-[1]">
         <AppMap
           mode="passenger"
-          center={isActiveTrip ? [liveMapCenter.lat, liveMapCenter.lng] : [mapLocation.lat, mapLocation.lng]}
+          center={
+            isActiveTrip
+              ? isFollowingDriver
+                ? [liveMapCenter.lat, liveMapCenter.lng]
+                : undefined
+              : [mapLocation.lat, mapLocation.lng]
+          }
+          centerBtn={centerTrigger}
           zoom={14}
           markers={tripMarkers}
           routePath={(isActiveTrip ? driverRoutePath : plannedRoutePath) ?? undefined}
           onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
+          onUserInteraction={isActiveTrip ? () => setIsFollowingDriver(false) : undefined}
         />
         {!rideId && !isActiveTrip && (
           <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full text-3xl">
             📍
           </div>
+        )}
+        {isActiveTrip && !isFollowingDriver && (
+          <button
+            type="button"
+            onClick={() => {
+              setIsFollowingDriver(true);
+              setCenterTrigger((prev) => prev + 1);
+            }}
+            className="absolute bottom-4 left-1/2 z-[500] -translate-x-1/2 rounded-full bg-black/85 px-4 py-2 text-sm font-bold text-white shadow-lg"
+          >
+            📍 Re-center
+          </button>
         )}
       </div>
 
@@ -836,13 +946,25 @@ export function PassengerDashboard() {
                 </div>
               )}
               {rideStatus === 'trip_started' && (
-                <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
-                  Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
-                </p>
+                <>
+                  <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
+                    Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
+                  </p>
+                  {tripProgressPercent != null && (
+                    <div className="mb-3">
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-full rounded-full bg-green-600 transition-all duration-700" style={{ width: `${tripProgressPercent}%` }} />
+                      </div>
+                      <p className="mt-1 text-center text-xs font-semibold text-gray-500">{tripProgressPercent}% of trip completed</p>
+                    </div>
+                  )}
+                </>
               )}
-              {driverDistanceKm != null && driverEtaMinutes != null && rideStatus !== 'trip_started' && (
+              {driverDistanceKm != null && driverEtaMinutes != null && (
                 <p className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center text-sm font-semibold text-green-800">
-                  Driver is {driverDistanceKm.toFixed(1)} km away - ETA {driverEtaMinutes} min{driverEtaMinutes === 1 ? '' : 's'}
+                  {rideStatus === 'trip_started'
+                    ? `${driverDistanceKm.toFixed(1)} km to destination - ETA ${driverEtaMinutes} min${driverEtaMinutes === 1 ? '' : 's'}`
+                    : `Driver is ${driverDistanceKm.toFixed(1)} km away - ETA ${driverEtaMinutes} min${driverEtaMinutes === 1 ? '' : 's'}`}
                 </p>
               )}
               <button
@@ -966,7 +1088,19 @@ export function PassengerDashboard() {
             </a>
           )}
 
-          {!rideId && distance && estimatedFare > 0 && (
+          {!rideId && priceLoading && (
+            <div className="mt-3 flex items-center justify-center gap-2 rounded-lg bg-gray-100 p-4 text-sm font-semibold text-gray-600">
+              <Spinner /> Calculating price...
+            </div>
+          )}
+
+          {!rideId && !priceLoading && priceError && (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-center text-sm font-semibold text-red-700">
+              {priceError}
+            </div>
+          )}
+
+          {!rideId && !priceLoading && !priceError && distance && estimatedFare > 0 && (
             <div className="bg-orange-100 p-3 rounded-lg mt-3">
               {mode === 'ride' && (
                 <>

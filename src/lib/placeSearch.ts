@@ -100,7 +100,8 @@ async function searchPhoton(query: string): Promise<SearchPlace[]> {
 
 async function searchNominatim(query: string): Promise<SearchPlace[]> {
   try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ' Limpopo South Africa')}&viewbox=${LIMPOPO_VIEWBOX}&bounded=1&limit=10&addressdetails=1`;
+    const nominatimUrl = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
+    const url = `${nominatimUrl}/search?format=json&q=${encodeURIComponent(query + ' Limpopo South Africa')}&viewbox=${LIMPOPO_VIEWBOX}&bounded=1&limit=10&addressdetails=1`;
     const res = await fetch(url, { headers: { 'User-Agent': 'BuddyRide/1.0' } });
     if (!res.ok) return [];
     const data: Array<{ display_name: string; lat: string; lon: string; type?: string }> = await res.json();

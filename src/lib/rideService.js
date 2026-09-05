@@ -22,11 +22,15 @@ export const RIDE_STATUS = {
   CANCELLED: 'cancelled',
 };
 
+// Google Maps removed (billing risk) - OSM only, both fall back to the free public instances.
+const NOMINATIM_URL = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
+const OSRM_URL = import.meta.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
+
 // FREE SEARCH - OpenStreetMap Nominatim, restricted to South Africa.
 export async function searchAddress(q) {
   if (!q || q.length < 3) return [];
   const res = await fetch(
-    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=za&limit=5&addressdetails=1`
+    `${NOMINATIM_URL}/search?format=json&q=${encodeURIComponent(q)}&countrycodes=za&limit=5&addressdetails=1`
   );
   if (!res.ok) return [];
   return res.json();
@@ -35,7 +39,7 @@ export async function searchAddress(q) {
 // FREE ROUTING - OSRM public demo server.
 export async function getFreeRoute(from, to) {
   try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+    const url = `${OSRM_URL}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
     const r = await fetch(url);
     const j = await r.json();
     if (j.routes && j.routes[0]) {
