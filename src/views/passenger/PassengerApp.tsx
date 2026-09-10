@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -59,6 +59,7 @@ function MapCenter({ center }: { center: [number, number] }) {
 export default function PassengerApp() {
   const { profile } = useAuth();
   const user = auth.currentUser;
+  const mapRef = useRef<L.Map | null>(null);
   const [pickup, setPickup] = useState<LocationPoint | null>(null);
   const [destination, setDestination] = useState<LocationPoint | null>(null);
   const [center, setCenter] = useState<[number, number]>(DEFAULT_CENTER);
@@ -66,7 +67,7 @@ export default function PassengerApp() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<RideCategory | null>(null);
   const [searching, setSearching] = useState(false);
-  const [locationLoading, setLocationLoading] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
   const [requesting, setRequesting] = useState(false);
 
   const distanceKm = useMemo(() => {
@@ -135,32 +136,36 @@ export default function PassengerApp() {
     setCenter([lat, lng]);
   };
 
-  const useCurrentLocation = () => {
+  const handleUseCurrentLocation = async () => {
+    setIsLocating(true);
     if (!navigator.geolocation) {
-      window.alert('Location is not available on this device.');
+      window.alert('GPS not supported');
+      setIsLocating(false);
       return;
     }
-    setLocationLoading(true);
+
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
         const { latitude: lat, longitude: lng } = coords;
-        let address = 'Current location';
         try {
-          const params = new URLSearchParams({ format: 'json', lat: String(lat), lon: String(lng) });
-          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, { headers: NOMINATIM_HEADERS });
-          if (response.ok) address = ((await response.json()) as { display_name?: string }).display_name ?? address;
-        } catch (error) {
-          console.error('Reverse geocoding failed:', error);
+          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+          const data = (await response.json()) as { display_name?: string };
+          const address = data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          setPickup({ lat, lng, address });
+          setQuery(address);
+          setResults([]);
+        } catch {
+          setPickup({ lat, lng, address: `${lat.toFixed(5)}, ${lng.toFixed(5)}` });
         }
-        setPickup({ lat, lng, address });
         setCenter([lat, lng]);
-        setLocationLoading(false);
+        mapRef.current?.setView([lat, lng], 16);
+        setIsLocating(false);
       },
-      () => {
-        setLocationLoading(false);
-        window.alert('Please enable location access to use your current location.');
+      (err) => {
+        window.alert(err.message);
+        setIsLocating(false);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      { enableHighAccuracy: true, timeout: 15000 },
     );
   };
 
@@ -203,7 +208,7 @@ export default function PassengerApp() {
   return (
     <main className="relative h-[100dvh] overflow-hidden bg-slate-100">
       <div className="absolute inset-0 z-0">
-        <MapContainer center={DEFAULT_CENTER} zoom={13} zoomControl={false} className="h-full w-full">
+        <MapContainer ref={mapRef} center={DEFAULT_CENTER} zoom={13} zoomControl={false} className="h-full w-full">
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap contributors"
@@ -217,9 +222,9 @@ export default function PassengerApp() {
       </div>
 
       <section className="absolute left-4 right-4 top-4 z-[1000] space-y-3">
-        <button type="button" onClick={useCurrentLocation} disabled={locationLoading} className="rounded-xl bg-white px-4 py-3 font-semibold text-slate-800 shadow-lg disabled:opacity-60">
-          {locationLoading ? 'Locating...' : '📍 Use current location'}
-        </button>
+        <div onClick={handleUseCurrentLocation} className="cursor-pointer rounded-xl bg-white px-4 py-3 font-semibold text-slate-800 shadow-lg">
+          {isLocating ? '📍 Locating...' : '📍 Current location'}
+        </div>
         <div className="relative">
           <input
             value={query}
