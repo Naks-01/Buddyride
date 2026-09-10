@@ -1,73 +1,269 @@
-import { useEffect, useState } from 'react';
-import { addDoc, collection, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
-import { toTrip } from '../../lib/converters';
+import { useEffect, useMemo, useState } from 'react';
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { auth, db } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
-import { CarIcon, LogOutIcon, MapPinIcon } from '../../components/Icons';
-import type { Trip } from '../../types';
 
-export function PassengerApp() {
-  const { profile } = useAuth();
-  const [rides, setRides] = useState<Trip[]>([]);
-  const [pickup, setPickup] = useState('');
-  const [destination, setDestination] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+type LocationPoint = {
+  lat: number;
+  lng: number;
+  address?: string;
+};
 
-  useEffect(() => { void fetchRides(); }, [profile?.id]);
+type SearchResult = {
+  place_id: number;
+  lat: string;
+  lon: string;
+  display_name: string;
+};
 
-  const fetchRides = async () => {
-    if (!profile?.id) return;
-    try {
-      const snapshot = await getDocs(query(collection(db, 'trips'), where('passenger_id', '==', profile.id)));
-      const list = snapshot.docs.map((d) => toTrip(d.id, d.data()));
-      list.sort((a, b) => b.created_at.localeCompare(a.created_at));
-      setRides(list);
-    } catch (err) {
-      console.error(err);
-      setError('Failed to load rides');
-    }
-  };
+type RideCategory = {
+  name: string;
+  base: number;
+  perKm: number;
+  desc: string;
+  price: number;
+};
 
-  const bookRide = async () => {
-    if (!profile?.id || !pickup.trim() || !destination.trim()) { setError('Please enter pickup and destination'); return; }
-    setLoading(true);
-    try {
-      await addDoc(collection(db, 'trips'), {
-        passenger_id: profile.id,
-        driver_id: null,
-        pickup_address: pickup,
-        dropoff_address: destination,
-        status: 'requested',
-        pickup_lat: 0,
-        pickup_lng: 0,
-        created_at: serverTimestamp(),
-      });
-      setPickup('');
-      setDestination('');
-      setError('');
-      await fetchRides();
-    } catch (err) {
-      console.error(err);
-      setError('Failed to book ride');
-    } finally {
-      setLoading(false);
-    }
-  };
+const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4689];
+const NOMINATIM_HEADERS = { Accept: 'application/json' };
 
-  const logout = async () => { await auth.signOut(); window.location.href = '/'; };
+const markerIcon = (color: string, label: string) =>
+  L.divIcon({
+    className: '',
+    html: `<div style="background:${color};width:36px;height:36px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,.35)"><span style="transform:rotate(45deg);color:white;font-weight:800;font-size:16px">${label}</span></div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 36],
+  });
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-4 py-4 flex justify-between items-center"><h1 className="text-2xl font-bold text-orange-500">BuddyRide1</h1><button onClick={logout} className="flex items-center gap-2 text-gray-600 hover:text-gray-900"><LogOutIcon size={20} /> Logout</button></header>
-      <main className="max-w-2xl mx-auto p-4">
-        <section className="bg-white rounded-lg shadow-md p-6 mb-6"><h2 className="text-xl font-bold text-gray-900 mb-4">Book a Ride</h2>{error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">{error}</div>}<div className="space-y-3"><LocationField label="Pickup Location" value={pickup} onChange={setPickup} /><LocationField label="Destination" value={destination} onChange={setDestination} /><button onClick={() => void bookRide()} disabled={loading} className="w-full py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 text-white font-semibold rounded-lg">{loading ? 'Booking...' : 'Book Ride'}</button></div></section>
-        <section className="bg-white rounded-lg shadow-md p-6"><h2 className="text-xl font-bold text-gray-900 mb-4">My Rides</h2>{rides.length === 0 ? <p className="text-gray-500 text-center py-8">No rides yet</p> : <div className="space-y-3">{rides.map((ride) => <div key={ride.id} className="border border-gray-200 rounded-lg p-4 flex gap-3"><CarIcon size={24} className="text-orange-500" /><div className="text-sm text-gray-600"><p><b>From:</b> {ride.pickup_address}</p><p className="mt-1"><b>To:</b> {ride.dropoff_address}</p><p className="text-xs mt-2">Status: <b className="capitalize">{ride.status}</b></p></div></div>)}</div>}</section>
-      </main>
-    </div>
-  );
+const pickupIcon = markerIcon('#2563eb', 'A');
+const destinationIcon = markerIcon('#f97316', 'B');
+
+function MapClickHandler({ onClick }: { onClick: (lat: number, lng: number) => void }) {
+  useMapEvents({ click: ({ latlng }) => onClick(latlng.lat, latlng.lng) });
+  return null;
 }
 
-function LocationField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return <label className="block text-sm font-medium text-gray-700"><span className="block mb-1">{label}</span><div className="flex items-center gap-2"><MapPinIcon size={20} className="text-orange-500" /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={label} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-orange-500" /></div></label>;
+function MapCenter({ center }: { center: [number, number] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    map.flyTo(center, Math.max(map.getZoom(), 14));
+  }, [center, map]);
+
+  return null;
+}
+
+export default function PassengerApp() {
+  const { profile } = useAuth();
+  const user = auth.currentUser;
+  const [pickup, setPickup] = useState<LocationPoint | null>(null);
+  const [destination, setDestination] = useState<LocationPoint | null>(null);
+  const [center, setCenter] = useState<[number, number]>(DEFAULT_CENTER);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<RideCategory | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+
+  const distanceKm = useMemo(() => {
+    if (!pickup || !destination) return 0;
+    return L.latLng(pickup.lat, pickup.lng).distanceTo(L.latLng(destination.lat, destination.lng)) / 1000;
+  }, [destination, pickup]);
+
+  const categories = useMemo<RideCategory[]>(() => {
+    if (!pickup || !destination) return [];
+    return [
+      { name: '214 Shared', base: 15, perKm: 8, desc: 'Cheapest, shared' },
+      { name: '214 Direct', base: 20, perKm: 12, desc: 'Fast, direct' },
+      { name: '214 XL', base: 30, perKm: 15, desc: 'Big, luggage' },
+    ].map((category) => ({
+      ...category,
+      price: Math.max(25, Math.round(category.base + distanceKm * category.perKm)),
+    }));
+  }, [destination, distanceKm, pickup]);
+
+  useEffect(() => {
+    if (!pickup || !destination) {
+      setSelectedCategory(null);
+      return;
+    }
+    setSelectedCategory((current) => categories.find((category) => category.name === current?.name) ?? categories[0] ?? null);
+  }, [categories, destination, pickup]);
+
+  useEffect(() => {
+    if (query.trim().length <= 2) {
+      setResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearching(true);
+      try {
+        const params = new URLSearchParams({
+          format: 'json',
+          q: query.trim(),
+          limit: '5',
+          countrycodes: 'za',
+        });
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+          headers: NOMINATIM_HEADERS,
+          signal: controller.signal,
+        });
+        if (response.ok) setResults((await response.json()) as SearchResult[]);
+      } catch (error) {
+        if ((error as DOMException).name !== 'AbortError') console.error('Place search failed:', error);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+
+  const setMapPoint = (lat: number, lng: number) => {
+    const point = { lat, lng, address: 'Map pin' };
+    if (!pickup) setPickup(point);
+    else setDestination(point);
+    setCenter([lat, lng]);
+  };
+
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      window.alert('Location is not available on this device.');
+      return;
+    }
+    setLocationLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const { latitude: lat, longitude: lng } = coords;
+        let address = 'Current location';
+        try {
+          const params = new URLSearchParams({ format: 'json', lat: String(lat), lon: String(lng) });
+          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, { headers: NOMINATIM_HEADERS });
+          if (response.ok) address = ((await response.json()) as { display_name?: string }).display_name ?? address;
+        } catch (error) {
+          console.error('Reverse geocoding failed:', error);
+        }
+        setPickup({ lat, lng, address });
+        setCenter([lat, lng]);
+        setLocationLoading(false);
+      },
+      () => {
+        setLocationLoading(false);
+        window.alert('Please enable location access to use your current location.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    );
+  };
+
+  const selectSearchResult = (result: SearchResult) => {
+    const point = { lat: parseFloat(result.lat), lng: parseFloat(result.lon), address: result.display_name };
+    setDestination(point);
+    setQuery(result.display_name);
+    setResults([]);
+    setCenter([point.lat, point.lng]);
+  };
+
+  const requestRide = async () => {
+    if (!pickup || !destination || !selectedCategory) return;
+    setRequesting(true);
+    try {
+      await addDoc(collection(db, 'rides'), {
+        passengerId: (profile as any)?.id || (profile as any)?.uid || user?.uid || 'guest',
+        pickup,
+        destination,
+        category: selectedCategory,
+        fare: selectedCategory.price,
+        distanceKm,
+        status: 'requested',
+        createdAt: serverTimestamp(),
+      });
+      window.alert('Ride requested successfully.');
+      setPickup(null);
+      setDestination(null);
+      setQuery('');
+      setSelectedCategory(null);
+      setCenter(DEFAULT_CENTER);
+    } catch (error) {
+      console.error('Ride request failed:', error);
+      window.alert('Unable to request your ride. Please try again.');
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  return (
+    <main className="relative h-[100dvh] overflow-hidden bg-slate-100">
+      <div className="absolute inset-0 z-0">
+        <MapContainer center={DEFAULT_CENTER} zoom={13} zoomControl={false} className="h-full w-full">
+          <TileLayer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution="&copy; OpenStreetMap contributors"
+            maxZoom={19}
+          />
+          <MapCenter center={center} />
+          <MapClickHandler onClick={setMapPoint} />
+          {pickup && <Marker position={[pickup.lat, pickup.lng]} icon={pickupIcon} />}
+          {destination && <Marker position={[destination.lat, destination.lng]} icon={destinationIcon} />}
+        </MapContainer>
+      </div>
+
+      <section className="absolute left-4 right-4 top-4 z-[1000] space-y-3">
+        <button type="button" onClick={useCurrentLocation} disabled={locationLoading} className="rounded-xl bg-white px-4 py-3 font-semibold text-slate-800 shadow-lg disabled:opacity-60">
+          {locationLoading ? 'Locating...' : '📍 Use current location'}
+        </button>
+        <div className="relative">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Where to? e.g. Seshego Mall"
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-4 text-slate-900 shadow-lg outline-none focus:border-orange-500"
+          />
+          {(searching || results.length > 0) && (
+            <div className="absolute left-0 right-0 top-full z-[5000] mt-1 max-h-60 overflow-y-auto rounded-xl bg-white shadow-xl">
+              {searching && <div className="px-4 py-3 text-sm text-slate-500">Searching...</div>}
+              {results.map((result) => (
+                <button key={result.place_id} type="button" onClick={() => selectSearchResult(result)} className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm text-slate-700 last:border-0 hover:bg-orange-50">
+                  {result.display_name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="absolute bottom-0 left-0 right-0 z-[1000] max-h-[57vh] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Your route</p>
+            <p className="mt-1 text-sm text-slate-700">{pickup?.address ?? 'Choose a pickup on the map'}{destination ? ` to ${destination.address}` : ''}</p>
+          </div>
+          {pickup && destination && <span className="text-sm font-semibold text-slate-500">{distanceKm.toFixed(1)} km</span>}
+        </div>
+
+        {pickup && destination && (
+          <>
+            <div className="space-y-3">
+              {categories.map((category) => (
+                <button key={category.name} type="button" onClick={() => setSelectedCategory(category)} className={`flex w-full items-center justify-between rounded-2xl border-2 p-4 text-left transition ${selectedCategory?.name === category.name ? 'border-orange-500 bg-orange-50' : 'border-slate-200 bg-white'}`}>
+                  <span><strong className="block text-slate-900">{category.name}</strong><span className="text-sm text-slate-500">{category.desc}</span></span>
+                  <span className="text-right"><strong className="block text-lg text-slate-900">R{category.price}</strong><span className="text-xs text-slate-500">{Math.round(3 + distanceKm * 2)} min</span></span>
+                </button>
+              ))}
+            </div>
+            {selectedCategory && <p className="mt-4 text-center text-sm text-slate-500">{selectedCategory.name}: R{selectedCategory.price} · ETA {Math.round(3 + distanceKm * 2)} min</p>}
+            {selectedCategory && <button type="button" onClick={requestRide} disabled={requesting} className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-4 font-bold text-white shadow-lg hover:bg-orange-600 disabled:opacity-60">{requesting ? 'Requesting...' : `Request ${selectedCategory.name} - R${selectedCategory.price}`}</button>}
+          </>
+        )}
+      </section>
+    </main>
+  );
 }
