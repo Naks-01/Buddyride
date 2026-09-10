@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { collection, doc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
 import { toTrip } from '../../lib/converters';
 import { useAuth } from '../../context/AuthContext';
@@ -12,10 +12,29 @@ export function DriverApp() {
   const [acceptedRides, setAcceptedRides] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [currentRideId, setCurrentRideId] = useState<string | null>(null);
+  const [cancelMessage, setCancelMessage] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchRides();
   }, [profile?.id]);
+
+  useEffect(() => {
+    if (!currentRideId) return;
+    const unsub = onSnapshot(doc(db, 'rides', currentRideId), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      if (data.status === 'cancelled' && data.cancelledBy === 'passenger') {
+        const reason = data.cancelReason || '';
+        setCancelMessage(`RIDE CANCELLED\n\nPassenger cancelled.\n${reason}\n\nYou can accept new rides.`);
+        window.setTimeout(() => {
+          setCancelMessage(null);
+          setCurrentRideId(null);
+        }, 4000);
+      }
+    });
+    return () => unsub();
+  }, [currentRideId]);
 
   const fetchRides = async () => {
     setLoading(true);
@@ -42,11 +61,22 @@ export function DriverApp() {
     if (!profile) return;
     try {
       await updateDoc(doc(db, 'trips', rideId), { driver_id: profile.id, status: 'accepted' });
+      setCurrentRideId(rideId);
       void fetchRides();
     } catch (err) {
       console.error(err);
       setError('Failed to accept ride');
     }
+  };
+
+  const handleCancel = async () => {
+    if (!currentRideId) return;
+    await updateDoc(doc(db, 'rides', currentRideId), {
+      status: 'cancelled',
+      cancelledBy: 'driver',
+      cancelReason: 'Changed mind',
+      cancelledAt: serverTimestamp(),
+    });
   };
 
   const logout = async () => { await auth.signOut(); window.location.href = '/'; };
@@ -65,9 +95,18 @@ export function DriverApp() {
         </section>
         <section className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-xl font-bold text-gray-900 mb-4">My Accepted Rides ({acceptedRides.length})</h2>
-          {acceptedRides.length === 0 ? <p className="text-gray-500 text-center py-8">No accepted rides yet</p> : <div className="space-y-3">{acceptedRides.map((ride) => <div key={ride.id} className="border border-gray-200 rounded-lg p-4 bg-blue-50"><RideRoute ride={ride} /><div className="flex items-center gap-2 mt-2 text-green-600 text-xs font-semibold"><CheckIcon size={16} /> Accepted</div></div>)}</div>}
+          {acceptedRides.length === 0 ? <p className="text-gray-500 text-center py-8">No accepted rides yet</p> : <div className="space-y-3">{acceptedRides.map((ride) => <div key={ride.id} className="border border-gray-200 rounded-lg p-4 bg-blue-50"><RideRoute ride={ride} /><div className="flex items-center gap-2 mt-2 text-green-600 text-xs font-semibold"><CheckIcon size={16} /> Accepted</div>{currentRideId === ride.id && <button type="button" onClick={() => void handleCancel()} className="mt-3 w-full rounded-lg bg-red-600 py-2 font-semibold text-white hover:bg-red-700">Cancel ride</button>}</div>)}</div>}
         </section>
       </main>
+      {cancelMessage && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '20px', padding: '30px', textAlign: 'center', width: '100%', maxWidth: '350px', border: '4px solid red' }}>
+            <div style={{ fontSize: '60px', marginBottom: '15px' }}>⚠️</div>
+            <h1 style={{ fontSize: '26px', fontWeight: '900', color: 'red', whiteSpace: 'pre-line', lineHeight: '1.3' }}>{cancelMessage}</h1>
+            <button type="button" onClick={() => setCancelMessage(null)} style={{ marginTop: '20px', backgroundColor: 'black', color: 'white', padding: '12px 30px', borderRadius: '30px', fontWeight: 'bold', fontSize: '16px' }}>OK, GOT IT</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

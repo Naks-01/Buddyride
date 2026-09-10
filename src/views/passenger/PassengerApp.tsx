@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
@@ -19,12 +19,14 @@ type SearchResult = {
   display_name: string;
 };
 
-type RideCategory = {
+type RideType = {
+  id: string;
   name: string;
-  base: number;
-  perKm: number;
-  desc: string;
+  description: string;
+  icon: string;
   price: number;
+  eta: string;
+  seats: number;
 };
 
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4689];
@@ -65,35 +67,35 @@ export default function PassengerApp() {
   const [center, setCenter] = useState<[number, number]>(DEFAULT_CENTER);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<RideCategory | null>(null);
+  const [selectedRideType, setSelectedRideType] = useState<RideType | null>(null);
   const [searching, setSearching] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [currentRideId, setCurrentRideId] = useState<string | null>(null);
+  const [cancelMessage, setCancelMessage] = useState<string | null>(null);
 
   const distanceKm = useMemo(() => {
     if (!pickup || !destination) return 0;
     return L.latLng(pickup.lat, pickup.lng).distanceTo(L.latLng(destination.lat, destination.lng)) / 1000;
   }, [destination, pickup]);
 
-  const categories = useMemo<RideCategory[]>(() => {
+  const rideTypes = useMemo<RideType[]>(() => {
     if (!pickup || !destination) return [];
+    const basePrice = Math.max(25, Math.round(20 + distanceKm * 12));
     return [
-      { name: '214 Shared', base: 15, perKm: 8, desc: 'Cheapest, shared' },
-      { name: '214 Direct', base: 20, perKm: 12, desc: 'Fast, direct' },
-      { name: '214 XL', base: 30, perKm: 15, desc: 'Big, luggage' },
-    ].map((category) => ({
-      ...category,
-      price: Math.max(25, Math.round(category.base + distanceKm * category.perKm)),
-    }));
+      { id: 'buddy-go', name: 'Buddy Go', seats: 2, description: '2 people - quick ride', icon: '🚕', price: basePrice, eta: '3 min' },
+      { id: 'buddy-share', name: 'Buddy Share', seats: 3, description: '3 people - share & save', icon: '👥', price: Math.round(basePrice * 0.8), eta: '5 min' },
+      { id: 'buddy-xl', name: 'Buddy XL', seats: 6, description: '6 people - big car', icon: '🚐', price: Math.round(basePrice * 1.6), eta: '4 min' },
+    ];
   }, [destination, distanceKm, pickup]);
 
   useEffect(() => {
     if (!pickup || !destination) {
-      setSelectedCategory(null);
+      setSelectedRideType(null);
       return;
     }
-    setSelectedCategory((current) => categories.find((category) => category.name === current?.name) ?? categories[0] ?? null);
-  }, [categories, destination, pickup]);
+    setSelectedRideType((current) => rideTypes.find((rideType) => rideType.id === current?.id) ?? rideTypes[0] ?? null);
+  }, [destination, pickup, rideTypes]);
 
   useEffect(() => {
     if (query.trim().length <= 2) {
@@ -128,6 +130,23 @@ export default function PassengerApp() {
       controller.abort();
     };
   }, [query]);
+
+  useEffect(() => {
+    if (!currentRideId) return;
+    const unsub = onSnapshot(doc(db, 'rides', currentRideId), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      if (data.status === 'cancelled' && data.cancelledBy === 'driver') {
+        const reason = data.cancelReason || '';
+        setCancelMessage(`DRIVER CANCELLED\n\nYour driver cancelled the ride.\n${reason}\n\nSearching for new driver...`);
+        window.setTimeout(() => {
+          setCancelMessage(null);
+          setCurrentRideId(null);
+        }, 5000);
+      }
+    });
+    return () => unsub();
+  }, [currentRideId]);
 
   const setMapPoint = (lat: number, lng: number) => {
     const point = { lat, lng, address: 'Map pin' };
@@ -177,25 +196,36 @@ export default function PassengerApp() {
     setCenter([point.lat, point.lng]);
   };
 
+  const handleCancel = async () => {
+    if (!currentRideId) return;
+    await updateDoc(doc(db, 'rides', currentRideId), {
+      status: 'cancelled',
+      cancelledBy: 'passenger',
+      cancelReason: 'Changed mind',
+      cancelledAt: serverTimestamp(),
+    });
+  };
+
   const requestRide = async () => {
-    if (!pickup || !destination || !selectedCategory) return;
+    if (!pickup || !destination || !selectedRideType) return;
     setRequesting(true);
     try {
-      await addDoc(collection(db, 'rides'), {
+      const rideRef = await addDoc(collection(db, 'rides'), {
         passengerId: (profile as any)?.id || (profile as any)?.uid || user?.uid || 'guest',
         pickup,
         destination,
-        category: selectedCategory,
-        fare: selectedCategory.price,
+        category: selectedRideType,
+        fare: selectedRideType.price,
         distanceKm,
         status: 'requested',
         createdAt: serverTimestamp(),
       });
+      setCurrentRideId(rideRef.id);
       window.alert('Ride requested successfully.');
       setPickup(null);
       setDestination(null);
       setQuery('');
-      setSelectedCategory(null);
+      setSelectedRideType(null);
       setCenter(DEFAULT_CENTER);
     } catch (error) {
       console.error('Ride request failed:', error);
@@ -257,18 +287,29 @@ export default function PassengerApp() {
         {pickup && destination && (
           <>
             <div className="space-y-3">
-              {categories.map((category) => (
-                <button key={category.name} type="button" onClick={() => setSelectedCategory(category)} className={`flex w-full items-center justify-between rounded-2xl border-2 p-4 text-left transition ${selectedCategory?.name === category.name ? 'border-orange-500 bg-orange-50' : 'border-slate-200 bg-white'}`}>
-                  <span><strong className="block text-slate-900">{category.name}</strong><span className="text-sm text-slate-500">{category.desc}</span></span>
-                  <span className="text-right"><strong className="block text-lg text-slate-900">R{category.price}</strong><span className="text-xs text-slate-500">{Math.round(3 + distanceKm * 2)} min</span></span>
+              {rideTypes.map((type) => (
+                <button key={type.id} type="button" onClick={() => setSelectedRideType(type)} className={`flex w-full items-center justify-between rounded-2xl border-2 p-4 text-left transition ${selectedRideType?.id === type.id ? 'border-orange-500 bg-orange-50' : 'border-slate-200 bg-white'}`}>
+                  <span><div className="font-black text-lg">{type.icon} {type.name} • {type.seats} people</div><span className="text-sm text-slate-500">{type.description}</span></span>
+                  <span className="text-right"><strong className="block text-lg text-slate-900">R{type.price}</strong><span className="text-xs text-slate-500">{type.eta}</span></span>
                 </button>
               ))}
             </div>
-            {selectedCategory && <p className="mt-4 text-center text-sm text-slate-500">{selectedCategory.name}: R{selectedCategory.price} · ETA {Math.round(3 + distanceKm * 2)} min</p>}
-            {selectedCategory && <button type="button" onClick={requestRide} disabled={requesting} className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-4 font-bold text-white shadow-lg hover:bg-orange-600 disabled:opacity-60">{requesting ? 'Requesting...' : `Request ${selectedCategory.name} - R${selectedCategory.price}`}</button>}
+            {selectedRideType && <p className="mt-4 text-center text-sm text-slate-500">{selectedRideType.name} • {selectedRideType.seats} seats: R{selectedRideType.price} · ETA {selectedRideType.eta}</p>}
+            {selectedRideType && <button type="button" onClick={requestRide} disabled={requesting} className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-4 font-bold text-white shadow-lg hover:bg-orange-600 disabled:opacity-60">{requesting ? 'Requesting...' : `Request ${selectedRideType.name}`}</button>}
           </>
         )}
+          {currentRideId && <button type="button" onClick={() => void handleCancel()} className="mt-3 w-full rounded-xl border border-red-200 py-2 font-semibold text-red-600">Cancel ride</button>}
       </section>
+
+      {cancelMessage && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '20px', padding: '30px', textAlign: 'center', width: '100%', maxWidth: '350px', border: '4px solid red' }}>
+            <div style={{ fontSize: '60px', marginBottom: '15px' }}>⚠️</div>
+            <h1 style={{ fontSize: '26px', fontWeight: '900', color: 'red', whiteSpace: 'pre-line', lineHeight: '1.3' }}>{cancelMessage}</h1>
+            <button type="button" onClick={() => setCancelMessage(null)} style={{ marginTop: '20px', backgroundColor: 'black', color: 'white', padding: '12px 30px', borderRadius: '30px', fontWeight: 'bold', fontSize: '16px' }}>OK, GOT IT</button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
