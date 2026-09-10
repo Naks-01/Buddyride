@@ -211,6 +211,8 @@ export function PassengerDashboard() {
   };
 
   // Real route via OSRM (distance + duration), used for the actual quoted price and the planned polyline.
+  // If OSRM is slow/unreachable, falls back to straight-line distance * 1.3 so the fare estimate + Request button
+  // never get stuck waiting on a 3rd-party routing service.
   const calculateFare = async () => {
     if (stops.some((stop) => stop.lat == null || stop.lng == null)) return;
     const origin = stops[0];
@@ -223,23 +225,30 @@ export function PassengerDashboard() {
         { lat: origin.lat!, lng: origin.lng! },
         { lat: dest.lat!, lng: dest.lng! }
       );
-      if (!route) {
-        setPriceError('Route not found. Try a different pickup or destination.');
+      if (route) {
+        const km = route.distance / 1000;
+        const minutes = route.duration / 60;
+        setDistance(`${km.toFixed(1)} km`);
+        setDistanceKm(km);
+        setDurationMin(minutes);
+        setPlannedRoutePath(route.polyline);
+        setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
         return;
       }
-      const km = route.distance / 1000;
-      const minutes = route.duration / 60;
-      setDistance(`${km.toFixed(1)} km`);
-      setDistanceKm(km);
-      setDurationMin(minutes);
-      setPlannedRoutePath(route.polyline);
-      setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
     } catch (err) {
       console.error('Failed to fetch OSRM route:', err);
-      setPriceError('Route not found. Try a different pickup or destination.');
     } finally {
       setPriceLoading(false);
     }
+    // Fallback: straight-line distance * 1.3 (rough road-distance correction) + ~30km/h average speed.
+    const straightKm = calcDistance(origin.lat!, origin.lng!, dest.lat!, dest.lng!);
+    const km = straightKm * 1.3;
+    const minutes = (km / 30) * 60;
+    setDistance(`${km.toFixed(1)} km`);
+    setDistanceKm(km);
+    setDurationMin(minutes);
+    setPlannedRoutePath(null);
+    setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
   };
 
   const selectCategory = (catId: RideCategoryId) => {
@@ -533,6 +542,7 @@ export function PassengerDashboard() {
             new Notification('Driver is outside', { body: 'Your driver has arrived at the pickup point.' });
           }
         } else if (nextStatus === 'cancelled') playSound('cancel');
+        else if (nextStatus === 'completed') playSound('completed');
         else if (nextStatus === 'cancelled_by_driver') {
           playSound('cancel');
           setMessage('Driver cancelled the ride. Searching for a new driver...');

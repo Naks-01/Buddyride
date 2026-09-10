@@ -37,10 +37,13 @@ export async function searchAddress(q) {
 }
 
 // FREE ROUTING - OSRM public demo server.
+// Aborts after 6s so a slow/unreachable OSRM server can never hang the UI forever (caller falls back to straight-line distance).
 export async function getFreeRoute(from, to) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
   try {
     const url = `${OSRM_URL}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
-    const r = await fetch(url);
+    const r = await fetch(url, { signal: controller.signal });
     const j = await r.json();
     if (j.routes && j.routes[0]) {
       return {
@@ -51,6 +54,8 @@ export async function getFreeRoute(from, to) {
     }
   } catch (e) {
     console.error('Failed to fetch OSRM route:', e);
+  } finally {
+    clearTimeout(timeoutId);
   }
   return null;
 }

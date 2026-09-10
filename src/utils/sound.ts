@@ -1,6 +1,8 @@
 // Notification sounds for ride events. WAV format is used because real mp3 assets
 // aren't available in this environment; swap in licensed mp3s under public/sounds/ later if desired.
-export type SoundType = 'request' | 'accepted' | 'arrived' | 'cancel';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
+
+export type SoundType = 'request' | 'accepted' | 'arrived' | 'completed' | 'cancel';
 
 let muted = false;
 
@@ -24,6 +26,10 @@ export const playSound = (type: SoundType): HTMLAudioElement => {
       break;
     case 'arrived':
       audio.src = '/sounds/ride-arrived.wav';
+      audio.volume = 0.8;
+      break;
+    case 'completed':
+      audio.src = '/sounds/ride-completed.wav';
       audio.volume = 0.8;
       break;
     case 'cancel':
@@ -59,6 +65,9 @@ export let requestAudio: HTMLAudioElement | null = null;
 export const startRequestLoop = () => {
   stopRequestLoop();
   requestAudio = playSound('request');
+  Haptics.impact({ style: ImpactStyle.Heavy }).catch(() => {
+    // no-op on platforms/browsers without haptics support
+  });
 };
 
 export const stopRequestLoop = () => {
