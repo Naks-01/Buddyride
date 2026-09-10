@@ -120,10 +120,42 @@ export function DriverDashboard() {
   const [checkingArrival, setCheckingArrival] = useState(false);
   const [routePath, setRoutePath] = useState<[number, number][] | null>(null);
   const [routeMarkers, setRouteMarkers] = useState<AppMapMarker[]>([]);
+  const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  const requestLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation not supported');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        console.log('Location granted', pos.coords);
+        setDriverLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocationError(null);
+        navigator.geolocation.watchPosition((p) => {
+          setDriverLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
+        });
+      },
+      (err) => {
+        console.error(err);
+        if (err.code === 1) {
+          setLocationError('PERMISSION_DENIED');
+          alert('Please tap the lock icon in address bar and Allow Location, then refresh');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
+  useEffect(() => {
+    requestLocation();
+  }, []);
 
   const toggleOnline = async () => {
     const next = !isOnline;
     setIsOnline(next);
+    if (next) requestLocation();
     if (user) {
       await updateDoc(doc(db, 'drivers', user.uid), { isOnline: next, lastSeen: serverTimestamp() }).catch((err) => {
         console.error('Failed to update online status:', err);
@@ -603,7 +635,17 @@ export function DriverDashboard() {
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#121212] text-white">
       <div className="absolute inset-0 top-0 bottom-[72px] z-0">
-        <AppMap mode="driver" centerBtn={centerTrigger} routePath={routePath ?? undefined} markers={routeMarkers} />
+        <AppMap
+          mode="driver"
+          centerBtn={centerTrigger}
+          center={driverLocation ? [driverLocation.lat, driverLocation.lng] : undefined}
+          routePath={routePath ?? undefined}
+          markers={
+            driverLocation
+              ? [...routeMarkers, { id: 'driver-live', position: [driverLocation.lat, driverLocation.lng], color: '#00C853', emoji: '🚕' }]
+              : routeMarkers
+          }
+        />
       </div>
 
       <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-4 pointer-events-auto">
@@ -638,6 +680,18 @@ export function DriverDashboard() {
       {error && (
         <div className="absolute inset-x-4 top-20 z-30 rounded-lg border border-red-500 bg-red-900/90 px-4 py-2 text-sm text-white shadow-lg">
           {error}
+        </div>
+      )}
+
+      {locationError && (
+        <div style={{ background: 'red', padding: '15px', borderRadius: '10px' }} className="absolute inset-x-4 top-20 z-30 shadow-lg">
+          <p>Location permission is required</p>
+          <button
+            onClick={requestLocation}
+            style={{ background: 'white', color: 'red', padding: '10px 20px', borderRadius: '20px', fontWeight: 'bold' }}
+          >
+            🔓 TAP TO ENABLE LOCATION
+          </button>
         </div>
       )}
 
