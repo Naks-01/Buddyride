@@ -69,6 +69,7 @@ export function PassengerDashboard() {
   const geocodeTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
   const lastGeocodedLocationRef = useRef<{ lat: number; lng: number } | null>(null);
+  const autoConfirmMapPinRef = useRef(false);
   const [requesting, setRequesting] = useState(false);
   const [locating, setLocating] = useState(false);
   const [message, setMessage] = useState('');
@@ -281,14 +282,28 @@ export function PassengerDashboard() {
     }
   };
 
+  // Selecting a result from the dropdown commits it immediately (no extra "Confirm" tap needed).
   const selectSearchResult = (result: SearchPlace) => {
     const nextLocation = { lat: result.lat, lng: result.lng };
-    setMapAddress(result.address);
-    setSearchText(shortAddress(result.name));
     setMapLocation(nextLocation);
+    setMapAddress('');
     setSearchResults([]);
-    if (locationStep === 'pickup') setPickupPlaceId(null);
-    else setDropoffPlaceId(null);
+    setSearchText('');
+    setStops((current) =>
+      current.map((stop, index) => (index === activeStopIndex ? { ...stop, address: result.address, lat: result.lat, lng: result.lng } : stop))
+    );
+    if (activeStopIndex === 0) {
+      setPickupLocation(nextLocation);
+      setPickupAddress(result.address);
+      setPickupPlaceId(null);
+      setIsLocationLocked(true);
+      setLocationStep('dropoff');
+      setActiveStopIndex(Math.min(1, stops.length - 1));
+    } else if (activeStopIndex === stops.length - 1) {
+      setDropoffLocation(nextLocation);
+      setDropoffAddress(result.address);
+      setDropoffPlaceId(null);
+    }
   };
 
   const confirmMapLocation = () => {
@@ -818,12 +833,26 @@ export function PassengerDashboard() {
 
   const handleMapClick = (lat: number, lng: number) => {
     const location = { lat, lng };
-    setIsLocationLocked(true);
-    setUserLocation(location);
     setMapLocation(location);
     setSearchText('Pinned location');
+    // Fallback: once pickup is locked in, tapping the map drops + auto-confirms the destination pin.
+    if (locationStep === 'dropoff' && isLocationLocked) {
+      autoConfirmMapPinRef.current = true;
+    } else {
+      setIsLocationLocked(true);
+      setUserLocation(location);
+    }
     scheduleReverseGeocode(location);
   };
+
+  // Once the reverse-geocoded address for an auto-confirm map click lands, commit it as the destination.
+  useEffect(() => {
+    if (mapAddress && autoConfirmMapPinRef.current) {
+      autoConfirmMapPinRef.current = false;
+      confirmMapLocation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapAddress]);
 
   const tripMarkers: AppMapMarker[] = isActiveTrip
     ? [
@@ -1009,12 +1038,36 @@ export function PassengerDashboard() {
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
                     {activeStopIndex === 0 ? 'Set pickup location' : activeStopIndex === stops.length - 1 ? 'Set destination' : `Set stop ${activeStopIndex}`}
                   </p>
-                  <input
-                    value={searchText}
-                    onChange={(event) => setSearchText(event.target.value)}
-                    placeholder={activeStopIndex === 0 ? 'Where are you?' : activeStopIndex === stops.length - 1 ? 'Where to?' : `Add stop ${activeStopIndex}`}
-                    className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
-                  />
+                  <div className="relative">
+                    <input
+                      value={searchText}
+                      onChange={(event) => setSearchText(event.target.value)}
+                      placeholder={activeStopIndex === 0 ? 'Where are you?' : activeStopIndex === stops.length - 1 ? 'Where to?' : `Add stop ${activeStopIndex}`}
+                      className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
+                    />
+                    {searchResults.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-gray-100 bg-white shadow-lg">
+                        {searchResults.map((result) => (
+                          <div
+                            key={result.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => selectSearchResult(result)}
+                            onKeyDown={(event) => { if (event.key === 'Enter') selectSearchResult(result); }}
+                            className="flex w-full cursor-pointer items-center gap-2 truncate px-3 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
+                          >
+                            <span>{ICON_BY_TYPE[result.type]}</span>
+                            <span className="min-w-0 flex-1 truncate">
+                              <span className="font-semibold">{result.name}</span>
+                              {result.address && result.address !== result.name && (
+                                <span className="block truncate text-xs text-gray-500">{shortAddress(result.address)}</span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   {locationStep === 'pickup' && (
                     <>
                       <button
@@ -1036,26 +1089,6 @@ export function PassengerDashboard() {
                         </p>
                       )}
                     </>
-                  )}
-                  {searchResults.length > 0 && (
-                    <div className="mt-2 max-h-40 overflow-y-auto border-t border-gray-100 pt-1">
-                      {searchResults.map((result) => (
-                        <button
-                          key={result.id}
-                          type="button"
-                          onClick={() => selectSearchResult(result)}
-                          className="flex w-full items-center gap-2 truncate px-2 py-2 text-left text-sm text-gray-700 hover:bg-orange-50"
-                        >
-                          <span>{ICON_BY_TYPE[result.type]}</span>
-                          <span className="min-w-0 flex-1 truncate">
-                            <span className="font-semibold">{result.name}</span>
-                            {result.address && result.address !== result.name && (
-                              <span className="block truncate text-xs text-gray-500">{shortAddress(result.address)}</span>
-                            )}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
                   )}
                   {mapAddress && (
                     <div className="mt-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
