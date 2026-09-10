@@ -76,6 +76,8 @@ type RideRequest = {
   pickupWaitFare?: number;
   baseFare?: number;
   totalFare?: number;
+  cancelledBy?: string;
+  cancelReason?: string;
 };
 
 type Coordinates = { lat: number; lng: number };
@@ -389,6 +391,8 @@ export function DriverDashboard() {
           cancellationPlatformCut: CANCELLATION.NO_SHOW_FEE * COMMISSION_RATE,
           cancellationDriverPayout: CANCELLATION.NO_SHOW_FEE * DRIVER_RATE,
           cancellationReason: 'passenger_no_show',
+          cancelledBy: 'driver',
+          cancelReason: 'Passenger no-show',
         });
       } else {
         await cancelRideService(ride.id, {
@@ -587,6 +591,43 @@ export function DriverDashboard() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [acceptedRide?.id, acceptedRide?.status]);
 
+  // Auto-draws/refreshes the driver's own navigation route on the in-app map (pickup while
+  // approaching, dropoff/current stop once trip_started) - refetched at most every 10s via OSRM,
+  // so the polyline stays live even if the driver never taps a manual "Navigate" button.
+  const lastDriverRouteFetchRef = useRef(0);
+  useEffect(() => {
+    if (!acceptedRide || !driverLocation || !LOCATION_SHARING_STATUSES.has(acceptedRide.status ?? '')) return;
+    const pickup = getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng);
+    const dropoff = getLocationCoordinates(acceptedRide.dropoff, acceptedRide.dropoffLatLng);
+    const target = acceptedRide.status === 'trip_started' ? dropoff : pickup;
+    if (!target) return;
+
+    setRouteMarkers([
+      ...(pickup ? [{ id: 'pickup-pin', position: [pickup.lat, pickup.lng] as [number, number], color: '#FF9500', emoji: '📍' }] : []),
+      ...(dropoff ? [{ id: 'dropoff-pin', position: [dropoff.lat, dropoff.lng] as [number, number], color: '#FF3B30', emoji: '🏁' }] : []),
+    ]);
+
+    const now = Date.now();
+    if (now - lastDriverRouteFetchRef.current < 10000) return;
+    lastDriverRouteFetchRef.current = now;
+    let cancelled = false;
+    void getFreeRoute(driverLocation, target).then((route) => {
+      if (cancelled) return;
+      setRoutePath(route?.polyline ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [driverLocation, acceptedRide?.status, acceptedRide?.id]);
+
+  // Clear the nav overlay once the ride ends (completed/cancelled/dismissed).
+  useEffect(() => {
+    if (!acceptedRide) {
+      setRoutePath(null);
+      setRouteMarkers([]);
+    }
+  }, [acceptedRide]);
+
   const navigateToPickup = async (ride: RideRequest) => {
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
     if (!pickup) {
@@ -611,7 +652,26 @@ export function DriverDashboard() {
     await navigateTo(destination, pickup ?? undefined);
   };
 
+  // Always opens the real Google Maps app/website (independent of the in-app/Waze navigation preference).
+  const openGoogleMapsNav = (destination: Coordinates) => {
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}`, '_blank');
+  };
+
+  // Whichever point the driver should currently be heading to: pickup pre-trip, dropoff/current stop once trip_started.
+  const getCurrentNavTarget = (ride: RideRequest): Coordinates | null => {
+    if (ride.status === 'trip_started') {
+      const currentStopIndex = ride.currentStopIndex ?? 1;
+      const currentStop = ride.stops?.[currentStopIndex];
+      if (currentStop && currentStop.lat != null && currentStop.lng != null) return { lat: currentStop.lat, lng: currentStop.lng };
+      return getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
+    }
+    return getLocationCoordinates(ride.pickup, ride.pickupLatLng);
+  };
+
   const finishRide = () => setAcceptedRide(null);
+
+  // Dismisses the full-screen RIDE CANCELLED overlay (e.g. passenger cancelled while driver was en route).
+  const clearCancelledRide = () => setAcceptedRide(null);
 
   if (authLoading) {
     return <div className="min-h-screen bg-[#121212] p-8 text-white">Loading...</div>;
@@ -634,6 +694,45 @@ export function DriverDashboard() {
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#121212] text-white">
+      {acceptedRide?.status === 'cancelled' && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: '#FF0000',
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+          }}
+        >
+          <h1 style={{ fontSize: '48px', fontWeight: 900, marginBottom: '20px' }}>RIDE CANCELLED</h1>
+          <p style={{ fontSize: '20px', marginBottom: '10px' }}>
+            {acceptedRide.cancelledBy === 'passenger' ? 'Cancelled by passenger' : 'Cancelled by driver'}
+          </p>
+          <p style={{ fontSize: '16px', opacity: 0.9 }}>{acceptedRide.cancelReason || 'No reason provided'}</p>
+          <button
+            onClick={clearCancelledRide}
+            style={{
+              marginTop: '30px',
+              background: 'white',
+              color: 'red',
+              padding: '15px 40px',
+              borderRadius: '30px',
+              fontSize: '18px',
+              fontWeight: 'bold',
+              border: 'none',
+            }}
+          >
+            OK, Got it
+          </button>
+        </div>
+      )}
       <div className="absolute inset-0 top-0 bottom-[72px] z-0">
         <AppMap
           mode="driver"
@@ -780,6 +879,15 @@ export function DriverDashboard() {
               className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-green-600 py-3 font-bold text-white hover:bg-green-700"
             >
               Navigate
+            </button>
+            <button
+              onClick={() => {
+                const target = getCurrentNavTarget(acceptedRide);
+                if (target) openGoogleMapsNav(target);
+              }}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-green-600 py-2 font-bold text-green-700 hover:bg-green-50"
+            >
+              📍 Navigate in Google Maps
             </button>
             {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && (
               <button

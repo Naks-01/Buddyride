@@ -108,6 +108,8 @@ export function PassengerDashboard() {
   const [showRating, setShowRating] = useState(false);
   const [driverRoutePath, setDriverRoutePath] = useState<[number, number][] | null>(null);
   const [driverRouteDurationSec, setDriverRouteDurationSec] = useState<number | null>(null);
+  const [cancelledBy, setCancelledBy] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [driverHeading, setDriverHeading] = useState<number | null>(null);
   const [isFollowingDriver, setIsFollowingDriver] = useState(true);
   const [centerTrigger, setCenterTrigger] = useState(0);
@@ -556,7 +558,11 @@ export function PassengerDashboard() {
           if ('Notification' in window && Notification.permission === 'granted') {
             new Notification('Driver is outside', { body: 'Your driver has arrived at the pickup point.' });
           }
-        } else if (nextStatus === 'cancelled') playSound('cancel');
+        } else if (nextStatus === 'cancelled') {
+          playSound('cancel');
+          setCancelledBy(typeof data.cancelledBy === 'string' ? data.cancelledBy : null);
+          setCancelReason(typeof data.cancelReason === 'string' ? data.cancelReason : null);
+        }
         else if (nextStatus === 'completed') playSound('completed');
         else if (nextStatus === 'cancelled_by_driver') {
           playSound('cancel');
@@ -785,16 +791,32 @@ export function PassengerDashboard() {
         cancellationDriverPayout: cancellationFee * DRIVER_RATE,
         paymentMethod: 'cash',
         cancellationBalanceDue: cancellationFee,
+        cancelledBy: 'passenger',
+        cancelReason: 'Cancelled by passenger',
       });
       setMessage(cancellationFee ? `Ride cancelled. Fee: ${formatR(cancellationFee)}` : 'Ride cancelled for free.');
-      setRideId(null);
-      setRideStatus(null);
-      setRideCreatedAt(null);
-      setCancelSecondsRemaining(0);
     } catch (err) {
       console.error(err);
       setMessage('Unable to cancel ride. Please try again.');
     }
+  };
+
+  // Dismisses the full-screen RIDE CANCELLED overlay and resets the booking flow so the passenger can request again.
+  const clearCancelledRide = () => {
+    setRideId(null);
+    setRideStatus(null);
+    setRideCreatedAt(null);
+    setCancelSecondsRemaining(0);
+    setCancelledBy(null);
+    setCancelReason(null);
+    setDriverLocation(null);
+    setDriverRoutePath(null);
+    setDriverName(null);
+    setDriverPhone(null);
+    setDriverId(null);
+    setDriverPhotoUrl(null);
+    setCarPlate(null);
+    resetPins();
   };
 
   const shareTrip = () => {
@@ -875,6 +897,45 @@ export function PassengerDashboard() {
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-gray-50">
+      {rideStatus === 'cancelled' && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: '#FF0000',
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+          }}
+        >
+          <h1 style={{ fontSize: '48px', fontWeight: 900, marginBottom: '20px' }}>RIDE CANCELLED</h1>
+          <p style={{ fontSize: '20px', marginBottom: '10px' }}>
+            {cancelledBy === 'passenger' ? 'Cancelled by passenger' : 'Cancelled by driver'}
+          </p>
+          <p style={{ fontSize: '16px', opacity: 0.9 }}>{cancelReason || 'No reason provided'}</p>
+          <button
+            onClick={clearCancelledRide}
+            style={{
+              marginTop: '30px',
+              background: 'white',
+              color: 'red',
+              padding: '15px 40px',
+              borderRadius: '30px',
+              fontSize: '18px',
+              fontWeight: 'bold',
+              border: 'none',
+            }}
+          >
+            OK, Got it
+          </button>
+        </div>
+      )}
       <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-gray-200 bg-white/95 px-4 py-4 shadow-sm">
         <Logo size={48} />
         <div className="flex items-center gap-2">

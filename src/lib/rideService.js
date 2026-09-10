@@ -147,6 +147,7 @@ export async function cancelRide(rideId, extra = {}) {
   await updateDoc(doc(db, 'rides', rideId), {
     status: RIDE_STATUS.CANCELLED,
     cancelledAt: serverTimestamp(),
+    cancelReason: extra.cancelReason ?? extra.cancellationReason ?? null,
     ...extra,
   });
 }
