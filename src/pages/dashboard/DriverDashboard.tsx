@@ -451,10 +451,10 @@ export function DriverDashboard() {
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.arrivedAt]);
 
   const startTrip = async (ride: RideRequest) => {
-    setAcceptedRide((prev) => (prev ? { ...prev, status: 'trip_started', currentStopIndex: 1 } : prev));
+    setAcceptedRide((prev) => (prev ? { ...prev, status: 'trip_started', currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0 } : prev));
     setUpdatingStatus(true);
     try {
-      await startTripService(ride.id, { currentStopIndex: 1 });
+      await startTripService(ride.id, { currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0, waitingFare: 0 });
     } catch (err) {
       console.error(err);
       setError('Failed to update ride status.');

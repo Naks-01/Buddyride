@@ -939,11 +939,17 @@ export function PassengerDashboard() {
           )}
           {isActiveTrip && (
             <>
-              <p className="text-center text-sm mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-2 px-3">
+              <p
+                className={`text-center text-sm mb-3 rounded-lg border py-2 px-3 ${
+                  rideStatus === 'trip_started'
+                    ? 'bg-green-50 text-green-800 border-green-200 font-semibold'
+                    : 'bg-orange-50 text-orange-700 border-orange-200'
+                }`}
+              >
                 {tripType === 'send' && (rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'trip_started')
                   ? 'Driver is delivering your parcel'
                   : rideStatus === 'trip_started'
-                    ? `Trip in progress${driverDistanceKm != null ? ` - ${driverDistanceKm.toFixed(1)}km to destination` : ''}`
+                    ? 'Trip in progress - Driver is taking you to your destination'
                     : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
               </p>
               {isShareableTrip && (
@@ -984,23 +990,21 @@ export function PassengerDashboard() {
                   )}
                 </div>
               )}
-              {rideStatus === 'trip_started' && (
-                <>
-                  <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
-                    Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
-                  </p>
-                  {tripProgressPercent != null && (
-                    <div className="mb-3">
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
-                        <div className="h-full rounded-full bg-green-600 transition-all duration-700" style={{ width: `${tripProgressPercent}%` }} />
-                      </div>
-                      <p className="mt-1 text-center text-xs font-semibold text-gray-500">{tripProgressPercent}% of trip completed</p>
-                    </div>
-                  )}
-                </>
+              {rideStatus === 'trip_started' && stopArrivalTime != null && (
+                <p className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-center text-sm font-semibold text-orange-800">
+                  Driver waiting: {Math.floor(waitingSeconds / 60)}:{String(waitingSeconds % 60).padStart(2, '0')} - Extra {formatR(waitingFare)} (R1/min after 3 min)
+                </p>
+              )}
+              {rideStatus === 'trip_started' && tripProgressPercent != null && (
+                <div className="mb-3">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                    <div className="h-full rounded-full bg-green-600 transition-all duration-700" style={{ width: `${tripProgressPercent}%` }} />
+                  </div>
+                  <p className="mt-1 text-center text-xs font-semibold text-gray-500">{tripProgressPercent}% of trip completed</p>
+                </div>
               )}
               {driverDistanceKm != null && driverEtaMinutes != null && (
-                <p className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center text-sm font-semibold text-green-800">
+                <p className={`mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center font-semibold text-green-800 ${rideStatus === 'trip_started' ? 'text-base' : 'text-sm'}`}>
                   {rideStatus === 'trip_started'
                     ? `${driverDistanceKm.toFixed(1)} km to destination - ETA ${driverEtaMinutes} min${driverEtaMinutes === 1 ? '' : 's'}`
                     : `Driver is ${driverDistanceKm.toFixed(1)} km away - ETA ${driverEtaMinutes} min${driverEtaMinutes === 1 ? '' : 's'}`}
@@ -1046,8 +1050,19 @@ export function PassengerDashboard() {
                       className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
                     />
                     {searchResults.length > 0 && (
-                      <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-gray-100 bg-white shadow-lg">
-                        {searchResults.map((result) => (
+                      <div
+                        className="location-results absolute left-0 right-0 top-full mt-1 rounded-xl border border-gray-100 shadow-lg"
+                        style={{
+                          maxHeight: '180px',
+                          overflowY: 'auto',
+                          position: 'relative',
+                          zIndex: 10,
+                          background: 'white',
+                          borderRadius: '12px',
+                          marginBottom: '10px',
+                        }}
+                      >
+                        {searchResults.slice(0, 3).map((result) => (
                           <div
                             key={result.id}
                             role="button"
@@ -1098,7 +1113,14 @@ export function PassengerDashboard() {
                       <button
                         type="button"
                         onClick={confirmMapLocation}
-                        className="mt-3 w-full rounded-xl bg-orange-500 py-3 font-bold text-white hover:bg-orange-600"
+                        className="w-full bg-orange-500 text-white py-4 rounded-full font-bold text-lg hover:bg-orange-600"
+                        style={{
+                          position: 'sticky',
+                          bottom: '0',
+                          zIndex: 20,
+                          marginTop: '10px',
+                          boxShadow: '0 -2px 10px rgba(0,0,0,0.1)',
+                        }}
                       >
                         Confirm {activeStopIndex === 0 ? 'Pickup' : activeStopIndex === stops.length - 1 ? 'Destination' : `Stop ${activeStopIndex}`}
                       </button>
