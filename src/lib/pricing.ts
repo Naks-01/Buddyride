@@ -8,12 +8,14 @@ import {
   CATEGORY_PER_MIN,
   COMMISSION_RATE,
   DRIVER_RATE,
+  MINIMUM_FARE,
   PER_KM_RATE,
 } from '../config/pricing';
 
-// Uber/Bolt-style category base price from a real OSRM route: distance (km) + duration (min).
+// Limpopo rate from a real OSRM route: distance (km) + duration (min), floored at MINIMUM_FARE.
 export function calculateCategoryBasePrice(distanceKm: number, durationMin: number): number {
-  return CATEGORY_FLAT_START + distanceKm * CATEGORY_PER_KM + durationMin * CATEGORY_PER_MIN + CATEGORY_FLAT_FEE;
+  const price = CATEGORY_FLAT_START + distanceKm * CATEGORY_PER_KM + durationMin * CATEGORY_PER_MIN + CATEGORY_FLAT_FEE;
+  return Math.max(price, MINIMUM_FARE);
 }
 
 export async function getFarePricing(lat: number, lng: number): Promise<{ baseFare: number; perKm: number; town: string }> {

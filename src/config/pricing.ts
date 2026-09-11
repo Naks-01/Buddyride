@@ -1,11 +1,12 @@
 export const BASE_FARE = 15;
 export const PER_KM_RATE = 8.5;
 export const BOOKING_FEE = 3;
-// OSRM distance/duration-based category pricing: basePrice = FLAT_START + km*PER_KM + min*PER_MIN + FLAT_FEE.
-export const CATEGORY_FLAT_START = 20;
-export const CATEGORY_PER_KM = 8.5;
-export const CATEGORY_PER_MIN = 1.2;
-export const CATEGORY_FLAT_FEE = 5;
+// Limpopo rate: basePrice = FLAT_START + km*PER_KM + min*PER_MIN, floored at MINIMUM_FARE.
+export const CATEGORY_FLAT_START = 12;
+export const CATEGORY_PER_KM = 7.5;
+export const CATEGORY_PER_MIN = 0.8;
+export const CATEGORY_FLAT_FEE = 0;
+export const MINIMUM_FARE = 25;
 export const VERIFICATION_FEE = 0; // NLTA ID verification is free for now
 export const TIP_OPTIONS = [5, 10, 20, 30];
 export const TIP_PRESETS = [5, 10, 20];
