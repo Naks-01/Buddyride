@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import {
   Car as CarPin,
+  Compass,
   HelpCircle,
   Home as HomeNav,
-  LocateFixed,
   Menu,
+  Navigation as NavigationIcon,
+  Phone,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
@@ -36,6 +38,8 @@ import { RIDE_CATEGORIES } from '../../config/categories';
 
 // Statuses during which the driver's live GPS position should keep broadcasting to the ride doc.
 const LOCATION_SHARING_STATUSES = new Set(['driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started']);
+// Statuses during which the map goes fullscreen and the bottom sheet becomes a minimized nav bar.
+const ACTIVE_NAV_STATUSES = new Set(['driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started']);
 
 
 type Location = { placeId?: string; address?: string; name?: string; description?: string; lat?: number; lng?: number };
@@ -122,8 +126,13 @@ export function DriverDashboard() {
   const [checkingArrival, setCheckingArrival] = useState(false);
   const [routePath, setRoutePath] = useState<[number, number][] | null>(null);
   const [routeMarkers, setRouteMarkers] = useState<AppMapMarker[]>([]);
+  const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
+  const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+  const [passengerName, setPassengerName] = useState('Passenger');
+  const sheetTouchStartY = useRef<number | null>(null);
 
   const requestLocation = () => {
     if (!navigator.geolocation) {
@@ -614,6 +623,8 @@ export function DriverDashboard() {
     void getFreeRoute(driverLocation, target).then((route) => {
       if (cancelled) return;
       setRoutePath(route?.polyline ?? null);
+      setRouteDistanceM(route?.distance ?? null);
+      setRouteDurationSec(route?.duration ?? null);
     });
     return () => {
       cancelled = true;
@@ -625,8 +636,33 @@ export function DriverDashboard() {
     if (!acceptedRide) {
       setRoutePath(null);
       setRouteMarkers([]);
+      setRouteDistanceM(null);
+      setRouteDurationSec(null);
     }
   }, [acceptedRide]);
+
+  // Bottom sheet starts minimized on every new ride and re-minimizes when the phase changes (pickup -> trip).
+  useEffect(() => {
+    setSheetExpanded(false);
+  }, [acceptedRide?.id, acceptedRide?.status]);
+
+  // Passenger display name for the nav bottom sheet (ride doc itself has no name field).
+  useEffect(() => {
+    const passengerId = acceptedRide?.passengerId;
+    if (!passengerId) {
+      setPassengerName('Passenger');
+      return;
+    }
+    let cancelled = false;
+    void getDoc(doc(db, 'users', passengerId)).then((snapshot) => {
+      if (cancelled) return;
+      const data = snapshot.data() as Record<string, unknown> | undefined;
+      setPassengerName((data?.full_name as string) || (data?.name as string) || 'Passenger');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [acceptedRide?.passengerId]);
 
   const navigateToPickup = async (ride: RideRequest) => {
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
@@ -653,8 +689,9 @@ export function DriverDashboard() {
   };
 
   // Always opens the real Google Maps app/website (independent of the in-app/Waze navigation preference).
-  const openGoogleMapsNav = (destination: Coordinates) => {
-    window.open(`https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}`, '_blank');
+  const openGoogleMapsNav = (destination: Coordinates, origin?: Coordinates) => {
+    const originParam = origin ? `&origin=${origin.lat},${origin.lng}` : '';
+    window.open(`https://www.google.com/maps/dir/?api=1${originParam}&destination=${destination.lat},${destination.lng}&travelmode=driving`, '_blank');
   };
 
   // Whichever point the driver should currently be heading to: pickup pre-trip, dropoff/current stop once trip_started.
@@ -691,6 +728,27 @@ export function DriverDashboard() {
   }
 
   const hasActiveOverlay = Boolean(acceptedRide) || rides.length > 0;
+  const isActiveNav = Boolean(acceptedRide && ACTIVE_NAV_STATUSES.has(acceptedRide.status ?? ''));
+  const isTripPhase = acceptedRide?.status === 'trip_started';
+  const navTarget = acceptedRide ? getCurrentNavTarget(acceptedRide) : null;
+  const routeDistanceKm = routeDistanceM != null ? (routeDistanceM / 1000).toFixed(1) : null;
+  const routeEtaMin = routeDurationSec != null ? Math.max(1, Math.round(routeDurationSec / 60)) : null;
+  const formatLoc = (loc?: string | Location) => {
+    if (!loc) return '—';
+    if (typeof loc === 'string') return loc;
+    return loc.address ?? loc.name ?? loc.description ?? '—';
+  };
+  const handleSheetTouchStart = (e: TouchEvent) => {
+    sheetTouchStartY.current = e.touches[0]?.clientY ?? null;
+  };
+  const handleSheetTouchEnd = (e: TouchEvent) => {
+    const startY = sheetTouchStartY.current;
+    sheetTouchStartY.current = null;
+    if (startY == null) return;
+    const deltaY = (e.changedTouches[0]?.clientY ?? startY) - startY;
+    if (deltaY < -30) setSheetExpanded(true);
+    else if (deltaY > 30) setSheetExpanded(false);
+  };
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#121212] text-white">
@@ -733,12 +791,13 @@ export function DriverDashboard() {
           </button>
         </div>
       )}
-      <div className="absolute inset-0 top-0 bottom-[72px] z-0">
+      <div className={`absolute inset-x-0 top-0 z-0 ${isActiveNav ? 'bottom-0' : 'bottom-[72px]'}`}>
         <AppMap
           mode="driver"
           centerBtn={centerTrigger}
           center={driverLocation ? [driverLocation.lat, driverLocation.lng] : undefined}
           routePath={routePath ?? undefined}
+          routeWeight={isTripPhase ? 8 : 5}
           markers={
             driverLocation
               ? [...routeMarkers, { id: 'driver-live', position: [driverLocation.lat, driverLocation.lng], color: '#00C853', emoji: '🚕' }]
@@ -756,14 +815,17 @@ export function DriverDashboard() {
         >
           <Menu size={20} />
         </button>
-        <div className="flex flex-col items-center rounded-full bg-[#3A3D45] px-5 py-2 shadow-lg">
-          <span className="text-base font-bold leading-none text-white">R {todayEarnings.toFixed(2)}</span>
-          <span className="text-[11px] text-gray-400">Today</span>
-        </div>
+        {!isActiveNav && (
+          <div className="flex flex-col items-center rounded-full bg-[#3A3D45] px-5 py-2 shadow-lg">
+            <span className="text-base font-bold leading-none text-white">R {todayEarnings.toFixed(2)}</span>
+            <span className="text-[11px] text-gray-400">Today</span>
+          </div>
+        )}
         <button type="button" aria-label="Safety" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
           <ShieldCheck size={20} />
         </button>
       </div>
+
 
       <DriverDrawer
         open={isDrawerOpen}
@@ -794,16 +856,20 @@ export function DriverDashboard() {
         </div>
       )}
 
-      {!hasActiveOverlay && (
-        <div className="absolute right-4 bottom-24 z-10 flex flex-col gap-3 pointer-events-auto">
-          <button type="button" onClick={recenterMap} aria-label="Locate me" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
-            <LocateFixed size={20} />
-          </button>
+      <div
+        className={`absolute right-4 z-20 flex flex-col gap-3 pointer-events-auto ${
+          isActiveNav ? (sheetExpanded ? 'bottom-[46vh]' : 'bottom-[104px]') : 'bottom-24'
+        }`}
+      >
+        <button type="button" onClick={recenterMap} aria-label="Recenter map" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
+          <Compass size={20} />
+        </button>
+        {!hasActiveOverlay && (
           <button type="button" aria-label="Filter" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
             <SlidersHorizontal size={20} />
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {!isOnline && !hasActiveOverlay && (
         <button
@@ -862,130 +928,174 @@ export function DriverDashboard() {
         </div>
       )}
 
-      {acceptedRide && (
-        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[40vh] overflow-y-auto rounded-t-[20px] bg-[#121212] px-4 pt-2 shadow-[0_-4px_20px_rgba(0,0,0,0.35)]">
-          <section className="mb-2 rounded-2xl border border-green-200 bg-white p-4 shadow-2xl">
-            <h2 className="mb-3 text-lg font-bold text-green-900">Accepted Ride</h2>
-            <RideDetails ride={acceptedRide} />
-            <PassengerBadge passengerId={acceptedRide.passengerId} revealed />
-            <a
-              href={`tel:${acceptedRide.passengerPhone ?? ''}`}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-green-600 py-2 font-bold text-green-700 hover:bg-green-100"
-            >
-              Call Passenger
-            </a>
-            <button
-              onClick={() => navigateToPickup(acceptedRide)}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-green-600 py-3 font-bold text-white hover:bg-green-700"
-            >
-              Navigate
-            </button>
-            <button
-              onClick={() => {
-                const target = getCurrentNavTarget(acceptedRide);
-                if (target) openGoogleMapsNav(target);
-              }}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-green-600 py-2 font-bold text-green-700 hover:bg-green-50"
-            >
-              📍 Navigate in Google Maps
-            </button>
-            {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && (
-              <button
-                onClick={() => void markArrivedAtPickup(acceptedRide)}
-                disabled={updatingStatus || checkingArrival}
-                className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
+      {acceptedRide && isActiveNav && (
+        <div
+          className={`absolute inset-x-0 bottom-0 z-30 rounded-t-[20px] bg-[#121212] shadow-[0_-4px_20px_rgba(0,0,0,0.35)] transition-[max-height] duration-300 ${
+            sheetExpanded ? 'max-h-[75vh] overflow-y-auto' : 'h-[90px] overflow-hidden'
+          }`}
+          onTouchStart={handleSheetTouchStart}
+          onTouchEnd={handleSheetTouchEnd}
+        >
+          <button
+            type="button"
+            onClick={() => setSheetExpanded((v) => !v)}
+            className="flex w-full flex-col items-center pt-2 pb-1"
+            aria-label={sheetExpanded ? 'Collapse ride details' : 'Expand ride details'}
+          >
+            <span className="h-1 w-10 rounded-full bg-gray-600" />
+          </button>
+
+          <div className="px-4 pb-3">
+            <div className="flex items-center justify-between gap-2 text-white">
+              <span className="max-w-[38%] truncate text-sm font-bold">
+                {isTripPhase ? 'Trip in progress' : passengerName}
+              </span>
+              <span className="max-w-[38%] truncate text-xs text-gray-300">
+                {isTripPhase ? 'Dropoff: ' : 'Pickup: '}
+                {formatLoc(isTripPhase ? acceptedRide.dropoff : acceptedRide.pickup)}
+              </span>
+              <span className="whitespace-nowrap text-xs font-semibold text-gray-400">
+                {routeDistanceKm != null ? `${routeDistanceKm}km` : '—'}
+                {routeEtaMin != null ? ` · ETA ${routeEtaMin}min` : ''}
+              </span>
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <a
+                href={`tel:${acceptedRide.passengerPhone ?? ''}`}
+                className="flex items-center justify-center gap-1 rounded-lg border border-gray-600 py-2 text-xs font-bold text-white"
               >
-                {checkingArrival ? 'Checking your location...' : 'Arrived at Pickup'}
+                <Phone size={14} /> CALL
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  if (navTarget) openGoogleMapsNav(navTarget, driverLocation ?? undefined);
+                }}
+                className="flex items-center justify-center gap-1 rounded-lg bg-green-600 py-2 text-xs font-bold text-white"
+              >
+                <NavigationIcon size={14} /> NAVIGATE
               </button>
-            )}
-            {acceptedRide.status === 'driver_arrived' && (
-              <>
-                <div className="mt-2 rounded-lg bg-orange-50 border border-orange-200 py-2 px-3 text-center text-sm font-semibold text-orange-700">
-                  {pickupWaitSeconds <= 180
-                    ? `Free wait: ${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')} remaining`
-                    : `Waiting: ${Math.floor(pickupWaitSeconds / 60)}:${String(pickupWaitSeconds % 60).padStart(2, '0')} - Extra R${waitFare(pickupWaitSeconds)}`}
-                </div>
-                <p className="mt-2 text-center text-sm font-semibold text-orange-700">
-                  {waitSecondsRemaining > 0
-                    ? `Wait ${Math.floor(waitSecondsRemaining / 60)}:${String(waitSecondsRemaining % 60).padStart(2, '0')} before marking no-show`
-                    : 'Passenger no-show is available'}
-                </p>
-                {waitSecondsRemaining === 0 ? (
+              {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && (
+                <button
+                  type="button"
+                  onClick={() => void markArrivedAtPickup(acceptedRide)}
+                  disabled={updatingStatus || checkingArrival}
+                  className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                >
+                  {checkingArrival ? '...' : 'ARRIVED'}
+                </button>
+              )}
+              {acceptedRide.status === 'driver_arrived' && (
+                <button
+                  type="button"
+                  onClick={() => void startTrip(acceptedRide)}
+                  disabled={updatingStatus}
+                  className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                >
+                  START TRIP
+                </button>
+              )}
+              {isTripPhase && (() => {
+                const stops = acceptedRide.stops ?? [];
+                const currentStopIndex = acceptedRide.currentStopIndex ?? 1;
+                const hasNextStop = currentStopIndex < stops.length - 1;
+                if (!hasNextStop) {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => completeTrip(acceptedRide)}
+                      disabled={updatingStatus}
+                      className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                    >
+                      COMPLETE TRIP
+                    </button>
+                  );
+                }
+                return acceptedRide.stopArrivalTime ? (
+                  <button
+                    type="button"
+                    onClick={() => void continueToNextStop(acceptedRide)}
+                    disabled={updatingStatus}
+                    className="rounded-lg bg-green-600 py-2 text-xs font-bold text-white disabled:opacity-60"
+                  >
+                    CONTINUE
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void arriveAtStop(acceptedRide)}
+                    disabled={updatingStatus}
+                    className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                  >
+                    ARRIVED AT STOP
+                  </button>
+                );
+              })()}
+            </div>
+          </div>
+
+          {sheetExpanded && (
+            <div className="px-4 pb-4">
+              <section className="mb-2 rounded-2xl border border-green-200 bg-white p-4 shadow-2xl">
+                <h2 className="mb-3 text-lg font-bold text-green-900">Accepted Ride</h2>
+                <RideDetails ride={acceptedRide} />
+                <PassengerBadge passengerId={acceptedRide.passengerId} revealed />
+                {acceptedRide.status === 'driver_arrived' && (
+                  <>
+                    <div className="mt-2 rounded-lg bg-orange-50 border border-orange-200 py-2 px-3 text-center text-sm font-semibold text-orange-700">
+                      {pickupWaitSeconds <= 180
+                        ? `Free wait: ${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')} remaining`
+                        : `Waiting: ${Math.floor(pickupWaitSeconds / 60)}:${String(pickupWaitSeconds % 60).padStart(2, '0')} - Extra R${waitFare(pickupWaitSeconds)}`}
+                    </div>
+                    <p className="mt-2 text-center text-sm font-semibold text-orange-700">
+                      {waitSecondsRemaining > 0
+                        ? `Wait ${Math.floor(waitSecondsRemaining / 60)}:${String(waitSecondsRemaining % 60).padStart(2, '0')} before marking no-show`
+                        : 'Passenger no-show is available'}
+                    </p>
+                    {waitSecondsRemaining === 0 && (
+                      <button
+                        onClick={() => void driverCancelRide(acceptedRide)}
+                        disabled={updatingStatus}
+                        className="mt-2 w-full rounded-lg bg-red-600 py-3 font-bold text-white disabled:opacity-60"
+                      >
+                        Passenger no-show (R20)
+                      </button>
+                    )}
+                  </>
+                )}
+                {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route' || acceptedRide.status === 'driver_arrived') && (
                   <button
                     onClick={() => void driverCancelRide(acceptedRide)}
                     disabled={updatingStatus}
-                    className="mt-2 w-full rounded-lg bg-red-600 py-3 font-bold text-white disabled:opacity-60"
+                    className="mt-2 w-full rounded-lg border border-red-500 py-2 font-semibold text-red-600 disabled:opacity-60"
                   >
-                    Passenger no-show (R20)
+                    Cancel Ride (no fee before wait)
                   </button>
-                ) : (
-                  <p className="mt-1 text-center text-xs text-gray-500">Must be at pickup location</p>
                 )}
-                <button
-                  onClick={() => void startTrip(acceptedRide)}
-                  disabled={updatingStatus}
-                  className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
-                >
-                  Start Trip
-                </button>
-              </>
-            )}
-            {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route' || acceptedRide.status === 'driver_arrived') && (
-              <button
-                onClick={() => void driverCancelRide(acceptedRide)}
-                disabled={updatingStatus}
-                className="mt-2 w-full rounded-lg border border-red-500 py-2 font-semibold text-red-600 disabled:opacity-60"
-              >
-                Cancel Ride (no fee before wait)
-              </button>
-            )}
-            {acceptedRide.status === 'trip_started' && (() => {
-              const stops = acceptedRide.stops ?? [];
-              const currentStopIndex = acceptedRide.currentStopIndex ?? 1;
-              const hasNextStop = currentStopIndex < stops.length - 1;
-              const waitingFare = waitFare(stopWaitingSeconds);
-              return hasNextStop ? (
-                <>
-                  {acceptedRide.stopArrivalTime ? (
-                    <>
-                      <p className="mt-2 text-center text-sm font-semibold text-orange-700">
-                        Waiting: {Math.floor(stopWaitingSeconds / 60)}:{String(stopWaitingSeconds % 60).padStart(2, '0')} (R{waitingFare})
-                      </p>
-                      <p className="mt-1 text-center text-xs text-gray-600">First 3 minutes free, then R1 per started minute</p>
-                      <button
-                        onClick={() => void continueToNextStop(acceptedRide)}
-                        disabled={updatingStatus}
-                        className="mt-2 w-full rounded-lg bg-green-600 py-3 font-bold text-white disabled:opacity-60"
-                      >
-                        Continue to next
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => void arriveAtStop(acceptedRide)}
-                      disabled={updatingStatus}
-                      className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
-                    >
-                      Arrived at Stop {currentStopIndex}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => void navigateToDestination(acceptedRide)}
-                    className="mt-2 w-full rounded-lg border border-orange-500 py-2 font-bold text-orange-600 hover:bg-orange-50"
-                  >
-                    Navigate to Stop {currentStopIndex}
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={() => completeTrip(acceptedRide)}
-                  disabled={updatingStatus}
-                  className="mt-2 w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-60"
-                >
-                  Complete Trip
-                </button>
-              );
-            })()}
+                {isTripPhase && (() => {
+                  const stops = acceptedRide.stops ?? [];
+                  const currentStopIndex = acceptedRide.currentStopIndex ?? 1;
+                  const hasNextStop = currentStopIndex < stops.length - 1;
+                  const waitingFare = waitFare(stopWaitingSeconds);
+                  return hasNextStop && acceptedRide.stopArrivalTime ? (
+                    <p className="mt-2 text-center text-sm font-semibold text-orange-700">
+                      Waiting: {Math.floor(stopWaitingSeconds / 60)}:{String(stopWaitingSeconds % 60).padStart(2, '0')} (R{waitingFare})
+                    </p>
+                  ) : null;
+                })()}
+              </section>
+            </div>
+          )}
+        </div>
+      )}
+
+      {acceptedRide && !isActiveNav && (
+        <div className="absolute inset-x-0 bottom-[4.5rem] z-30 max-h-[40vh] overflow-y-auto rounded-t-[20px] bg-[#121212] px-4 pt-2 shadow-[0_-4px_20px_rgba(0,0,0,0.35)]">
+          <section className="mb-2 rounded-2xl border border-green-200 bg-white p-4 shadow-2xl">
+            <h2 className="mb-3 text-lg font-bold text-green-900">Ride Complete</h2>
+            <RideDetails ride={acceptedRide} />
+            <PassengerBadge passengerId={acceptedRide.passengerId} revealed />
             {acceptedRide.status === 'completed' && (
               <div className="mt-3 space-y-2">
                 <p className="text-center text-sm font-semibold text-green-800">
@@ -1003,24 +1113,26 @@ export function DriverDashboard() {
         </div>
       )}
 
-      <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-around bg-[#2A2D36] py-3 pointer-events-auto">
-        <button type="button" className="flex flex-col items-center gap-1 text-white">
-          <HomeNav size={20} />
-          <span className="text-[11px] font-semibold">Home</span>
-        </button>
-        <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
-          <Wallet size={20} />
-          <span className="text-[11px]">Earn more</span>
-        </button>
-        <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
-          <CarPin size={20} />
-          <span className="text-[11px]">Rides</span>
-        </button>
-        <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
-          <HelpCircle size={20} />
-          <span className="text-[11px]">Help</span>
-        </button>
-      </div>
+      {!isActiveNav && (
+        <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-around bg-[#2A2D36] py-3 pointer-events-auto">
+          <button type="button" className="flex flex-col items-center gap-1 text-white">
+            <HomeNav size={20} />
+            <span className="text-[11px] font-semibold">Home</span>
+          </button>
+          <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+            <Wallet size={20} />
+            <span className="text-[11px]">Earn more</span>
+          </button>
+          <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+            <CarPin size={20} />
+            <span className="text-[11px]">Rides</span>
+          </button>
+          <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+            <HelpCircle size={20} />
+            <span className="text-[11px]">Help</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

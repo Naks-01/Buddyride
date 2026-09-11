@@ -65,6 +65,8 @@ type AppMapProps = {
   showSelfMarker?: boolean;
   markers?: AppMapMarker[];
   routePath?: [number, number][];
+  routeColor?: string;
+  routeWeight?: number;
   onMapClick?: (lat: number, lng: number) => void;
   onUserInteraction?: () => void;
   showControls?: boolean;
@@ -136,6 +138,8 @@ export default function AppMap({
   showSelfMarker = mode === 'driver',
   markers = [],
   routePath,
+  routeColor = '#2ECC71',
+  routeWeight = 5,
   onMapClick,
   onUserInteraction,
   showControls = true,
@@ -215,7 +219,7 @@ export default function AppMap({
             icon={marker.id === 'driver' ? driverCarIcon(marker.rotation) : pinIcon(marker.color ?? '#FF3B30', marker.emoji ?? '📍')}
           />
         ))}
-        {routePath && routePath.length > 1 && <Polyline positions={routePath} color="#2ECC71" weight={5} opacity={0.8} />}
+        {routePath && routePath.length > 1 && <Polyline positions={routePath} color={routeColor} weight={routeWeight} opacity={0.85} />}
         <ClickHandler onMapClick={onMapClick} />
         <DragHandler onUserInteraction={onUserInteraction} />
       </MapContainer>
