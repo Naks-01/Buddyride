@@ -89,7 +89,7 @@ function addRouteLayer(map: maplibregl.Map) {
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#4668F2', 'line-width': 7, 'line-opacity': 1 },
+      paint: { 'line-color': '#4668F2', 'line-width': 8, 'line-opacity': 1 },
     });
   }
   if (!map.getLayer(ROUTE_INNER_LAYER_ID)) {
@@ -122,6 +122,8 @@ type DriverMap3DProps = {
   zoom?: number;
   routePath?: [number, number][];
   markers?: DriverMapMarker[];
+  driverLocation?: [number, number]; // [lat, lng] - fetches its own free OSRM route when paired with destination
+  destination?: [number, number]; // [lat, lng]
 };
 
 export default function DriverMap3D({
@@ -129,6 +131,8 @@ export default function DriverMap3D({
   zoom = 17,
   routePath,
   markers = [],
+  driverLocation,
+  destination,
 }: DriverMap3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -265,6 +269,42 @@ export default function DriverMap3D({
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     source?.setData(geojson);
   }, [routePath, styleLoaded, styleVersion]);
+
+  // Fetch route FREE from OSRM when raw driverLocation/destination coords are passed directly (no billing).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !styleLoaded || !driverLocation || !destination) return;
+
+    const fetchRoute = async () => {
+      const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      if (!source) return;
+      try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${driverLocation[1]},${driverLocation[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const coords: [number, number][] | undefined = data.routes?.[0]?.geometry?.coordinates;
+        if (!coords) throw new Error('No OSRM route');
+        source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
+        const bounds = new maplibregl.LngLatBounds();
+        coords.forEach((c) => bounds.extend(c));
+        map.fitBounds(bounds, { padding: 100, maxZoom: 16 });
+      } catch (e) {
+        console.log('OSRM failed, drawing straight line', e);
+        source.setData({
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [driverLocation[1], driverLocation[0]],
+              [destination[1], destination[0]],
+            ],
+          },
+        });
+      }
+    };
+    void fetchRoute();
+  }, [driverLocation, destination, styleLoaded]);
 
   const handleRecenter = () => {
     followRef.current = true;
