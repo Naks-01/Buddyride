@@ -21,12 +21,12 @@ type PassengerMap3DProps = {
 };
 
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582];
-// demotiles.maplibre.org is a MapLibre-hosted style that is never blocked on Vercel; used as the reliable base for both themes.
+// CARTO basemaps render reliably worldwide (including South Africa), unlike demotiles/openfreemap which can be blank at some zooms.
 const STYLES = {
-  light: 'https://demotiles.maplibre.org/style.json',
-  dark: 'https://tiles.openfreemap.org/styles/dark',
+  light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
 };
-const FALLBACK_MAP_STYLE = STYLES.light;
+const FALLBACK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
 const ROUTE_SOURCE_ID = 'passenger-route';
 const ROUTE_LAYER_ID = 'passenger-route-line';
 const ROUTE_OUTLINE_LAYER_ID = 'passenger-route-line-outline';
@@ -115,7 +115,6 @@ export default function PassengerMap3D({
       zoom,
       pitch: 0,
       bearing: 0,
-      canvasContextAttributes: { antialias: true },
       attributionControl: false,
     });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
@@ -125,6 +124,8 @@ export default function PassengerMap3D({
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
       addRouteLayer(map);
+      // CARTO tiles can render blank until the canvas is nudged after layout settles.
+      setTimeout(() => map.resize(), 500);
     });
     map.on('error', () => {
       if (!usingFallback && !map.isStyleLoaded()) {
