@@ -10,14 +10,41 @@ export type DriverMapMarker = {
   emoji?: string;
 };
 
-// CARTO basemaps render reliably worldwide (including South Africa), unlike demotiles/openfreemap which can be blank at some zooms.
+// Raster OSM tiles are guaranteed to render streets everywhere (incl. Polokwane) with no vector sprite/glyph failure modes.
+const OSM_RASTER_STYLE = {
+  version: 8,
+  sources: {
+    'osm-raster': {
+      type: 'raster',
+      tiles: [
+        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      ],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors',
+    },
+  },
+  layers: [{ id: 'osm-raster-layer', type: 'raster', source: 'osm-raster', minzoom: 0, maxzoom: 19 }],
+} as any;
+const DARK_RASTER_STYLE = {
+  version: 8,
+  sources: {
+    'dark-raster': {
+      type: 'raster',
+      tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors © CARTO',
+    },
+  },
+  layers: [{ id: 'dark-raster-layer', type: 'raster', source: 'dark-raster', minzoom: 0, maxzoom: 19 }],
+} as any;
 const STYLES = {
-  light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  light: OSM_RASTER_STYLE,
+  dark: DARK_RASTER_STYLE,
 };
-const FALLBACK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582]; // Polokwane fallback
-const DRIVE_PITCH = 60;
+const DRIVE_PITCH = 0;
 const ROUTE_SOURCE_ID = 'driver-route';
 const ROUTE_CASING_LAYER_ID = 'driver-route-casing';
 const ROUTE_LAYER_ID = 'driver-route-line';
@@ -127,7 +154,6 @@ export default function DriverMap3D({
   // Init map once.
   useEffect(() => {
     if (!containerRef.current) return;
-    let usingFallback = false;
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: isDark ? STYLES.dark : STYLES.light,
@@ -143,19 +169,14 @@ export default function DriverMap3D({
     map.on('dragstart', () => {
       followRef.current = false;
     });
+    map.on('load', () => {
+      map.resize();
+      setTimeout(() => map.resize(), 1000);
+    });
     map.on('style.load', () => {
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
       addRouteLayer(map);
-      // CARTO tiles can render blank until the canvas is nudged after layout settles.
-      setTimeout(() => map.resize(), 500);
-    });
-    map.on('error', () => {
-      if (!usingFallback && !map.isStyleLoaded()) {
-        usingFallback = true;
-        setStyleLoaded(false);
-        map.setStyle(FALLBACK_MAP_STYLE);
-      }
     });
     mapRef.current = map;
     carMarkerRef.current = new maplibregl.Marker({ element: carElement() }).setLngLat([pos[1], pos[0]]).addTo(map);
