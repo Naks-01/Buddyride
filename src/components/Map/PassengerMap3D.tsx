@@ -21,12 +21,39 @@ type PassengerMap3DProps = {
 };
 
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582];
-// CARTO basemaps render reliably worldwide (including South Africa), unlike demotiles/openfreemap which can be blank at some zooms.
+// Raster OSM tiles are guaranteed to render streets everywhere (incl. Polokwane), same base as the driver map.
+const OSM_RASTER_STYLE = {
+  version: 8,
+  sources: {
+    'osm-raster': {
+      type: 'raster',
+      tiles: [
+        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      ],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors',
+    },
+  },
+  layers: [{ id: 'osm-raster-layer', type: 'raster', source: 'osm-raster', minzoom: 0, maxzoom: 19 }],
+} as any;
+const DARK_RASTER_STYLE = {
+  version: 8,
+  sources: {
+    'dark-raster': {
+      type: 'raster',
+      tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors © CARTO',
+    },
+  },
+  layers: [{ id: 'dark-raster-layer', type: 'raster', source: 'dark-raster', minzoom: 0, maxzoom: 19 }],
+} as any;
 const STYLES = {
-  light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  light: OSM_RASTER_STYLE,
+  dark: DARK_RASTER_STYLE,
 };
-const FALLBACK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
 const ROUTE_SOURCE_ID = 'passenger-route';
 const ROUTE_LAYER_ID = 'passenger-route-line';
 const ROUTE_OUTLINE_LAYER_ID = 'passenger-route-line-outline';
@@ -34,15 +61,22 @@ const ROUTE_OUTLINE_LAYER_ID = 'passenger-route-line-outline';
 function markerElement(marker: PassengerMapMarker) {
   const element = document.createElement('div');
   const rotation = marker.id === 'driver' ? marker.rotation ?? 0 : 0;
+  if (marker.id === 'driver') {
+    // Bolt-style driver marker: plain car icon, no pin circle.
+    element.style.cssText = `width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:28px;transform:rotate(${rotation}deg);transition:transform 0.5s linear;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.4))`;
+    element.innerHTML = `<span style="transform:rotate(${-rotation}deg)">${marker.emoji ?? '🚕'}</span>`;
+    return element;
+  }
   const color = marker.color ?? '#111111';
   const emoji = marker.emoji ?? '📍';
-  const size = marker.id === 'driver' ? 44 : 34;
-  element.style.cssText = `width:${size}px;height:${size}px;transform:rotate(${rotation}deg);transition:transform 0.5s linear`;
-  element.innerHTML = `<div style="background:${color};width:${size}px;height:${size}px;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:${marker.id === 'driver' ? 22 : 15}px;box-shadow:0 4px 12px rgba(0,0,0,0.4)"><span style="transform:rotate(${-rotation}deg)">${emoji}</span></div>`;
+  const size = 34;
+  element.style.cssText = `width:${size}px;height:${size}px`;
+  element.innerHTML = `<div style="background:${color};width:${size}px;height:${size}px;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 4px 12px rgba(0,0,0,0.4)"><span>${emoji}</span></div>`;
   return element;
 }
 
 // Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
+// Bolt-style blue nav line: light-blue outline underneath a solid blue main line.
 function addRouteLayer(map: maplibregl.Map) {
   if (!map.getSource(ROUTE_SOURCE_ID)) {
     map.addSource(ROUTE_SOURCE_ID, {
@@ -56,7 +90,7 @@ function addRouteLayer(map: maplibregl.Map) {
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.9 },
+      paint: { 'line-color': '#A8C0FF', 'line-width': 14, 'line-opacity': 0.5 },
     });
   }
   if (!map.getLayer(ROUTE_LAYER_ID)) {
@@ -65,7 +99,7 @@ function addRouteLayer(map: maplibregl.Map) {
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#111111', 'line-width': 5, 'line-opacity': 0.9 },
+      paint: { 'line-color': '#4668F2', 'line-width': 7, 'line-opacity': 1 },
     });
   }
 }
@@ -107,13 +141,12 @@ export default function PassengerMap3D({
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const initialCenter = center ?? DEFAULT_CENTER;
-    let usingFallback = false;
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: isDark ? STYLES.dark : STYLES.light,
       center: [initialCenter[1], initialCenter[0]],
       zoom,
-      pitch: 0,
+      pitch: 45,
       bearing: 0,
       attributionControl: false,
     });
@@ -124,15 +157,10 @@ export default function PassengerMap3D({
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
       addRouteLayer(map);
-      // CARTO tiles can render blank until the canvas is nudged after layout settles.
-      setTimeout(() => map.resize(), 500);
     });
-    map.on('error', () => {
-      if (!usingFallback && !map.isStyleLoaded()) {
-        usingFallback = true;
-        setStyleLoaded(false);
-        map.setStyle(FALLBACK_MAP_STYLE);
-      }
+    map.on('load', () => {
+      map.resize();
+      setTimeout(() => map.resize(), 1000);
     });
     map.on('dragstart', () => onUserInteractionRef.current?.());
     map.on('click', (event) => onMapClickRef.current?.(event.lngLat.lat, event.lngLat.lng));
