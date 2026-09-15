@@ -3,9 +3,9 @@ import { db, auth } from '../firebase'
 import { collection, addDoc, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore'
 
 const cats = [
-  { id: 'go', label: 'Go', seats: 2, price: 45 },
-  { id: 'comfort', label: 'Comfort', seats: 3, price: 65 },
-  { id: 'xl', label: 'XL', seats: 6, price: 95 },
+  { id: 'go', label: 'Buddy Go', seats: 2, price: 45 },
+  { id: 'comfort', label: 'Buddy Ride', seats: 3, price: 65 },
+  { id: 'xl', label: 'Buddy XL', seats: 6, price: 95 },
 ] as const
 
 type CategoryId = (typeof cats)[number]['id']

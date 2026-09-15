@@ -21,7 +21,9 @@ type PassengerMap3DProps = {
 };
 
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4689];
-const VOYAGER_STYLE = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+const LIGHT_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const DARK_MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
+const FALLBACK_MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const ROUTE_SOURCE_ID = 'passenger-route';
 const ROUTE_LAYER_ID = 'passenger-route-line';
 
@@ -50,7 +52,10 @@ export default function PassengerMap3D({
   const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
   const onMapClickRef = useRef(onMapClick);
   const onUserInteractionRef = useRef(onUserInteraction);
+  const themeInitializedRef = useRef(false);
   const [styleLoaded, setStyleLoaded] = useState(false);
+  const [styleVersion, setStyleVersion] = useState(0);
+  const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
     onMapClickRef.current = onMapClick;
@@ -58,17 +63,39 @@ export default function PassengerMap3D({
   }, [onMapClick, onUserInteraction]);
 
   useEffect(() => {
+    const savedTheme = localStorage.getItem('mapTheme');
+    const prefersDark = savedTheme ? savedTheme === 'dark' : new Date().getHours() >= 18 || new Date().getHours() < 6;
+    if (prefersDark !== isDark) {
+      setIsDark(prefersDark);
+      return;
+    }
+    themeInitializedRef.current = true;
+  }, [isDark]);
+
+  useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const initialCenter = center ?? DEFAULT_CENTER;
+    let usingFallback = false;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: VOYAGER_STYLE,
+      style: LIGHT_MAP_STYLE,
       center: [initialCenter[1], initialCenter[0]],
       zoom,
       attributionControl: false,
     });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-    map.on('load', () => setStyleLoaded(true));
+    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.on('style.load', () => {
+      setStyleLoaded(true);
+      setStyleVersion((version) => version + 1);
+    });
+    map.on('error', () => {
+      if (!usingFallback && !map.isStyleLoaded()) {
+        usingFallback = true;
+        setStyleLoaded(false);
+        map.setStyle(FALLBACK_MAP_STYLE);
+      }
+    });
     map.on('dragstart', () => onUserInteractionRef.current?.());
     map.on('click', (event) => onMapClickRef.current?.(event.lngLat.lat, event.lngLat.lng));
     mapRef.current = map;
@@ -81,6 +108,12 @@ export default function PassengerMap3D({
     // The map is initialized once; subsequent prop updates are handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!themeInitializedRef.current || !mapRef.current) return;
+    setStyleLoaded(false);
+    mapRef.current.setStyle(isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE);
+  }, [isDark]);
 
   useEffect(() => {
     if (!center) return;
@@ -114,7 +147,7 @@ export default function PassengerMap3D({
         markersRef.current.delete(id);
       }
     });
-  }, [markers]);
+  }, [markers, styleVersion]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -137,7 +170,23 @@ export default function PassengerMap3D({
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-color': '#111111', 'line-width': 5, 'line-opacity': 0.85 },
     });
-  }, [routePath, styleLoaded]);
+  }, [routePath, styleLoaded, styleVersion]);
 
-  return <div ref={containerRef} className="absolute inset-0 h-full w-full" />;
+  return (
+    <div className="absolute inset-0 h-full w-full">
+      <div ref={containerRef} className="absolute inset-0 h-full w-full" />
+      <button
+        type="button"
+        aria-label={isDark ? 'Switch to light map theme' : 'Switch to dark map theme'}
+        onClick={() => {
+          const nextTheme = !isDark;
+          setIsDark(nextTheme);
+          localStorage.setItem('mapTheme', nextTheme ? 'dark' : 'light');
+        }}
+        className="absolute right-3 top-20 z-[500] flex h-11 w-11 items-center justify-center rounded-full bg-white text-xl shadow-lg hover:bg-gray-100"
+      >
+        {isDark ? '☀️' : '🌙'}
+      </button>
+    </div>
+  );
 }

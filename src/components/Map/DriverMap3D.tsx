@@ -10,8 +10,9 @@ export type DriverMapMarker = {
   emoji?: string;
 };
 
-// Free, no-key, light basemap - readable in direct sunlight (replaces the old dark Leaflet tiles).
-const VOYAGER_STYLE = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+const LIGHT_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const DARK_MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
+const FALLBACK_MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const DEFAULT_CENTER: [number, number] = [-25.7479, 28.2293]; // Pretoria fallback
 const DRIVE_PITCH = 60;
 const ROUTE_SOURCE_ID = 'driver-route';
@@ -53,15 +54,29 @@ export default function DriverMap3D({
   const carMarkerRef = useRef<maplibregl.Marker | null>(null);
   const pinMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
   const followRef = useRef(true);
+  const themeInitializedRef = useRef(false);
   const [styleLoaded, setStyleLoaded] = useState(false);
+  const [styleVersion, setStyleVersion] = useState(0);
+  const [isDark, setIsDark] = useState(false);
   const [pos, setPos] = useState<[number, number]>(DEFAULT_CENTER);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('mapTheme');
+    const prefersDark = savedTheme ? savedTheme === 'dark' : new Date().getHours() >= 18 || new Date().getHours() < 6;
+    if (prefersDark !== isDark) {
+      setIsDark(prefersDark);
+      return;
+    }
+    themeInitializedRef.current = true;
+  }, [isDark]);
 
   // Init map once.
   useEffect(() => {
     if (!containerRef.current) return;
+    let usingFallback = false;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: VOYAGER_STYLE,
+      style: LIGHT_MAP_STYLE,
       center: [pos[1], pos[0]],
       zoom,
       pitch: DRIVE_PITCH,
@@ -69,10 +84,21 @@ export default function DriverMap3D({
       attributionControl: false,
     });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
     map.on('dragstart', () => {
       followRef.current = false;
     });
-    map.on('load', () => setStyleLoaded(true));
+    map.on('style.load', () => {
+      setStyleLoaded(true);
+      setStyleVersion((version) => version + 1);
+    });
+    map.on('error', () => {
+      if (!usingFallback && !map.isStyleLoaded()) {
+        usingFallback = true;
+        setStyleLoaded(false);
+        map.setStyle(FALLBACK_MAP_STYLE);
+      }
+    });
     mapRef.current = map;
     carMarkerRef.current = new maplibregl.Marker({ element: carElement() }).setLngLat([pos[1], pos[0]]).addTo(map);
 
@@ -84,6 +110,12 @@ export default function DriverMap3D({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!themeInitializedRef.current || !mapRef.current) return;
+    setStyleLoaded(false);
+    mapRef.current.setStyle(isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE);
+  }, [isDark]);
 
   // Live GPS drive mode: follow position, rotate to heading, keep the 3D pitch.
   useEffect(() => {
@@ -139,7 +171,7 @@ export default function DriverMap3D({
         pinMarkersRef.current.delete(id);
       }
     });
-  }, [markers]);
+  }, [markers, styleVersion]);
 
   // Route polyline.
   useEffect(() => {
@@ -163,7 +195,7 @@ export default function DriverMap3D({
         paint: { 'line-color': routeColor, 'line-width': routeWeight, 'line-opacity': 0.85 },
       });
     }
-  }, [routePath, routeColor, routeWeight, styleLoaded]);
+  }, [routePath, routeColor, routeWeight, styleLoaded, styleVersion]);
 
   const handleRecenter = () => {
     followRef.current = true;
@@ -180,6 +212,18 @@ export default function DriverMap3D({
         className="absolute right-3 top-3 z-[500] flex h-11 w-11 items-center justify-center rounded-full bg-white text-xl shadow-lg hover:bg-gray-100"
       >
         🧭
+      </button>
+      <button
+        type="button"
+        aria-label={isDark ? 'Switch to light map theme' : 'Switch to dark map theme'}
+        onClick={() => {
+          const nextTheme = !isDark;
+          setIsDark(nextTheme);
+          localStorage.setItem('mapTheme', nextTheme ? 'dark' : 'light');
+        }}
+        className="absolute right-3 top-20 z-[500] flex h-11 w-11 items-center justify-center rounded-full bg-white text-xl shadow-lg hover:bg-gray-100"
+      >
+        {isDark ? '☀️' : '🌙'}
       </button>
     </div>
   );

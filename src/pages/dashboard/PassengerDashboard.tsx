@@ -263,9 +263,9 @@ export function PassengerDashboard() {
       const nextUp = RIDE_CATEGORIES.find((c) => !('isDelivery' in c && c.isDelivery) && c.maxPassengers >= passengerCount);
       setMessage(
         catId === 'go'
-          ? 'Go Hatch max 2 riders, choose Sedan'
+          ? 'Buddy Go max 2 riders, choose Buddy Ride'
           : catId === 'sedan'
-            ? 'Sedan max 3 riders, choose XL'
+            ? 'Buddy Ride max 3 riders, choose Buddy XL'
             : `${cat.name} max ${cat.maxPassengers} riders`
       );
       if (nextUp) setRideCategory(nextUp.id);
