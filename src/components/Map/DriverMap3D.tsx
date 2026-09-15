@@ -10,13 +10,19 @@ export type DriverMapMarker = {
   emoji?: string;
 };
 
-const LIGHT_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
-const DARK_MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
-const FALLBACK_MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
-const DEFAULT_CENTER: [number, number] = [-25.7479, 28.2293]; // Pretoria fallback
+// demotiles.maplibre.org is a MapLibre-hosted style that is never blocked on Vercel; used as the reliable base for both themes.
+const STYLES = {
+  light: 'https://demotiles.maplibre.org/style.json',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
+};
+const FALLBACK_MAP_STYLE = STYLES.light;
+const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582]; // Polokwane fallback
 const DRIVE_PITCH = 60;
 const ROUTE_SOURCE_ID = 'driver-route';
+const ROUTE_CASING_LAYER_ID = 'driver-route-casing';
 const ROUTE_LAYER_ID = 'driver-route-line';
+const ROUTE_INNER_LAYER_ID = 'driver-route-line-inner';
+const ROUTE_ARROW_LAYER_ID = 'driver-route-arrows';
 
 function pinElement(color: string, emoji: string) {
   const el = document.createElement('div');
@@ -30,6 +36,58 @@ function carElement() {
   el.style.cssText = 'width:48px;height:48px;transition:transform 0.3s linear';
   el.innerHTML = `<div style="background:#00C853;width:48px;height:48px;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">🚕</div>`;
   return el;
+}
+
+// Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
+// Bolt-style blue nav line: darker casing, main blue line, inner highlight, then turn arrows on top.
+function addRouteLayer(map: maplibregl.Map) {
+  if (!map.getSource(ROUTE_SOURCE_ID)) {
+    map.addSource(ROUTE_SOURCE_ID, {
+      type: 'geojson',
+      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
+    });
+  }
+  if (!map.getLayer(ROUTE_CASING_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTE_CASING_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#1E4DD8', 'line-width': 10, 'line-opacity': 0.4 },
+    });
+  }
+  if (!map.getLayer(ROUTE_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTE_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#4668F2', 'line-width': 7, 'line-opacity': 1 },
+    });
+  }
+  if (!map.getLayer(ROUTE_INNER_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTE_INNER_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#7A8CFF', 'line-width': 2, 'line-opacity': 0.6 },
+    });
+  }
+  if (!map.getLayer(ROUTE_ARROW_LAYER_ID) && map.hasImage('arrow')) {
+    map.addLayer({
+      id: ROUTE_ARROW_LAYER_ID,
+      type: 'symbol',
+      source: ROUTE_SOURCE_ID,
+      layout: {
+        'symbol-placement': 'line',
+        'symbol-spacing': 100,
+        'icon-image': 'arrow',
+        'icon-size': 0.8,
+      },
+      paint: { 'icon-color': '#FFFFFF' },
+    });
+  }
 }
 
 type DriverMap3DProps = {
@@ -76,21 +134,24 @@ export default function DriverMap3D({
     let usingFallback = false;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: LIGHT_MAP_STYLE,
+      style: isDark ? STYLES.dark : STYLES.light,
       center: [pos[1], pos[0]],
       zoom,
       pitch: DRIVE_PITCH,
       bearing: 0,
+      antialias: true,
       attributionControl: false,
     });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: true }), 'bottom-right');
     map.on('dragstart', () => {
       followRef.current = false;
     });
     map.on('style.load', () => {
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
+      addRouteLayer(map);
     });
     map.on('error', () => {
       if (!usingFallback && !map.isStyleLoaded()) {
@@ -114,7 +175,7 @@ export default function DriverMap3D({
   useEffect(() => {
     if (!themeInitializedRef.current || !mapRef.current) return;
     setStyleLoaded(false);
-    mapRef.current.setStyle(isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE);
+    mapRef.current.setStyle(isDark ? STYLES.dark : STYLES.light);
   }, [isDark]);
 
   // Live GPS drive mode: follow position, rotate to heading, keep the 3D pitch.
@@ -177,25 +238,15 @@ export default function DriverMap3D({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !styleLoaded) return;
+    addRouteLayer(map);
     const geojson: GeoJSON.Feature<GeoJSON.LineString> = {
       type: 'Feature',
       properties: {},
       geometry: { type: 'LineString', coordinates: (routePath ?? []).map(([lat, lng]) => [lng, lat]) },
     };
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (source) {
-      source.setData(geojson);
-    } else {
-      map.addSource(ROUTE_SOURCE_ID, { type: 'geojson', data: geojson });
-      map.addLayer({
-        id: ROUTE_LAYER_ID,
-        type: 'line',
-        source: ROUTE_SOURCE_ID,
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': routeColor, 'line-width': routeWeight, 'line-opacity': 0.85 },
-      });
-    }
-  }, [routePath, routeColor, routeWeight, styleLoaded, styleVersion]);
+    source?.setData(geojson);
+  }, [routePath, styleLoaded, styleVersion]);
 
   const handleRecenter = () => {
     followRef.current = true;

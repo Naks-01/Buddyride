@@ -20,12 +20,16 @@ type PassengerMap3DProps = {
   onUserInteraction?: () => void;
 };
 
-const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4689];
-const LIGHT_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
-const DARK_MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
-const FALLBACK_MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
+const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582];
+// demotiles.maplibre.org is a MapLibre-hosted style that is never blocked on Vercel; used as the reliable base for both themes.
+const STYLES = {
+  light: 'https://demotiles.maplibre.org/style.json',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
+};
+const FALLBACK_MAP_STYLE = STYLES.light;
 const ROUTE_SOURCE_ID = 'passenger-route';
 const ROUTE_LAYER_ID = 'passenger-route-line';
+const ROUTE_OUTLINE_LAYER_ID = 'passenger-route-line-outline';
 
 function markerElement(marker: PassengerMapMarker) {
   const element = document.createElement('div');
@@ -36,6 +40,34 @@ function markerElement(marker: PassengerMapMarker) {
   element.style.cssText = `width:${size}px;height:${size}px;transform:rotate(${rotation}deg);transition:transform 0.5s linear`;
   element.innerHTML = `<div style="background:${color};width:${size}px;height:${size}px;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:${marker.id === 'driver' ? 22 : 15}px;box-shadow:0 4px 12px rgba(0,0,0,0.4)"><span style="transform:rotate(${-rotation}deg)">${emoji}</span></div>`;
   return element;
+}
+
+// Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
+function addRouteLayer(map: maplibregl.Map) {
+  if (!map.getSource(ROUTE_SOURCE_ID)) {
+    map.addSource(ROUTE_SOURCE_ID, {
+      type: 'geojson',
+      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
+    });
+  }
+  if (!map.getLayer(ROUTE_OUTLINE_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTE_OUTLINE_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.9 },
+    });
+  }
+  if (!map.getLayer(ROUTE_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTE_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#111111', 'line-width': 5, 'line-opacity': 0.9 },
+    });
+  }
 }
 
 export default function PassengerMap3D({
@@ -78,16 +110,21 @@ export default function PassengerMap3D({
     let usingFallback = false;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: LIGHT_MAP_STYLE,
+      style: isDark ? STYLES.dark : STYLES.light,
       center: [initialCenter[1], initialCenter[0]],
       zoom,
+      pitch: 0,
+      bearing: 0,
+      antialias: true,
       attributionControl: false,
     });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: true }), 'bottom-right');
     map.on('style.load', () => {
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
+      addRouteLayer(map);
     });
     map.on('error', () => {
       if (!usingFallback && !map.isStyleLoaded()) {
@@ -112,7 +149,7 @@ export default function PassengerMap3D({
   useEffect(() => {
     if (!themeInitializedRef.current || !mapRef.current) return;
     setStyleLoaded(false);
-    mapRef.current.setStyle(isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE);
+    mapRef.current.setStyle(isDark ? STYLES.dark : STYLES.light);
   }, [isDark]);
 
   useEffect(() => {
@@ -152,24 +189,14 @@ export default function PassengerMap3D({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !styleLoaded) return;
+    addRouteLayer(map);
     const data: GeoJSON.Feature<GeoJSON.LineString> = {
       type: 'Feature',
       properties: {},
       geometry: { type: 'LineString', coordinates: (routePath ?? []).map(([lat, lng]) => [lng, lat]) },
     };
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (source) {
-      source.setData(data);
-      return;
-    }
-    map.addSource(ROUTE_SOURCE_ID, { type: 'geojson', data });
-    map.addLayer({
-      id: ROUTE_LAYER_ID,
-      type: 'line',
-      source: ROUTE_SOURCE_ID,
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#111111', 'line-width': 5, 'line-opacity': 0.85 },
-    });
+    source?.setData(data);
   }, [routePath, styleLoaded, styleVersion]);
 
   return (
