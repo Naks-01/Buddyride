@@ -21,7 +21,7 @@ import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
-import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
+import DriverMap3D, { type DriverMapMarker } from '../../components/Map/DriverMap3D';
 import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
@@ -125,7 +125,7 @@ export function DriverDashboard() {
   const [centerTrigger, setCenterTrigger] = useState(0);
   const [checkingArrival, setCheckingArrival] = useState(false);
   const [routePath, setRoutePath] = useState<[number, number][] | null>(null);
-  const [routeMarkers, setRouteMarkers] = useState<AppMapMarker[]>([]);
+  const [routeMarkers, setRouteMarkers] = useState<DriverMapMarker[]>([]);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
@@ -792,17 +792,11 @@ export function DriverDashboard() {
         </div>
       )}
       <div className={`absolute inset-x-0 top-0 z-0 ${isActiveNav ? 'bottom-0' : 'bottom-[72px]'}`}>
-        <AppMap
-          mode="driver"
+        <DriverMap3D
           centerBtn={centerTrigger}
-          center={driverLocation ? [driverLocation.lat, driverLocation.lng] : undefined}
           routePath={routePath ?? undefined}
           routeWeight={isTripPhase ? 8 : 5}
-          markers={
-            driverLocation
-              ? [...routeMarkers, { id: 'driver-live', position: [driverLocation.lat, driverLocation.lng], color: '#00C853', emoji: '🚕' }]
-              : routeMarkers
-          }
+          markers={routeMarkers}
         />
       </div>
 

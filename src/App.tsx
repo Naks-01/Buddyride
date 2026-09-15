@@ -23,6 +23,7 @@ import { LoadingScreen } from './components/LoadingScreen';
 import { SplashScreen } from './components/SplashScreen';
 import type { AppRole } from './types';
 import { ADMIN_EMAIL } from './config/admin';
+import { BuddyRideMap } from './components/BuddyRideMap';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -129,6 +130,7 @@ export default function App() {
       <BrowserRouter basename="/" future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/" element={<HomeOrRedirect />} />
+          <Route path="/navigation-preview" element={<BuddyRideMap />} />
           <Route path="/login" element={<LoginRouter />} />
           <Route path="/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
           <Route path="/passenger/dashboard" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />

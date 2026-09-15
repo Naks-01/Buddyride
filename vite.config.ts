@@ -2,8 +2,13 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.VITE_MAPBOX_TOKEN || '';
+
 export default defineConfig({
   base: '/',
+  define: {
+    'import.meta.env.NEXT_PUBLIC_MAPBOX_TOKEN': JSON.stringify(mapboxToken),
+  },
   plugins: [
     react(),
     VitePWA({
