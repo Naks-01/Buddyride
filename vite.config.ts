@@ -40,7 +40,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       },
     }),
   ],
@@ -50,7 +50,7 @@ export default defineConfig({
     strictPort: false,
   },
   build: {
-    target: 'es2018',
+    target: 'es2020', // maplibre-gl uses BigInt literals, which es2018 can't parse
     chunkSizeWarningLimit: 1300,
     outDir: 'dist',
   },

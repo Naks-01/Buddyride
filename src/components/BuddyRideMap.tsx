@@ -24,26 +24,22 @@ function addRouteLayer(map: mapboxgl.Map, geometry: RouteGeometry) {
   }
 
   map.addSource(sourceId, { type: 'geojson', data });
-  map.addLayer({ id: glowId, type: 'line', source: sourceId, paint: {
+  map.addLayer({ id: glowId, type: 'line', source: sourceId, layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: {
     'line-color': '#4A6CFF',
     'line-width': 14,
     'line-opacity': 0.25,
     'line-blur': 6,
-    'line-cap': 'round',
-    'line-join': 'round',
   } });
-  map.addLayer({ id: routeId, type: 'line', source: sourceId, paint: {
+  map.addLayer({ id: routeId, type: 'line', source: sourceId, layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: {
     'line-color': '#6C8BFF',
     'line-width': 6,
     'line-opacity': 1,
-    'line-cap': 'round',
-    'line-join': 'round',
   } });
 }
 
 function addBuildingsLayer(map: mapboxgl.Map) {
   const layers = map.getStyle().layers || [];
-  const labelLayer = layers.find((layer: { type?: string; layout?: Record<string, unknown>; id?: string }) => layer.type === 'symbol' && layer.layout?.['text-field']);
+  const labelLayer = layers.find((layer) => layer.type === 'symbol' && (layer.layout as Record<string, unknown> | undefined)?.['text-field']);
   if (map.getLayer('buddyride-3d-buildings')) return;
   map.addLayer({
     id: 'buddyride-3d-buildings',
