@@ -38,22 +38,8 @@ const OSM_RASTER_STYLE = {
   },
   layers: [{ id: 'osm-raster-layer', type: 'raster', source: 'osm-raster', minzoom: 0, maxzoom: 19 }],
 } as any;
-const DARK_RASTER_STYLE = {
-  version: 8,
-  sources: {
-    'dark-raster': {
-      type: 'raster',
-      tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution: '© OpenStreetMap contributors © CARTO',
-    },
-  },
-  layers: [{ id: 'dark-raster-layer', type: 'raster', source: 'dark-raster', minzoom: 0, maxzoom: 19 }],
-} as any;
-const STYLES = {
-  light: OSM_RASTER_STYLE,
-  dark: DARK_RASTER_STYLE,
-};
+// Dark "theme" is a CSS filter over the same free OSM tiles - no second (keyed) tile provider needed.
+const DARK_MAP_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9)';
 const ROUTE_SOURCE_ID = 'passenger-route';
 const ROUTE_LAYER_ID = 'passenger-route-line';
 const ROUTE_OUTLINE_LAYER_ID = 'passenger-route-line-outline';
@@ -143,7 +129,7 @@ export default function PassengerMap3D({
     const initialCenter = center ?? DEFAULT_CENTER;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: isDark ? STYLES.dark : STYLES.light,
+      style: OSM_RASTER_STYLE,
       center: [initialCenter[1], initialCenter[0]],
       zoom,
       pitch: 45,
@@ -176,9 +162,8 @@ export default function PassengerMap3D({
   }, []);
 
   useEffect(() => {
-    if (!themeInitializedRef.current || !mapRef.current) return;
-    setStyleLoaded(false);
-    mapRef.current.setStyle(isDark ? STYLES.dark : STYLES.light);
+    if (!containerRef.current) return;
+    containerRef.current.style.filter = isDark ? DARK_MAP_FILTER : 'none';
   }, [isDark]);
 
   useEffect(() => {
