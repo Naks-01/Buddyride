@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type TouchEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import {
   Car as CarPin,
@@ -109,6 +109,7 @@ function getLocationCoordinates(location?: string | Location, fallback?: Coordin
 export function DriverDashboard() {
   const { loading: authLoading, profile } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const user = auth.currentUser;
   const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
   const [drivers, setDrivers] = useState<Record<string, unknown>[] | null>(null);
@@ -1111,20 +1112,36 @@ export function DriverDashboard() {
       )}
 
       {!isActiveNav && (
-        <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-around bg-[#2A2D36] py-3 pointer-events-auto">
-          <button type="button" className="flex flex-col items-center gap-1 text-white">
+        <div className="absolute inset-x-0 bottom-0 z-[9999] flex items-center justify-around bg-[#2A2D36] py-3 pointer-events-auto">
+          <button
+            type="button"
+            onClick={() => navigate('/driver')}
+            className={`flex flex-col items-center gap-1 ${location.pathname === '/driver' ? 'text-white' : 'text-gray-400'}`}
+          >
             <HomeNav size={20} />
             <span className="text-[11px] font-semibold">Home</span>
           </button>
-          <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+          <button
+            type="button"
+            onClick={() => navigate('/driver/performance')}
+            className={`flex flex-col items-center gap-1 ${location.pathname === '/driver/performance' ? 'text-white' : 'text-gray-400'}`}
+          >
             <Wallet size={20} />
             <span className="text-[11px]">Earn more</span>
           </button>
-          <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+          <button
+            type="button"
+            onClick={() => navigate('/driver/rides')}
+            className={`flex flex-col items-center gap-1 ${location.pathname === '/driver/rides' ? 'text-white' : 'text-gray-400'}`}
+          >
             <CarPin size={20} />
             <span className="text-[11px]">Rides</span>
           </button>
-          <button type="button" className="flex flex-col items-center gap-1 text-gray-400">
+          <button
+            type="button"
+            onClick={() => navigate('/driver/help')}
+            className={`flex flex-col items-center gap-1 ${location.pathname === '/driver/help' ? 'text-white' : 'text-gray-400'}`}
+          >
             <HelpCircle size={20} />
             <span className="text-[11px]">Help</span>
           </button>
