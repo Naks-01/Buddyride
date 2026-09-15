@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type TouchEvent } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import {
@@ -21,7 +21,9 @@ import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
-import DriverMap3D, { type DriverMapMarker } from '../../components/Map/DriverMap3D';
+import type { DriverMapMarker } from '../../components/Map/DriverMap3D';
+
+const DriverMap3D = lazy(() => import('../../components/Map/DriverMap3D'));
 import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
@@ -792,12 +794,14 @@ export function DriverDashboard() {
         </div>
       )}
       <div className={`absolute inset-x-0 top-0 z-0 ${isActiveNav ? 'bottom-0' : 'bottom-[72px]'}`}>
-        <DriverMap3D
-          centerBtn={centerTrigger}
-          routePath={routePath ?? undefined}
-          routeWeight={isTripPhase ? 8 : 5}
-          markers={routeMarkers}
-        />
+        <Suspense fallback={<div className="h-full w-full bg-slate-200" />}>
+          <DriverMap3D
+            centerBtn={centerTrigger}
+            routePath={routePath ?? undefined}
+            routeWeight={isTripPhase ? 8 : 5}
+            markers={routeMarkers}
+          />
+        </Suspense>
       </div>
 
       <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-4 pointer-events-auto">
