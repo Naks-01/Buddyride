@@ -94,8 +94,6 @@ type DriverMap3DProps = {
   centerBtn?: number;
   zoom?: number;
   routePath?: [number, number][];
-  routeColor?: string;
-  routeWeight?: number;
   markers?: DriverMapMarker[];
 };
 
@@ -103,8 +101,6 @@ export default function DriverMap3D({
   centerBtn,
   zoom = 17,
   routePath,
-  routeColor = '#2ECC71',
-  routeWeight = 5,
   markers = [],
 }: DriverMap3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -139,7 +135,7 @@ export default function DriverMap3D({
       zoom,
       pitch: DRIVE_PITCH,
       bearing: 0,
-      antialias: true,
+      canvasContextAttributes: { antialias: true },
       attributionControl: false,
     });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');

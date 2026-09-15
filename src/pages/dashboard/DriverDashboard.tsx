@@ -798,7 +798,6 @@ export function DriverDashboard() {
           <DriverMap3D
             centerBtn={centerTrigger}
             routePath={routePath ?? undefined}
-            routeWeight={isTripPhase ? 8 : 5}
             markers={routeMarkers}
           />
         </Suspense>

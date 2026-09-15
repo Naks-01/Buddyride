@@ -115,7 +115,7 @@ export default function PassengerMap3D({
       zoom,
       pitch: 0,
       bearing: 0,
-      antialias: true,
+      canvasContextAttributes: { antialias: true },
       attributionControl: false,
     });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
