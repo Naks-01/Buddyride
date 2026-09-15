@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DocumentData } from 'firebase/firestore';
 import { LockKeyhole } from 'lucide-react';
@@ -19,7 +19,9 @@ import { RatingModal } from '../../components/RatingModal';
 import { Spinner } from '../../components/Spinner';
 import { PassengerSettingsModal } from '../../components/PassengerSettingsModal';
 import { playSound, playSoundTimes } from '../../utils/sound';
-import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
+import type { PassengerMapMarker } from '../../components/Map/PassengerMap3D';
+
+const PassengerMap3D = lazy(() => import('../../components/Map/PassengerMap3D'));
 
 const formatR = (n: number) => `R${Number(n || 0).toFixed(2)}`;
 
@@ -876,7 +878,7 @@ export function PassengerDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapAddress]);
 
-  const tripMarkers: AppMapMarker[] = isActiveTrip
+  const tripMarkers: PassengerMapMarker[] = isActiveTrip
     ? [
         ...(tripPickupLocation ? [{ id: 'pickup', position: [tripPickupLocation.lat, tripPickupLocation.lng] as [number, number], color: '#1a73e8', emoji: 'A' }] : []),
         ...(tripDropoffLocation ? [{ id: 'dropoff', position: [tripDropoffLocation.lat, tripDropoffLocation.lng] as [number, number], color: '#d93025', emoji: 'B' }] : []),
@@ -952,22 +954,23 @@ export function PassengerDashboard() {
       </header>
 
       <div className="absolute inset-0 z-[1]">
-        <AppMap
-          mode="passenger"
-          center={
-            isActiveTrip
-              ? isFollowingDriver
-                ? [liveMapCenter.lat, liveMapCenter.lng]
-                : undefined
-              : [mapLocation.lat, mapLocation.lng]
-          }
-          centerBtn={centerTrigger}
-          zoom={14}
-          markers={tripMarkers}
-          routePath={(isActiveTrip ? driverRoutePath : plannedRoutePath) ?? undefined}
-          onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
-          onUserInteraction={isActiveTrip ? () => setIsFollowingDriver(false) : undefined}
-        />
+        <Suspense fallback={<div className="h-full w-full bg-slate-200" />}>
+          <PassengerMap3D
+            center={
+              isActiveTrip
+                ? isFollowingDriver
+                  ? [liveMapCenter.lat, liveMapCenter.lng]
+                  : undefined
+                : [mapLocation.lat, mapLocation.lng]
+            }
+            centerBtn={centerTrigger}
+            zoom={14}
+            markers={tripMarkers}
+            routePath={(isActiveTrip ? driverRoutePath : plannedRoutePath) ?? undefined}
+            onMapClick={isActiveTrip || rideId ? undefined : handleMapClick}
+            onUserInteraction={isActiveTrip ? () => setIsFollowingDriver(false) : undefined}
+          />
+        </Suspense>
         {!rideId && !isActiveTrip && (
           <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full text-3xl">
             📍
