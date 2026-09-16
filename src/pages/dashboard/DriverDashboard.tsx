@@ -631,8 +631,7 @@ export function DriverDashboard() {
 
     const run = async () => {
       const ride = acceptedRideForRouteRef.current;
-      const location = driverLocationRef.current;
-      if (!ride || !location) return;
+      if (!ride) return;
       const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
       const dropoff = getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
       const target = ride.status === 'trip_started' ? dropoff : pickup;
@@ -645,12 +644,15 @@ export function DriverDashboard() {
         ...(dropoff ? [{ id: 'dropoff-pin', position: [dropoff.lat, dropoff.lng] as [number, number], color: '#FF3B30', emoji: '🏁' }] : []),
       ]);
 
+      // Fall back to the pickup point as the origin if this device's own GPS hasn't reported
+      // yet (driverLocation null) - never bail out with no line drawn at all.
+      const location = driverLocationRef.current ?? pickup ?? target;
       const line: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
       setRoutePath(line);
     };
 
     void run();
-    const intervalId = window.setInterval(() => void run(), 10000);
+    const intervalId = window.setInterval(() => void run(), 2000);
     return () => window.clearInterval(intervalId);
   }, [acceptedRide?.id, acceptedRide?.status]);
 

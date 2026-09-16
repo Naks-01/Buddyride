@@ -83,7 +83,7 @@ type DriverMap3DProps = {
   zoom?: number;
   routePath?: [number, number][];
   markers?: DriverMapMarker[];
-  driverLocation?: [number, number]; // [lat, lng] - fetches its own free OSRM route when paired with destination
+  driverLocation?: [number, number]; // [lat, lng] - draws a hardcoded straight line when paired with destination
   destination?: [number, number]; // [lat, lng]
 };
 
@@ -228,6 +228,42 @@ export default function DriverMap3D({
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     source?.setData(geojson);
   }, [routePath, styleLoaded, styleVersion]);
+
+  // V1 brute-force safety net: if the parent hasn't handed us a real routePath/driverLocation yet
+  // (e.g. its own GPS state is still null), draw a straight line ourselves from this component's
+  // own live GPS `pos` to the dropoff/pickup pin so a blue line is never just missing on screen.
+  const routePathRef = useRef(routePath);
+  useEffect(() => {
+    routePathRef.current = routePath;
+  }, [routePath]);
+  const posRef = useRef(pos);
+  useEffect(() => {
+    posRef.current = pos;
+  }, [pos]);
+  const markersRef = useRef(markers);
+  useEffect(() => {
+    markersRef.current = markers;
+  }, [markers]);
+
+  useEffect(() => {
+    const drawFallbackBlue = () => {
+      const map = mapRef.current;
+      if (!map || !styleLoaded) return;
+      if (routePathRef.current && routePathRef.current.length >= 2) return; // real route already drawn
+      const target = markersRef.current.find((m) => m.id === 'dropoff-pin') ?? markersRef.current.find((m) => m.id === 'pickup-pin');
+      if (!target) return;
+      addRouteLayer(map);
+      const from = posRef.current;
+      const to = target.position;
+      const coords: [number, number][] = [[from[1], from[0]], [to[1], to[0]]];
+      const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      source?.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
+      console.log('AUTO BLUE V1', coords);
+    };
+    drawFallbackBlue();
+    const intervalId = window.setInterval(drawFallbackBlue, 1500);
+    return () => window.clearInterval(intervalId);
+  }, [styleLoaded]);
 
   // V1: hardcoded straight line, no OSRM - when raw driverLocation/destination coords are passed directly.
   useEffect(() => {
