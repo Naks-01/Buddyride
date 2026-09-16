@@ -49,6 +49,9 @@ export default defineConfig({
     port: 3000,
     strictPort: false,
   },
+  optimizeDeps: {
+    exclude: ['maplibre-gl'],
+  },
   build: {
     target: 'es2020', // maplibre-gl uses BigInt literals, which es2018 can't parse
     chunkSizeWarningLimit: 1300,
