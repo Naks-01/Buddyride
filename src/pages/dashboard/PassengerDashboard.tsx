@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DocumentData } from 'firebase/firestore';
+import { ref, onValue } from 'firebase/database';
 import { LockKeyhole } from 'lucide-react';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
 import { createRide, cancelRide as cancelRideService, subscribeToRide, getFreeRoute } from '../../lib/rideService';
+import { rtdb } from '../../lib/firebase';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
@@ -628,20 +630,6 @@ export function PassengerDashboard() {
         setTripDropoffLocation({ lat: dropoffLatLng.lat, lng: dropoffLatLng.lng });
       }
 
-      if (typeof data.driverLocation?.lat === 'number' && typeof data.driverLocation?.lng === 'number') {
-        const next = { lat: data.driverLocation.lat, lng: data.driverLocation.lng };
-        const reportedHeading = typeof data.driverLocation.heading === 'number' ? data.driverLocation.heading : null;
-        const prev = lastDriverPosRef.current;
-        setDriverHeading(reportedHeading ?? (prev ? bearingBetween(prev, next) : null));
-        lastDriverPosRef.current = next;
-        setDriverLocation(next);
-      } else if (typeof data.driverLat === 'number' && typeof data.driverLng === 'number') {
-        const next = { lat: data.driverLat, lng: data.driverLng };
-        const prev = lastDriverPosRef.current;
-        setDriverHeading((h) => h ?? (prev ? bearingBetween(prev, next) : null));
-        lastDriverPosRef.current = next;
-        setDriverLocation(next);
-      }
       if (typeof data.driverPhone === 'string') {
         setDriverPhone(data.driverPhone);
       } else if (data.driverPhone == null) {
@@ -701,6 +689,22 @@ export function PassengerDashboard() {
         setDistanceKm(Number.isFinite(parsed) ? parsed : null);
       }
     });
+    return () => unsubscribe();
+  }, [rideId]);
+
+  // Live driver position comes from Realtime Database (cheap, high-frequency), not the Firestore ride doc.
+  useEffect(() => {
+    if (!rideId) return;
+    const liveRef = ref(rtdb, `liveRides/${rideId}`);
+    const unsubscribe = onValue(liveRef, (snapshot) => {
+      const data = snapshot.val() as { lat?: number; lng?: number; bearing?: number | null } | null;
+      if (!data || typeof data.lat !== 'number' || typeof data.lng !== 'number') return;
+      const next = { lat: data.lat, lng: data.lng };
+      const prev = lastDriverPosRef.current;
+      setDriverHeading(data.bearing ?? (prev ? bearingBetween(prev, next) : null));
+      lastDriverPosRef.current = next;
+      setDriverLocation(next);
+    }, (err) => console.error('Failed to subscribe to live driver location:', err));
     return () => unsubscribe();
   }, [rideId]);
 

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { ref, set, update, remove, serverTimestamp as rtdbServerTimestamp } from 'firebase/database';
 import {
   Car as CarPin,
   Compass,
@@ -14,7 +15,7 @@ import {
   SlidersHorizontal,
   Wallet,
 } from 'lucide-react';
-import { auth, db } from '../../lib/firebase';
+import { auth, db, rtdb } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
@@ -297,10 +298,21 @@ export function DriverDashboard() {
       });
       const acceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(acceptedRide);
+      if (location) {
+        // Live position lives in Realtime Database (cheap, high-frequency) instead of Firestore.
+        void set(ref(rtdb, `liveRides/${ride.id}`), {
+          driverId: uid,
+          passengerId: ride.passengerId ?? null,
+          lat: location.lat,
+          lng: location.lng,
+          bearing: null,
+          updatedAt: rtdbServerTimestamp(),
+        }).catch((err: unknown) => console.error('Failed to init live location:', err));
+      }
       window.setTimeout(() => {
         setAcceptedRide((prev) => {
           if (!prev || prev.id !== ride.id || prev.status !== 'driver_assigned') return prev;
-          void updateRideFields(ride.id, { status: 'driver_en_route' }).catch((err: unknown) => {
+          void updateRideFields(ride.id, { status: 'driver_en_route', driverStatus: 'coming' }).catch((err: unknown) => {
             console.error('Failed to update ride status:', err);
           });
           return { ...prev, status: 'driver_en_route' };
@@ -471,7 +483,7 @@ export function DriverDashboard() {
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'trip_started', currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0 } : prev));
     setUpdatingStatus(true);
     try {
-      await startTripService(ride.id, { currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0, waitingFare: 0 });
+      await startTripService(ride.id, { currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0, waitingFare: 0, driverStatus: 'on_trip' });
     } catch (err) {
       console.error(err);
       setError('Failed to update ride status.');
@@ -486,6 +498,7 @@ export function DriverDashboard() {
     const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE + Number(ride.tipAmount ?? 0);
     setTodayEarnings((prev) => prev + driverPayout);
     void completeRideService(ride.id);
+    void remove(ref(rtdb, `liveRides/${ride.id}`)).catch((err: unknown) => console.error('Failed to clear live location:', err));
   };
 
   const arriveAtStop = async (ride: RideRequest) => {
@@ -572,6 +585,8 @@ export function DriverDashboard() {
 
   // Single source of truth for the driver's live position - runs for the entire active ride
   // (assigned through trip_started) so the passenger's driver marker never freezes mid-trip.
+  // Written to Realtime Database (not Firestore) - RTDB reads/writes are free at this scale and
+  // don't rack up Firestore document-read billing on every tick like the ride doc did before.
   useEffect(() => {
     if (!acceptedRide || !LOCATION_SHARING_STATUSES.has(acceptedRide.status ?? '') || !navigator.geolocation) return;
 
@@ -579,16 +594,13 @@ export function DriverDashboard() {
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const now = Date.now();
-        if (now - lastLocationUpdateRef.current < 5000) return;
+        if (now - lastLocationUpdateRef.current < 10000) return;
         lastLocationUpdateRef.current = now;
-        void updateRideFields(rideId, {
-          driverLocation: {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            heading: position.coords.heading ?? null,
-            updatedAt: serverTimestamp(),
-          },
-          driverStatus: acceptedRide.status === 'trip_started' ? 'on_trip' : 'coming',
+        void update(ref(rtdb, `liveRides/${rideId}`), {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          bearing: position.coords.heading ?? null,
+          updatedAt: rtdbServerTimestamp(),
         }).catch((err: unknown) => {
           console.error('Failed to update driver location:', err);
           setError('Unable to share your live location.');
@@ -638,12 +650,21 @@ export function DriverDashboard() {
   }, [driverLocation, acceptedRide?.status, acceptedRide?.id]);
 
   // Clear the nav overlay once the ride ends (completed/cancelled/dismissed).
+  const lastRideIdForCleanupRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (acceptedRide?.id) lastRideIdForCleanupRef.current = acceptedRide.id;
+  }, [acceptedRide?.id]);
   useEffect(() => {
     if (!acceptedRide) {
       setRoutePath(null);
       setRouteMarkers([]);
       setRouteDistanceM(null);
       setRouteDurationSec(null);
+      const rideId = lastRideIdForCleanupRef.current;
+      if (rideId) {
+        void remove(ref(rtdb, `liveRides/${rideId}`)).catch((err: unknown) => console.error('Failed to clear live location:', err));
+        lastRideIdForCleanupRef.current = null;
+      }
     }
   }, [acceptedRide]);
 
