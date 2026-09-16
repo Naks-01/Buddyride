@@ -13,6 +13,7 @@ import { RideStatus } from './pages/RideStatus';
 import { Profile } from './pages/Profile';
 import { PassengerRides } from './pages/PassengerRides';
 import SafetyDashboard from './pages/admin/SafetyDashboard';
+import AdminMobileDashboard from './pages/admin/AdminMobileDashboard';
 import { DriverRides } from './pages/driver/DriverRides';
 import { DriverPerformance } from './pages/driver/DriverPerformance';
 import { DriverVehicle } from './pages/driver/DriverVehicle';
@@ -144,7 +145,7 @@ export default function App() {
           <Route path="/driver/documents" element={<RequireRole role="driver"><DriverDocuments /></RequireRole>} />
           <Route path="/driver/help" element={<RequireRole role="driver"><DriverHelp /></RequireRole>} />
           <Route path="/driver/settings" element={<RequireRole role="driver"><DriverSettings /></RequireRole>} />
-          <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
+          <Route path="/admin" element={<RequireAdmin><AdminMobileDashboard /></RequireAdmin>} />
           <Route path="/admin/dashboard" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
           <Route path="/admin/safety" element={<RequireAdmin><SafetyDashboard /></RequireAdmin>} />
           <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
