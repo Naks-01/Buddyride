@@ -594,7 +594,7 @@ export function DriverDashboard() {
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const now = Date.now();
-        if (now - lastLocationUpdateRef.current < 5000) return;
+        if (now - lastLocationUpdateRef.current < 3000) return;
         lastLocationUpdateRef.current = now;
         void update(ref(rtdb, `live/${rideId}`), {
           lat: position.coords.latitude,
