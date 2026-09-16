@@ -648,6 +648,7 @@ export function DriverDashboard() {
       // yet (driverLocation null) - never bail out with no line drawn at all.
       const location = driverLocationRef.current ?? pickup ?? target;
       const line: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
+      console.log('ROUTE DEBUG (driver)', { status: ride.status, pickup, dropoff, target, driverLocation: driverLocationRef.current, location, line });
       setRoutePath(line);
     };
 

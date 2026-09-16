@@ -52,29 +52,33 @@ function carElement() {
 // Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
 // Thick blue BuddyRide nav line: soft glow casing plus a solid core line on top.
 function addRouteLayer(map: maplibregl.Map) {
-  if (!map.getSource(ROUTE_SOURCE_ID)) {
-    map.addSource(ROUTE_SOURCE_ID, {
-      type: 'geojson',
-      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
-    });
-  }
-  if (!map.getLayer(ROUTE_GLOW_LAYER_ID)) {
-    map.addLayer({
-      id: ROUTE_GLOW_LAYER_ID,
-      type: 'line',
-      source: ROUTE_SOURCE_ID,
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#8AB4FF', 'line-width': 14, 'line-opacity': 0.35 },
-    });
-  }
-  if (!map.getLayer(ROUTE_LAYER_ID)) {
-    map.addLayer({
-      id: ROUTE_LAYER_ID,
-      type: 'line',
-      source: ROUTE_SOURCE_ID,
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#1A73E8', 'line-width': 6, 'line-opacity': 1 },
-    });
+  try {
+    if (!map.getSource(ROUTE_SOURCE_ID)) {
+      map.addSource(ROUTE_SOURCE_ID, {
+        type: 'geojson',
+        data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
+      });
+    }
+    if (!map.getLayer(ROUTE_GLOW_LAYER_ID)) {
+      map.addLayer({
+        id: ROUTE_GLOW_LAYER_ID,
+        type: 'line',
+        source: ROUTE_SOURCE_ID,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#8AB4FF', 'line-width': 14, 'line-opacity': 0.35 },
+      });
+    }
+    if (!map.getLayer(ROUTE_LAYER_ID)) {
+      map.addLayer({
+        id: ROUTE_LAYER_ID,
+        type: 'line',
+        source: ROUTE_SOURCE_ID,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#1A73E8', 'line-width': 6, 'line-opacity': 1 },
+      });
+    }
+  } catch (e) {
+    console.error('ROUTE LAYER ADD FAILED', e);
   }
 }
 
@@ -218,7 +222,10 @@ export default function DriverMap3D({
   // Route polyline.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !styleLoaded) return;
+    if (!map || !styleLoaded) {
+      console.log('ROUTE LAYER SKIPPED', { hasMap: !!map, styleLoaded });
+      return;
+    }
     addRouteLayer(map);
     const geojson: GeoJSON.Feature<GeoJSON.LineString> = {
       type: 'Feature',
@@ -226,6 +233,7 @@ export default function DriverMap3D({
       geometry: { type: 'LineString', coordinates: (routePath ?? []).map(([lat, lng]) => [lng, lat]) },
     };
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    console.log('ROUTE LAYER APPLY', { routePath, hasSource: !!source, hasLayer: !!map.getLayer(ROUTE_LAYER_ID), coords: geojson.geometry.coordinates });
     source?.setData(geojson);
   }, [routePath, styleLoaded, styleVersion]);
 
