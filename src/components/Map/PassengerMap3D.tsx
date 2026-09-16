@@ -41,8 +41,8 @@ const OSM_RASTER_STYLE = {
 // Dark "theme" is a CSS filter over the same free OSM tiles - no second (keyed) tile provider needed.
 const DARK_MAP_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9)';
 const ROUTE_SOURCE_ID = 'passenger-route';
-const ROUTE_LAYER_ID = 'passenger-route-line';
-const ROUTE_OUTLINE_LAYER_ID = 'passenger-route-line-outline';
+const ROUTE_GLOW_LAYER_ID = 'passenger-route-glow';
+const ROUTE_LAYER_ID = 'passenger-route-blue';
 
 function markerElement(marker: PassengerMapMarker) {
   const element = document.createElement('div');
@@ -70,13 +70,13 @@ function addRouteLayer(map: maplibregl.Map) {
       data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
     });
   }
-  if (!map.getLayer(ROUTE_OUTLINE_LAYER_ID)) {
+  if (!map.getLayer(ROUTE_GLOW_LAYER_ID)) {
     map.addLayer({
-      id: ROUTE_OUTLINE_LAYER_ID,
+      id: ROUTE_GLOW_LAYER_ID,
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#A8C0FF', 'line-width': 14, 'line-opacity': 0.5 },
+      paint: { 'line-color': '#8AB4FF', 'line-width': 14, 'line-opacity': 0.4 },
     });
   }
   if (!map.getLayer(ROUTE_LAYER_ID)) {

@@ -32,10 +32,8 @@ const DARK_MAP_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.95) contrast(
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582]; // Polokwane fallback
 const DRIVE_PITCH = 0;
 const ROUTE_SOURCE_ID = 'driver-route';
-const ROUTE_CASING_LAYER_ID = 'driver-route-casing';
-const ROUTE_LAYER_ID = 'driver-route-line';
-const ROUTE_INNER_LAYER_ID = 'driver-route-line-inner';
-const ROUTE_ARROW_LAYER_ID = 'driver-route-arrows';
+const ROUTE_GLOW_LAYER_ID = 'driver-route-glow';
+const ROUTE_LAYER_ID = 'driver-route-blue';
 
 function pinElement(color: string, emoji: string) {
   const el = document.createElement('div');
@@ -60,13 +58,13 @@ function addRouteLayer(map: maplibregl.Map) {
       data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
     });
   }
-  if (!map.getLayer(ROUTE_CASING_LAYER_ID)) {
+  if (!map.getLayer(ROUTE_GLOW_LAYER_ID)) {
     map.addLayer({
-      id: ROUTE_CASING_LAYER_ID,
+      id: ROUTE_GLOW_LAYER_ID,
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#1E4DD8', 'line-width': 10, 'line-opacity': 0.4 },
+      paint: { 'line-color': '#8AB4FF', 'line-width': 14, 'line-opacity': 0.4 },
     });
   }
   if (!map.getLayer(ROUTE_LAYER_ID)) {
@@ -75,30 +73,7 @@ function addRouteLayer(map: maplibregl.Map) {
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#4668F2', 'line-width': 8, 'line-opacity': 1 },
-    });
-  }
-  if (!map.getLayer(ROUTE_INNER_LAYER_ID)) {
-    map.addLayer({
-      id: ROUTE_INNER_LAYER_ID,
-      type: 'line',
-      source: ROUTE_SOURCE_ID,
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#7A8CFF', 'line-width': 2, 'line-opacity': 0.6 },
-    });
-  }
-  if (!map.getLayer(ROUTE_ARROW_LAYER_ID) && map.hasImage('arrow')) {
-    map.addLayer({
-      id: ROUTE_ARROW_LAYER_ID,
-      type: 'symbol',
-      source: ROUTE_SOURCE_ID,
-      layout: {
-        'symbol-placement': 'line',
-        'symbol-spacing': 100,
-        'icon-image': 'arrow',
-        'icon-size': 0.8,
-      },
-      paint: { 'icon-color': '#FFFFFF' },
+      paint: { 'line-color': '#4668F2', 'line-width': 7, 'line-opacity': 1 },
     });
   }
 }
