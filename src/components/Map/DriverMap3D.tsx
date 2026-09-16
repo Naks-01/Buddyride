@@ -128,9 +128,8 @@ export default function DriverMap3D({
       bearing: 0,
       attributionControl: false,
     });
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
-    map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: true }), 'bottom-right');
+    // Native zoom/geolocate controls removed - the app has its own recenter/filter buttons in the same corner.
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
     map.on('dragstart', () => {
       followRef.current = false;
     });
