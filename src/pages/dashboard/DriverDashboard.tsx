@@ -640,7 +640,9 @@ export function DriverDashboard() {
     let cancelled = false;
     void getFreeRoute(driverLocation, target).then((route) => {
       if (cancelled) return;
-      setRoutePath(route?.polyline ?? null);
+      // Fall back to a straight line so the blue route is never just missing if the free public
+      // OSRM demo server is slow/unreachable/rate-limited in production.
+      setRoutePath(route?.polyline ?? [[driverLocation.lat, driverLocation.lng], [target.lat, target.lng]]);
       setRouteDistanceM(route?.distance ?? null);
       setRouteDurationSec(route?.duration ?? null);
     });

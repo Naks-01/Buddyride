@@ -764,7 +764,9 @@ export function PassengerDashboard() {
     let cancelled = false;
     void getFreeRoute(driverLocation, target).then((route) => {
       if (cancelled) return;
-      setDriverRoutePath(route?.polyline ?? null);
+      // Fall back to a straight line so the blue route is never just missing if the free public
+      // OSRM demo server is slow/unreachable/rate-limited in production.
+      setDriverRoutePath(route?.polyline ?? [[driverLocation.lat, driverLocation.lng], [target.lat, target.lng]]);
       setDriverRouteDurationSec(typeof route?.duration === 'number' ? route.duration : null);
     });
     return () => {
