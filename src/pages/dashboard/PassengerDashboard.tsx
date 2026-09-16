@@ -255,7 +255,8 @@ export function PassengerDashboard() {
     setDistance(`${km.toFixed(1)} km`);
     setDistanceKm(km);
     setDurationMin(minutes);
-    setPlannedRoutePath(null);
+    // V1: never null the line - draw a straight fallback so the map always shows something.
+    setPlannedRoutePath([[origin.lat!, origin.lng!], [dest.lat!, dest.lng!]]);
     setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
   };
 

@@ -73,7 +73,7 @@ function addRouteLayer(map: maplibregl.Map) {
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#1A73E8', 'line-width': 5, 'line-opacity': 0.9 },
+      paint: { 'line-color': '#1A73E8', 'line-width': 6, 'line-opacity': 1 },
     });
   }
 }
