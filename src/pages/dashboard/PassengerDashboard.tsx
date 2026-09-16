@@ -695,7 +695,7 @@ export function PassengerDashboard() {
   // Live driver position comes from Realtime Database (cheap, high-frequency), not the Firestore ride doc.
   useEffect(() => {
     if (!rideId) return;
-    const liveRef = ref(rtdb, `liveRides/${rideId}`);
+    const liveRef = ref(rtdb, `live/${rideId}`);
     const unsubscribe = onValue(liveRef, (snapshot) => {
       const data = snapshot.val() as { lat?: number; lng?: number; bearing?: number | null } | null;
       if (!data || typeof data.lat !== 'number' || typeof data.lng !== 'number') return;

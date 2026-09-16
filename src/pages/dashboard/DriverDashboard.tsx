@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { ref, set, update, remove, serverTimestamp as rtdbServerTimestamp } from 'firebase/database';
+import { ref, set, update, remove } from 'firebase/database';
 import {
   Car as CarPin,
   Compass,
@@ -300,13 +300,13 @@ export function DriverDashboard() {
       setAcceptedRide(acceptedRide);
       if (location) {
         // Live position lives in Realtime Database (cheap, high-frequency) instead of Firestore.
-        void set(ref(rtdb, `liveRides/${ride.id}`), {
+        void set(ref(rtdb, `live/${ride.id}`), {
           driverId: uid,
           passengerId: ride.passengerId ?? null,
           lat: location.lat,
           lng: location.lng,
           bearing: null,
-          updatedAt: rtdbServerTimestamp(),
+          updatedAt: Date.now(),
         }).catch((err: unknown) => console.error('Failed to init live location:', err));
       }
       window.setTimeout(() => {
@@ -498,7 +498,7 @@ export function DriverDashboard() {
     const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE + Number(ride.tipAmount ?? 0);
     setTodayEarnings((prev) => prev + driverPayout);
     void completeRideService(ride.id);
-    void remove(ref(rtdb, `liveRides/${ride.id}`)).catch((err: unknown) => console.error('Failed to clear live location:', err));
+    void remove(ref(rtdb, `live/${ride.id}`)).catch((err: unknown) => console.error('Failed to clear live location:', err));
   };
 
   const arriveAtStop = async (ride: RideRequest) => {
@@ -594,13 +594,13 @@ export function DriverDashboard() {
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const now = Date.now();
-        if (now - lastLocationUpdateRef.current < 10000) return;
+        if (now - lastLocationUpdateRef.current < 5000) return;
         lastLocationUpdateRef.current = now;
-        void update(ref(rtdb, `liveRides/${rideId}`), {
+        void update(ref(rtdb, `live/${rideId}`), {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
           bearing: position.coords.heading ?? null,
-          updatedAt: rtdbServerTimestamp(),
+          updatedAt: Date.now(),
         }).catch((err: unknown) => {
           console.error('Failed to update driver location:', err);
           setError('Unable to share your live location.');
@@ -662,7 +662,7 @@ export function DriverDashboard() {
       setRouteDurationSec(null);
       const rideId = lastRideIdForCleanupRef.current;
       if (rideId) {
-        void remove(ref(rtdb, `liveRides/${rideId}`)).catch((err: unknown) => console.error('Failed to clear live location:', err));
+        void remove(ref(rtdb, `live/${rideId}`)).catch((err: unknown) => console.error('Failed to clear live location:', err));
         lastRideIdForCleanupRef.current = null;
       }
     }

@@ -1,6 +1,6 @@
 {
   "rules": {
-    "liveRides": {
+    "live": {
       "$rideId": {
         ".read": "auth != null && (data.child('driverId').val() === auth.uid || data.child('passengerId').val() === auth.uid)",
         ".write": "auth != null && (!data.exists() ? newData.child('driverId').val() === auth.uid : data.child('driverId').val() === auth.uid)"
