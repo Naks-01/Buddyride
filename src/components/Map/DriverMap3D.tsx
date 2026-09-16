@@ -229,40 +229,20 @@ export default function DriverMap3D({
     source?.setData(geojson);
   }, [routePath, styleLoaded, styleVersion]);
 
-  // Fetch route FREE from OSRM when raw driverLocation/destination coords are passed directly (no billing).
+  // V1: hardcoded straight line, no OSRM - when raw driverLocation/destination coords are passed directly.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !styleLoaded || !driverLocation || !destination) return;
-
-    const fetchRoute = async () => {
-      const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-      if (!source) return;
-      try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${driverLocation[1]},${driverLocation[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
-        const res = await fetch(url);
-        const data = await res.json();
-        const coords: [number, number][] | undefined = data.routes?.[0]?.geometry?.coordinates;
-        if (!coords) throw new Error('No OSRM route');
-        source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
-        const bounds = new maplibregl.LngLatBounds();
-        coords.forEach((c) => bounds.extend(c));
-        map.fitBounds(bounds, { padding: 100, maxZoom: 16 });
-      } catch (e) {
-        console.log('OSRM failed, drawing straight line', e);
-        source.setData({
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates: [
-              [driverLocation[1], driverLocation[0]],
-              [destination[1], destination[0]],
-            ],
-          },
-        });
-      }
-    };
-    void fetchRoute();
+    const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    const coords: [number, number][] = [
+      [driverLocation[1], driverLocation[0]],
+      [destination[1], destination[0]],
+    ];
+    source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
+    const bounds = new maplibregl.LngLatBounds();
+    coords.forEach((c) => bounds.extend(c));
+    map.fitBounds(bounds, { padding: 100, maxZoom: 16 });
   }, [driverLocation, destination, styleLoaded]);
 
   const handleRecenter = () => {

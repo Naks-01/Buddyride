@@ -30,7 +30,6 @@ import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
   completeRide as completeRideService,
-  getFreeRoute,
   markArrived,
   startTrip as startTripService,
   subscribeToRequestedRides,
@@ -547,19 +546,17 @@ export function DriverDashboard() {
     return () => window.clearInterval(timer);
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.stopArrivalTime]);
 
-  // Google/Waze open the external app; 'inapp' draws the OSRM route on the Leaflet map instead.
+  // Google/Waze open the external app; 'inapp' draws a hardcoded straight blue line on the map instead.
   const navigateTo = async (destination: Coordinates, origin?: Coordinates) => {
     const provider = getMapProvider();
     const openedExternally = openExternalNavigation(destination.lat, destination.lng, provider);
     if (openedExternally) {
-      setRoutePath(null);
       setRouteMarkers([]);
       return;
     }
     setRouteMarkers([{ id: 'nav-destination', position: [destination.lat, destination.lng], color: '#FF3B30', emoji: '📍' }]);
     if (origin) {
-      const route = await getFreeRoute(origin, destination);
-      setRoutePath(route?.polyline ?? null);
+      setRoutePath([[origin.lat, origin.lng], [destination.lat, destination.lng]]);
     }
   };
 
@@ -618,12 +615,8 @@ export function DriverDashboard() {
 
   // Auto-draws/refreshes the driver's own navigation route on the in-app map (pickup while
   // approaching, dropoff/current stop once trip_started). Runs on a steady 10s interval keyed
-  // only on ride id/status (NOT driverLocation) - driverLocation gets a new object reference on
-  // every single GPS tick, and this effect used to depend on it directly, so React's own cleanup
-  // was cancelling every in-flight OSRM fetch before it could resolve (setRoutePath never ran) -
-  // that's why the blue line never appeared even though markers rendered fine. Reads the latest
-  // driver position via a ref instead, and always sets a straight-line fallback synchronously
-  // before awaiting OSRM, so a blue line is visible immediately every tick.
+  // only on ride id/status. V1: hardcoded straight line, no OSRM - reads the latest driver
+  // position via a ref so the blue line is always visible immediately every tick.
   const driverLocationRef = useRef(driverLocation);
   useEffect(() => {
     driverLocationRef.current = driverLocation;
@@ -652,13 +645,8 @@ export function DriverDashboard() {
         ...(dropoff ? [{ id: 'dropoff-pin', position: [dropoff.lat, dropoff.lng] as [number, number], color: '#FF3B30', emoji: '🏁' }] : []),
       ]);
 
-      const fallbackLine: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
-      setRoutePath(fallbackLine);
-      const route = await getFreeRoute(location, target);
-      console.log('ROUTE DEBUG', { route, driverLat: location.lat, driverLng: location.lng, target });
-      setRoutePath(route?.polyline ?? fallbackLine);
-      setRouteDistanceM(route?.distance ?? null);
-      setRouteDurationSec(route?.duration ?? null);
+      const line: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
+      setRoutePath(line);
     };
 
     void run();
@@ -673,7 +661,6 @@ export function DriverDashboard() {
   }, [acceptedRide?.id]);
   useEffect(() => {
     if (!acceptedRide) {
-      setRoutePath(null);
       setRouteMarkers([]);
       setRouteDistanceM(null);
       setRouteDurationSec(null);

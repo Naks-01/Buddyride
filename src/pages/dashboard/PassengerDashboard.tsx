@@ -5,7 +5,7 @@ import { ref, onValue } from 'firebase/database';
 import { LockKeyhole } from 'lucide-react';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
-import { createRide, cancelRide as cancelRideService, subscribeToRide, getFreeRoute } from '../../lib/rideService';
+import { createRide, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
 import { rtdb } from '../../lib/firebase';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
@@ -218,9 +218,9 @@ export function PassengerDashboard() {
     setDurationMin(minutes);
   };
 
-  // Real route via OSRM (distance + duration), used for the actual quoted price and the planned polyline.
-  // If OSRM is slow/unreachable, falls back to straight-line distance * 1.3 so the fare estimate + Request button
-  // never get stuck waiting on a 3rd-party routing service.
+  // V1: hardcoded straight-line distance/route, no OSRM. Distance * 1.3 (rough road-distance
+  // correction) + ~30km/h average speed for the fare estimate; the map always draws a plain
+  // straight blue line between origin and destination.
   const calculateFare = async () => {
     if (stops.some((stop) => stop.lat == null || stop.lng == null)) return;
     const origin = stops[0];
@@ -228,36 +228,15 @@ export function PassengerDashboard() {
     calculateFareFallback();
     setPriceLoading(true);
     setPriceError('');
-    try {
-      const route = await getFreeRoute(
-        { lat: origin.lat!, lng: origin.lng! },
-        { lat: dest.lat!, lng: dest.lng! }
-      );
-      if (route) {
-        const km = route.distance / 1000;
-        const minutes = route.duration / 60;
-        setDistance(`${km.toFixed(1)} km`);
-        setDistanceKm(km);
-        setDurationMin(minutes);
-        setPlannedRoutePath(route.polyline);
-        setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
-        return;
-      }
-    } catch (err) {
-      console.error('Failed to fetch OSRM route:', err);
-    } finally {
-      setPriceLoading(false);
-    }
-    // Fallback: straight-line distance * 1.3 (rough road-distance correction) + ~30km/h average speed.
     const straightKm = calcDistance(origin.lat!, origin.lng!, dest.lat!, dest.lng!);
     const km = straightKm * 1.3;
     const minutes = (km / 30) * 60;
     setDistance(`${km.toFixed(1)} km`);
     setDistanceKm(km);
     setDurationMin(minutes);
-    // V1: never null the line - draw a straight fallback so the map always shows something.
     setPlannedRoutePath([[origin.lat!, origin.lng!], [dest.lat!, dest.lng!]]);
     setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
+    setPriceLoading(false);
   };
 
   const selectCategory = (catId: RideCategoryId) => {
@@ -529,7 +508,6 @@ export function PassengerDashboard() {
       setDistance('');
       setDistanceKm(null);
       setDurationMin(null);
-      setPlannedRoutePath(null);
       setEstimatedFare(0);
       setPriceError('');
       setPriceLoading(false);
@@ -595,7 +573,6 @@ export function PassengerDashboard() {
           setRideCreatedAt(null);
           setCancelSecondsRemaining(0);
           setDriverLocation(null);
-          setDriverRoutePath(null);
           setDriverName(null);
           setDriverPhone(null);
           setDriverId(null);
@@ -748,13 +725,9 @@ export function PassengerDashboard() {
   }, [rideId]);
 
   // Draw the live route from the driver to wherever they're headed next (pickup while
-  // approaching, dropoff once the trip has started) and refresh the ETA every 10s via OSRM.
-  // Runs on a steady interval keyed only on rideStatus (NOT driverLocation) - driverLocation gets
-  // a new object reference on every RTDB update, and this effect used to depend on it directly,
-  // so React's own cleanup was cancelling every in-flight OSRM fetch before it could resolve
-  // (setDriverRoutePath never ran) - that's why the blue line never appeared. Reads the latest
-  // driver/target position via refs instead, and always sets a straight-line fallback
-  // synchronously before awaiting OSRM, so a blue line is visible immediately every tick.
+  // approaching, dropoff once the trip has started). V1: hardcoded straight line, no OSRM -
+  // reads the latest driver/target position via refs so the blue line is always visible
+  // immediately every tick.
   const driverLocationForRouteRef = useRef(driverLocation);
   useEffect(() => {
     driverLocationForRouteRef.current = driverLocation;
@@ -771,25 +744,19 @@ export function PassengerDashboard() {
   useEffect(() => {
     const isTracking = rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'trip_started';
     if (!isTracking) {
-      setDriverRoutePath(null);
       setDriverRouteDurationSec(null);
       return;
     }
 
-    const run = async () => {
+    const run = () => {
       const location = driverLocationForRouteRef.current;
       const target = rideStatus === 'trip_started' ? tripDropoffRef.current : tripPickupRef.current;
       if (!location || !target) return;
-      const fallbackLine: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
-      setDriverRoutePath(fallbackLine);
-      const route = await getFreeRoute(location, target);
-      console.log('ROUTE DEBUG (passenger)', { route, driverLat: location.lat, driverLng: location.lng, target });
-      setDriverRoutePath(route?.polyline ?? fallbackLine);
-      setDriverRouteDurationSec(typeof route?.duration === 'number' ? route.duration : null);
+      setDriverRoutePath([[location.lat, location.lng], [target.lat, target.lng]]);
     };
 
-    void run();
-    const intervalId = window.setInterval(() => void run(), 10000);
+    run();
+    const intervalId = window.setInterval(run, 10000);
     return () => window.clearInterval(intervalId);
   }, [rideStatus]);
   useEffect(() => {
@@ -840,7 +807,6 @@ export function PassengerDashboard() {
     setCancelledBy(null);
     setCancelReason(null);
     setDriverLocation(null);
-    setDriverRoutePath(null);
     setDriverName(null);
     setDriverPhone(null);
     setDriverId(null);
