@@ -18,6 +18,7 @@ import { UserIcon } from '../../components/Icons';
 import { RatingModal } from '../../components/RatingModal';
 import { Spinner } from '../../components/Spinner';
 import { PassengerSettingsModal } from '../../components/PassengerSettingsModal';
+import { RideChat } from '../../components/RideChat';
 import { playSound, playSoundTimes } from '../../utils/sound';
 import type { PassengerMapMarker } from '../../components/Map/PassengerMap3D';
 
@@ -902,6 +903,9 @@ export function PassengerDashboard() {
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-gray-50">
+      {rideId && isShareableTrip && profile?.id && (
+        <RideChat rideId={rideId} currentUserId={profile.id} currentUserRole="passenger" rideStatus={rideStatus} />
+      )}
       {rideStatus === 'cancelled' && (
         <div
           style={{

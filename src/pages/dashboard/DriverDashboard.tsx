@@ -21,6 +21,7 @@ import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
+import { RideChat } from '../../components/RideChat';
 import type { DriverMapMarker } from '../../components/Map/DriverMap3D';
 
 const DriverMap3D = lazy(() => import('../../components/Map/DriverMap3D'));
@@ -870,6 +871,15 @@ export function DriverDashboard() {
           </button>
         )}
       </div>
+
+      {acceptedRide && (
+        <RideChat
+          rideId={acceptedRide.id}
+          currentUserId={user.uid}
+          currentUserRole="driver"
+          rideStatus={acceptedRide.status}
+        />
+      )}
 
       {!isOnline && !hasActiveOverlay && (
         <button
