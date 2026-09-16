@@ -614,8 +614,10 @@ export function DriverDashboard() {
     const target = acceptedRide.status === 'trip_started' ? dropoff : pickup;
     if (!target) return;
 
+    // Pickup pin only shows before the passenger is on board - once trip_started it would sit
+    // right on top of the driver's own live position (already at/near the pickup point).
     setRouteMarkers([
-      ...(pickup ? [{ id: 'pickup-pin', position: [pickup.lat, pickup.lng] as [number, number], color: '#FF9500', emoji: '📍' }] : []),
+      ...(pickup && acceptedRide.status !== 'trip_started' ? [{ id: 'pickup-pin', position: [pickup.lat, pickup.lng] as [number, number], color: '#FF9500', emoji: '📍' }] : []),
       ...(dropoff ? [{ id: 'dropoff-pin', position: [dropoff.lat, dropoff.lng] as [number, number], color: '#FF3B30', emoji: '🏁' }] : []),
     ]);
 

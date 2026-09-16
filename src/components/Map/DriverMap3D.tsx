@@ -50,7 +50,7 @@ function carElement() {
 }
 
 // Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
-// Bolt-style blue nav line: darker casing, main blue line, inner highlight, then turn arrows on top.
+// Thick orange BuddyRide nav line: soft glow casing plus a solid core line on top.
 function addRouteLayer(map: maplibregl.Map) {
   if (!map.getSource(ROUTE_SOURCE_ID)) {
     map.addSource(ROUTE_SOURCE_ID, {
@@ -64,7 +64,7 @@ function addRouteLayer(map: maplibregl.Map) {
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#8AB4FF', 'line-width': 14, 'line-opacity': 0.4 },
+      paint: { 'line-color': '#FF9500', 'line-width': 16, 'line-opacity': 0.35 },
     });
   }
   if (!map.getLayer(ROUTE_LAYER_ID)) {
@@ -73,7 +73,7 @@ function addRouteLayer(map: maplibregl.Map) {
       type: 'line',
       source: ROUTE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#4668F2', 'line-width': 7, 'line-opacity': 1 },
+      paint: { 'line-color': '#FF6B00', 'line-width': 8, 'line-opacity': 1 },
     });
   }
 }
