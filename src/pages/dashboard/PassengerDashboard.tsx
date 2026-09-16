@@ -138,6 +138,7 @@ export function PassengerDashboard() {
   const [isLocationLocked, setIsLocationLocked] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState<SearchPlace[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [mode, setMode] = useState<'ride' | 'send'>('ride');
   const [tripType, setTripType] = useState<'ride' | 'send'>('ride');
   const [packageDescription, setPackageDescription] = useState('');
@@ -387,6 +388,7 @@ export function PassengerDashboard() {
       setLocationAccuracy(accuracy);
       setMapLocation(location);
       setSearchText('Current location');
+      setShowSuggestions(false);
       scheduleReverseGeocode(location);
     } catch (err) {
       console.error(err);
@@ -859,6 +861,7 @@ export function PassengerDashboard() {
     const location = { lat, lng };
     setMapLocation(location);
     setSearchText('Pinned location');
+    setShowSuggestions(false);
     // Fallback: once pickup is locked in, tapping the map drops + auto-confirms the destination pin.
     if (locationStep === 'dropoff' && isLocationLocked) {
       autoConfirmMapPinRef.current = true;
@@ -1109,11 +1112,17 @@ export function PassengerDashboard() {
                   <div className="relative">
                     <input
                       value={searchText}
-                      onChange={(event) => setSearchText(event.target.value)}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setSearchText(value);
+                        setShowSuggestions(value.trim().length >= 3);
+                      }}
+                      onFocus={() => setShowSuggestions(searchText.trim().length >= 3)}
+                      onBlur={() => window.setTimeout(() => setShowSuggestions(false), 200)}
                       placeholder={activeStopIndex === 0 ? 'Where are you?' : activeStopIndex === stops.length - 1 ? 'Where to?' : `Add stop ${activeStopIndex}`}
                       className="w-full truncate overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 shadow-sm"
                     />
-                    {searchResults.length > 0 && (
+                    {showSuggestions && searchResults.length > 0 && (
                       <div
                         className="location-results absolute left-0 right-0 top-full mt-1 rounded-xl border border-gray-100 shadow-lg"
                         style={{
