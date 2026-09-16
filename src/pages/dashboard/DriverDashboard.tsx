@@ -617,39 +617,54 @@ export function DriverDashboard() {
   }, [acceptedRide?.id, acceptedRide?.status]);
 
   // Auto-draws/refreshes the driver's own navigation route on the in-app map (pickup while
-  // approaching, dropoff/current stop once trip_started) - refetched at most every 10s via OSRM,
-  // so the polyline stays live even if the driver never taps a manual "Navigate" button.
-  const lastDriverRouteFetchRef = useRef(0);
+  // approaching, dropoff/current stop once trip_started). Runs on a steady 10s interval keyed
+  // only on ride id/status (NOT driverLocation) - driverLocation gets a new object reference on
+  // every single GPS tick, and this effect used to depend on it directly, so React's own cleanup
+  // was cancelling every in-flight OSRM fetch before it could resolve (setRoutePath never ran) -
+  // that's why the blue line never appeared even though markers rendered fine. Reads the latest
+  // driver position via a ref instead, and always sets a straight-line fallback synchronously
+  // before awaiting OSRM, so a blue line is visible immediately every tick.
+  const driverLocationRef = useRef(driverLocation);
   useEffect(() => {
-    if (!acceptedRide || !driverLocation || !LOCATION_SHARING_STATUSES.has(acceptedRide.status ?? '')) return;
-    const pickup = getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng);
-    const dropoff = getLocationCoordinates(acceptedRide.dropoff, acceptedRide.dropoffLatLng);
-    const target = acceptedRide.status === 'trip_started' ? dropoff : pickup;
-    if (!target) return;
+    driverLocationRef.current = driverLocation;
+  }, [driverLocation]);
+  const acceptedRideForRouteRef = useRef(acceptedRide);
+  useEffect(() => {
+    acceptedRideForRouteRef.current = acceptedRide;
+  }, [acceptedRide]);
 
-    // Pickup pin only shows before the passenger is on board - once trip_started it would sit
-    // right on top of the driver's own live position (already at/near the pickup point).
-    setRouteMarkers([
-      ...(pickup && acceptedRide.status !== 'trip_started' ? [{ id: 'pickup-pin', position: [pickup.lat, pickup.lng] as [number, number], color: '#FF9500', emoji: '📍' }] : []),
-      ...(dropoff ? [{ id: 'dropoff-pin', position: [dropoff.lat, dropoff.lng] as [number, number], color: '#FF3B30', emoji: '🏁' }] : []),
-    ]);
+  useEffect(() => {
+    if (!acceptedRide || !LOCATION_SHARING_STATUSES.has(acceptedRide.status ?? '')) return;
 
-    const now = Date.now();
-    if (now - lastDriverRouteFetchRef.current < 10000) return;
-    lastDriverRouteFetchRef.current = now;
-    let cancelled = false;
-    void getFreeRoute(driverLocation, target).then((route) => {
-      if (cancelled) return;
-      // Fall back to a straight line so the blue route is never just missing if the free public
-      // OSRM demo server is slow/unreachable/rate-limited in production.
-      setRoutePath(route?.polyline ?? [[driverLocation.lat, driverLocation.lng], [target.lat, target.lng]]);
+    const run = async () => {
+      const ride = acceptedRideForRouteRef.current;
+      const location = driverLocationRef.current;
+      if (!ride || !location) return;
+      const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
+      const dropoff = getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
+      const target = ride.status === 'trip_started' ? dropoff : pickup;
+      if (!target) return;
+
+      // Pickup pin only shows before the passenger is on board - once trip_started it would sit
+      // right on top of the driver's own live position (already at/near the pickup point).
+      setRouteMarkers([
+        ...(pickup && ride.status !== 'trip_started' ? [{ id: 'pickup-pin', position: [pickup.lat, pickup.lng] as [number, number], color: '#FF9500', emoji: '📍' }] : []),
+        ...(dropoff ? [{ id: 'dropoff-pin', position: [dropoff.lat, dropoff.lng] as [number, number], color: '#FF3B30', emoji: '🏁' }] : []),
+      ]);
+
+      const fallbackLine: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
+      setRoutePath(fallbackLine);
+      const route = await getFreeRoute(location, target);
+      console.log('ROUTE DEBUG', { route, driverLat: location.lat, driverLng: location.lng, target });
+      setRoutePath(route?.polyline ?? fallbackLine);
       setRouteDistanceM(route?.distance ?? null);
       setRouteDurationSec(route?.duration ?? null);
-    });
-    return () => {
-      cancelled = true;
     };
-  }, [driverLocation, acceptedRide?.status, acceptedRide?.id]);
+
+    void run();
+    const intervalId = window.setInterval(() => void run(), 10000);
+    return () => window.clearInterval(intervalId);
+  }, [acceptedRide?.id, acceptedRide?.status]);
 
   // Clear the nav overlay once the ride ends (completed/cancelled/dismissed).
   const lastRideIdForCleanupRef = useRef<string | null>(null);

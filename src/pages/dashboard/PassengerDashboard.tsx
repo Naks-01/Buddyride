@@ -118,7 +118,6 @@ export function PassengerDashboard() {
   const [driverHeading, setDriverHeading] = useState<number | null>(null);
   const [isFollowingDriver, setIsFollowingDriver] = useState(true);
   const [centerTrigger, setCenterTrigger] = useState(0);
-  const lastRouteFetchRef = useRef(0);
   const lastDriverPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [distance, setDistance] = useState<string>('');
@@ -748,31 +747,50 @@ export function PassengerDashboard() {
   }, [rideId]);
 
   // Draw the live route from the driver to wherever they're headed next (pickup while
-  // approaching, dropoff once the trip has started) and refresh the ETA every 10s via OSRM -
-  // auto, no user action, mirrors Bolt's live-tracking behavior.
+  // approaching, dropoff once the trip has started) and refresh the ETA every 10s via OSRM.
+  // Runs on a steady interval keyed only on rideStatus (NOT driverLocation) - driverLocation gets
+  // a new object reference on every RTDB update, and this effect used to depend on it directly,
+  // so React's own cleanup was cancelling every in-flight OSRM fetch before it could resolve
+  // (setDriverRoutePath never ran) - that's why the blue line never appeared. Reads the latest
+  // driver/target position via refs instead, and always sets a straight-line fallback
+  // synchronously before awaiting OSRM, so a blue line is visible immediately every tick.
+  const driverLocationForRouteRef = useRef(driverLocation);
   useEffect(() => {
-    if (!driverLocation) return;
-    const target = rideStatus === 'trip_started' ? tripDropoffLocation : tripPickupLocation;
-    if (!target || (rideStatus !== 'driver_assigned' && rideStatus !== 'driver_en_route' && rideStatus !== 'trip_started')) {
+    driverLocationForRouteRef.current = driverLocation;
+  }, [driverLocation]);
+  const tripPickupRef = useRef(tripPickupLocation);
+  useEffect(() => {
+    tripPickupRef.current = tripPickupLocation;
+  }, [tripPickupLocation]);
+  const tripDropoffRef = useRef(tripDropoffLocation);
+  useEffect(() => {
+    tripDropoffRef.current = tripDropoffLocation;
+  }, [tripDropoffLocation]);
+
+  useEffect(() => {
+    const isTracking = rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'trip_started';
+    if (!isTracking) {
       setDriverRoutePath(null);
       setDriverRouteDurationSec(null);
       return;
     }
-    const now = Date.now();
-    if (now - lastRouteFetchRef.current < 10000) return;
-    lastRouteFetchRef.current = now;
-    let cancelled = false;
-    void getFreeRoute(driverLocation, target).then((route) => {
-      if (cancelled) return;
-      // Fall back to a straight line so the blue route is never just missing if the free public
-      // OSRM demo server is slow/unreachable/rate-limited in production.
-      setDriverRoutePath(route?.polyline ?? [[driverLocation.lat, driverLocation.lng], [target.lat, target.lng]]);
+
+    const run = async () => {
+      const location = driverLocationForRouteRef.current;
+      const target = rideStatus === 'trip_started' ? tripDropoffRef.current : tripPickupRef.current;
+      if (!location || !target) return;
+      const fallbackLine: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
+      setDriverRoutePath(fallbackLine);
+      const route = await getFreeRoute(location, target);
+      console.log('ROUTE DEBUG (passenger)', { route, driverLat: location.lat, driverLng: location.lng, target });
+      setDriverRoutePath(route?.polyline ?? fallbackLine);
       setDriverRouteDurationSec(typeof route?.duration === 'number' ? route.duration : null);
-    });
-    return () => {
-      cancelled = true;
     };
-  }, [driverLocation, tripPickupLocation, tripDropoffLocation, rideStatus]);
+
+    void run();
+    const intervalId = window.setInterval(() => void run(), 10000);
+    return () => window.clearInterval(intervalId);
+  }, [rideStatus]);
   useEffect(() => {
     if (!isActiveTrip || rideCreatedAt == null) return;
     const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
