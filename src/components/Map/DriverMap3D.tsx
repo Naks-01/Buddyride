@@ -83,7 +83,7 @@ function addRouteLayer(map: maplibregl.Map): string | null {
         type: 'line',
         source: ROUTE_SOURCE_ID,
         layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
-        paint: { 'line-color': '#FFFFFF', 'line-width': 16, 'line-opacity': 1 },
+        paint: { 'line-color': '#FFFFFF', 'line-width': 18, 'line-opacity': 1 },
       });
     }
     if (!map.getLayer(ROUTE_LAYER_ID)) {
@@ -377,9 +377,9 @@ export default function DriverMap3D({
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
-      {/* Debug status - collapsed to a small dot above the trip sheet by default so it never sits
-          under the hamburger/shield buttons; tap to expand full details. No phone logs needed. */}
-      {badgeExpanded ? (
+      {/* Debug status - fully hidden once the route is healthy (no error, real line drawn) for a
+          clean screenshot; auto-reveals itself the instant something actually breaks. */}
+      {(debugInfo.lastError || debugInfo.routeLen <= 1) && (badgeExpanded ? (
         <div
           onClick={() => setBadgeExpanded(false)}
           role="button"
@@ -426,7 +426,7 @@ export default function DriverMap3D({
             padding: 0,
           }}
         />
-      )}
+      ))}
       <button
         type="button"
         aria-label="Recenter on my location"
