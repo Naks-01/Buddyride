@@ -9,8 +9,11 @@ import { AuthProvider } from './context/AuthContext';
 // Force every open tab onto the freshly deployed bundle instead of running stale cached JS forever.
 navigator.serviceWorker?.addEventListener('controllerchange', () => window.location.reload());
 const updateSW = registerSW({
+  immediate: true,
+  // Auto-apply immediately - a confirm() dialog is too easy to miss/dismiss in a standalone PWA,
+  // which was silently stranding devices on old JS bundles no matter how many times we deployed.
   onNeedRefresh() {
-    if (confirm('New version available - update now?')) updateSW(true);
+    updateSW(true);
   },
   onOfflineReady() {
     console.log('Ready offline');

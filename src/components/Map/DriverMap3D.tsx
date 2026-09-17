@@ -32,8 +32,8 @@ const DARK_MAP_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.95) contrast(
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582]; // Polokwane fallback
 const DRIVE_PITCH = 0;
 const ROUTE_SOURCE_ID = 'driver-route';
-const ROUTE_OUTLINE_LAYER_ID = 'driver-route-blue-outline';
-const ROUTE_LAYER_ID = 'driver-route-blue';
+const ROUTE_WHITE_LAYER_ID = 'driver-route-white';
+const ROUTE_BLUE_LAYER_ID = 'driver-route-blue';
 // Limpopo/South Africa bounding box - used only to auto-correct an accidentally swapped
 // [lat,lng] pair so one bad upstream coordinate can never silently make the whole line vanish.
 const SA_LNG_RANGE: [number, number] = [15, 34];
@@ -65,46 +65,44 @@ function carElement() {
   return el;
 }
 
-// Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
-// Solid, opaque blue line with a white outline underneath for contrast against any tile color.
+// Fully tears down and recreates the source + both line layers on every single call, then forces
+// them to the top of the layer stack. This is deliberately more aggressive than "add if missing" -
+// it guarantees there's never a stale/corrupted layer left over from a previous style reload that
+// silently keeps rendering an old (or empty) line underneath a seemingly-fine new one.
 // Returns a human-readable error string on failure (or null on success) so callers can surface it
 // on-screen instead of requiring someone to pull phone/devtools logs.
-function addRouteLayer(map: maplibregl.Map): string | null {
+function setRouteData(map: maplibregl.Map, coordinates: [number, number][]): string | null {
   try {
-    if (!map.getSource(ROUTE_SOURCE_ID)) {
-      map.addSource(ROUTE_SOURCE_ID, {
-        type: 'geojson',
-        data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
-      });
-    }
-    if (!map.getLayer(ROUTE_OUTLINE_LAYER_ID)) {
-      map.addLayer({
-        id: ROUTE_OUTLINE_LAYER_ID,
-        type: 'line',
-        source: ROUTE_SOURCE_ID,
-        layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
-        paint: { 'line-color': '#FFFFFF', 'line-width': 18, 'line-opacity': 1 },
-      });
-    }
-    if (!map.getLayer(ROUTE_LAYER_ID)) {
-      map.addLayer({
-        id: ROUTE_LAYER_ID,
-        type: 'line',
-        source: ROUTE_SOURCE_ID,
-        layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
-        paint: { 'line-color': '#0066FF', 'line-width': 12, 'line-opacity': 1 },
-      });
-    }
-    // Force both layers to the very top of the stack every call - outline first, blue drawn last
-    // (on top of the white halo) - so a style reload or marker re-add can never bury the line.
-    map.moveLayer(ROUTE_OUTLINE_LAYER_ID);
-    map.moveLayer(ROUTE_LAYER_ID);
-    map.setLayoutProperty(ROUTE_LAYER_ID, 'visibility', 'visible');
-    map.setLayoutProperty(ROUTE_OUTLINE_LAYER_ID, 'visibility', 'visible');
+    if (map.getLayer(ROUTE_BLUE_LAYER_ID)) map.removeLayer(ROUTE_BLUE_LAYER_ID);
+    if (map.getLayer(ROUTE_WHITE_LAYER_ID)) map.removeLayer(ROUTE_WHITE_LAYER_ID);
+    if (map.getSource(ROUTE_SOURCE_ID)) map.removeSource(ROUTE_SOURCE_ID);
+
+    map.addSource(ROUTE_SOURCE_ID, {
+      type: 'geojson',
+      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } },
+    });
+    map.addLayer({
+      id: ROUTE_WHITE_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
+      paint: { 'line-color': '#FFFFFF', 'line-width': 18, 'line-opacity': 1 },
+    });
+    map.addLayer({
+      id: ROUTE_BLUE_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
+      paint: { 'line-color': '#0066FF', 'line-width': 10, 'line-opacity': 1 },
+    });
+    // Force both to the very top of the stack - white first, blue drawn last (on top of the halo).
+    map.moveLayer(ROUTE_WHITE_LAYER_ID);
+    map.moveLayer(ROUTE_BLUE_LAYER_ID);
+    console.log('ROUTE SET', coordinates.length, coordinates[0]);
     return null;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    console.error('ROUTE LAYER ADD FAILED', e);
+    console.error('ROUTE LAYER SET FAILED', e);
     return message;
   }
 }
@@ -154,6 +152,10 @@ export default function DriverMap3D({
   useEffect(() => {
     if (debugInfo.lastError) setBadgeExpanded(true);
   }, [debugInfo.lastError]);
+  // One-shot "ROUTE LIVE" confirmation the moment a real route is drawn successfully - visible for
+  // 5s even on an otherwise clean/hidden-badge screen, so a healthy line is never silently assumed.
+  const [routeLiveMsg, setRouteLiveMsg] = useState<string | null>(null);
+  const routeLiveTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('mapTheme');
@@ -185,12 +187,12 @@ export default function DriverMap3D({
     map.on('load', () => {
       map.resize();
       setTimeout(() => map.resize(), 1000);
-      lastErrorRef.current = addRouteLayer(map);
+      console.log('MAP STYLE LAYERS', map.getStyle()?.layers?.map((l) => l.id));
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
     });
     map.on('style.load', () => {
-      lastErrorRef.current = addRouteLayer(map);
+      console.log('MAP STYLE LAYERS (style.load)', map.getStyle()?.layers?.map((l) => l.id));
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
     });
@@ -267,26 +269,23 @@ export default function DriverMap3D({
     });
   }, [markers, styleVersion]);
 
-  // Route polyline.
+  // Route polyline - full recreate every time so a stale/corrupted layer from a previous style
+  // reload can never keep silently rendering underneath a seemingly-fine new one.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !styleLoaded) return;
-    lastErrorRef.current = addRouteLayer(map);
-    const coords = (routePath ?? []).map(toLngLatSafe);
-    firstCoordRef.current = coords[0] ?? null;
-    console.log('ROUTE LAYER APPLY', { routeLen: coords.length, firstCoord: coords[0] });
-    const geojson: GeoJSON.Feature<GeoJSON.LineString> = {
-      type: 'Feature',
-      properties: {},
-      geometry: { type: 'LineString', coordinates: coords },
-    };
-    const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (!source) {
-      lastErrorRef.current = 'driver-route source missing on setData';
-    } else {
-      source.setData(geojson);
+    let coords = (routePath ?? []).map(toLngLatSafe);
+    if (coords.length < 2 && driverLocation && destination) {
+      coords = [driverLocation, destination].map(toLngLatSafe);
     }
-  }, [routePath, styleLoaded, styleVersion]);
+    firstCoordRef.current = coords[0] ?? null;
+    lastErrorRef.current = setRouteData(map, coords);
+    if (!lastErrorRef.current && coords.length > 1) {
+      setRouteLiveMsg(`ROUTE LIVE ${coords.length}pts`);
+      if (routeLiveTimerRef.current) window.clearTimeout(routeLiveTimerRef.current);
+      routeLiveTimerRef.current = window.setTimeout(() => setRouteLiveMsg(null), 5000);
+    }
+  }, [routePath, styleLoaded, styleVersion, driverLocation, destination]);
 
   // V1 brute-force safety net: if the parent hasn't handed us a real routePath/driverLocation yet
   // (e.g. its own GPS state is still null), draw a straight line ourselves from this component's
@@ -312,7 +311,6 @@ export default function DriverMap3D({
       const pickup = markersRef.current.find((m) => m.id === 'pickup-pin');
       const dropoff = markersRef.current.find((m) => m.id === 'dropoff-pin') ?? markersRef.current.find((m) => m.id === 'nav-destination');
       if (!pickup && !dropoff) return;
-      lastErrorRef.current = addRouteLayer(map);
       const from = posRef.current;
       // driverLocation -> pickup -> dropoff, whichever pins are actually present.
       const latLngCoords: [number, number][] = [from];
@@ -320,12 +318,7 @@ export default function DriverMap3D({
       if (dropoff) latLngCoords.push(dropoff.position);
       const coords = latLngCoords.map(toLngLatSafe);
       firstCoordRef.current = coords[0] ?? null;
-      const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-      if (!source) {
-        lastErrorRef.current = 'driver-route source missing on fallback setData';
-        return;
-      }
-      source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
+      lastErrorRef.current = setRouteData(map, coords);
     };
     drawFallbackBlue();
     const intervalId = window.setInterval(drawFallbackBlue, 1000);
@@ -341,7 +334,7 @@ export default function DriverMap3D({
         routeLen: routePathRef.current?.length ?? 0,
         driverPos: posRef.current,
         hasSource: !!map?.getSource(ROUTE_SOURCE_ID),
-        hasLayer: !!map?.getLayer(ROUTE_LAYER_ID),
+        hasLayer: !!map?.getLayer(ROUTE_BLUE_LAYER_ID),
         lastError: lastErrorRef.current,
         firstCoord: firstCoordRef.current,
       });
@@ -351,19 +344,13 @@ export default function DriverMap3D({
     return () => window.clearInterval(intervalId);
   }, []);
 
-  // V1: hardcoded straight line, no OSRM - when raw driverLocation/destination coords are passed directly.
+  // V1: hardcoded straight line, no OSRM - when raw driverLocation/destination coords are passed
+  // directly. The main route-polyline effect above now also consumes driverLocation/destination as
+  // a length<2 fallback, but this keeps the dedicated fitBounds behavior for that call pattern.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !styleLoaded || !driverLocation || !destination) return;
-    lastErrorRef.current = addRouteLayer(map);
-    const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (!source) {
-      lastErrorRef.current = 'driver-route source missing on direct-line setData';
-      return;
-    }
     const coords: [number, number][] = [driverLocation, destination].map(toLngLatSafe);
-    firstCoordRef.current = coords[0] ?? null;
-    source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
     const bounds = new maplibregl.LngLatBounds();
     coords.forEach((c) => bounds.extend(c));
     map.fitBounds(bounds, { padding: 100, maxZoom: 16 });
@@ -427,6 +414,28 @@ export default function DriverMap3D({
           }}
         />
       ))}
+      {/* One-shot confirmation toast - shows even on an otherwise clean/hidden-badge screen so a
+          healthy route draw is never just silently assumed; auto-dismisses after 5s. */}
+      {routeLiveMsg && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 110,
+            left: 12,
+            zIndex: 50,
+            background: 'rgba(0,102,255,0.9)',
+            color: '#FFFFFF',
+            fontFamily: 'monospace',
+            fontSize: 11,
+            fontWeight: 700,
+            padding: '6px 10px',
+            borderRadius: 6,
+            pointerEvents: 'none',
+          }}
+        >
+          {routeLiveMsg}
+        </div>
+      )}
       <button
         type="button"
         aria-label="Recenter on my location"
