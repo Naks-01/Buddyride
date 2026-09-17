@@ -185,7 +185,17 @@ export default function PassengerMap3D({
       seen.add(marker.id);
       const existing = markersRef.current.get(marker.id);
       if (existing) {
-        existing.remove();
+        // Update the same DOM node in place (not remove+recreate) so its CSS transition can
+        // actually animate between the old and new position/rotation - Bolt-style smooth glide.
+        existing.setLngLat([marker.position[1], marker.position[0]]);
+        if (marker.id === 'driver') {
+          const rotation = marker.rotation ?? 0;
+          const el = existing.getElement();
+          el.style.transform = `rotate(${rotation}deg)`;
+          const span = el.querySelector('span');
+          if (span instanceof HTMLElement) span.style.transform = `rotate(${-rotation}deg)`;
+        }
+        return;
       }
       const instance = new maplibregl.Marker({ element: markerElement(marker), anchor: 'center' })
         .setLngLat([marker.position[1], marker.position[0]])

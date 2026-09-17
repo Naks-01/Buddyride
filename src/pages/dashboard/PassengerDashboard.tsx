@@ -1,12 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DocumentData } from 'firebase/firestore';
-import { ref, onValue } from 'firebase/database';
 import { LockKeyhole } from 'lucide-react';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
 import { createRide, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
-import { rtdb } from '../../lib/firebase';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
@@ -534,6 +532,16 @@ export function PassengerDashboard() {
       const nextStatus = typeof data.status === 'string' ? data.status : null;
       setRideStatus(nextStatus);
 
+      // Driver's live position - written by the driver app every 5s (Bolt-style) straight onto
+      // this same ride doc, so one onSnapshot listener covers both status and location.
+      if (typeof data.driverLat === 'number' && typeof data.driverLng === 'number') {
+        const next = { lat: data.driverLat, lng: data.driverLng };
+        const prev = lastDriverPosRef.current;
+        setDriverHeading(prev ? bearingBetween(prev, next) : null);
+        lastDriverPosRef.current = next;
+        setDriverLocation(next);
+      }
+
       if (nextStatus && nextStatus !== lastSoundStatusRef.current) {
         lastSoundStatusRef.current = nextStatus;
         if (nextStatus === 'driver_assigned') playSound('accepted');
@@ -666,22 +674,6 @@ export function PassengerDashboard() {
         setDistanceKm(Number.isFinite(parsed) ? parsed : null);
       }
     });
-    return () => unsubscribe();
-  }, [rideId]);
-
-  // Live driver position comes from Realtime Database (cheap, high-frequency), not the Firestore ride doc.
-  useEffect(() => {
-    if (!rideId) return;
-    const liveRef = ref(rtdb, `live/${rideId}`);
-    const unsubscribe = onValue(liveRef, (snapshot) => {
-      const data = snapshot.val() as { lat?: number; lng?: number; bearing?: number | null } | null;
-      if (!data || typeof data.lat !== 'number' || typeof data.lng !== 'number') return;
-      const next = { lat: data.lat, lng: data.lng };
-      const prev = lastDriverPosRef.current;
-      setDriverHeading(data.bearing ?? (prev ? bearingBetween(prev, next) : null));
-      lastDriverPosRef.current = next;
-      setDriverLocation(next);
-    }, (err) => console.error('Failed to subscribe to live driver location:', err));
     return () => unsubscribe();
   }, [rideId]);
 
