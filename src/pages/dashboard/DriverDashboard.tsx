@@ -123,6 +123,7 @@ export function DriverDashboard() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [checkingArrival, setCheckingArrival] = useState(false);
+  const [followTrigger, setFollowTrigger] = useState(0);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
@@ -753,7 +754,7 @@ export function DriverDashboard() {
       <div className={`absolute inset-x-0 top-0 z-0 ${isActiveNav ? 'bottom-0' : 'bottom-[72px]'}`}>
         <Suspense fallback={<div className="h-full w-full bg-slate-200" />}>
           {driverLocation && navTarget ? (
-            <DriverGoogleMapSecure driver={driverLocation} dropoff={navTarget} />
+            <DriverGoogleMapSecure driver={driverLocation} dropoff={navTarget} followTrigger={followTrigger} />
           ) : (
             <div className="h-full w-full bg-slate-200" />
           )}
@@ -934,7 +935,8 @@ export function DriverDashboard() {
               <button
                 type="button"
                 onClick={() => {
-                  if (navTarget) openGoogleMapsNav(navTarget, driverLocation ?? undefined);
+                  setFollowTrigger((prev) => prev + 1); // re-enable in-app follow/close zoom
+                  if (navTarget) openGoogleMapsNav(navTarget, driverLocation ?? undefined); // optional external nav
                 }}
                 className="flex items-center justify-center gap-1 rounded-lg bg-green-600 py-2 text-xs font-bold text-white"
               >
