@@ -206,7 +206,7 @@ export function PassengerDashboard() {
     if (geocodeTimerRef.current) window.clearTimeout(geocodeTimerRef.current);
   }, []);
 
-  // Straight-line estimate used only internally (map centering) while the real OSRM route loads.
+  // Straight-line estimate used internally (map centering / initial distanceKm-durationMin).
   const calculateFareFallback = () => {
     const origin = stops[0];
     const dest = stops[stops.length - 1];

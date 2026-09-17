@@ -51,7 +51,9 @@ function carElement() {
 
 // Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
 // Thick blue BuddyRide nav line: soft glow casing plus a solid core line on top.
-function addRouteLayer(map: maplibregl.Map) {
+// Returns a human-readable error string on failure (or null on success) so callers can surface it
+// on-screen instead of requiring someone to pull phone/devtools logs.
+function addRouteLayer(map: maplibregl.Map): string | null {
   try {
     if (!map.getSource(ROUTE_SOURCE_ID)) {
       map.addSource(ROUTE_SOURCE_ID, {
@@ -64,7 +66,7 @@ function addRouteLayer(map: maplibregl.Map) {
         id: ROUTE_GLOW_LAYER_ID,
         type: 'line',
         source: ROUTE_SOURCE_ID,
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
         paint: { 'line-color': '#8AB4FF', 'line-width': 14, 'line-opacity': 0.35 },
       });
     }
@@ -73,12 +75,18 @@ function addRouteLayer(map: maplibregl.Map) {
         id: ROUTE_LAYER_ID,
         type: 'line',
         source: ROUTE_SOURCE_ID,
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#1A73E8', 'line-width': 6, 'line-opacity': 1 },
+        layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
+        paint: { 'line-color': '#0066FF', 'line-width': 8, 'line-opacity': 1 },
       });
     }
+    // Belt-and-braces: force visibility + re-assert paint every call in case a style reload reset it.
+    map.setLayoutProperty(ROUTE_LAYER_ID, 'visibility', 'visible');
+    map.setLayoutProperty(ROUTE_GLOW_LAYER_ID, 'visibility', 'visible');
+    return null;
   } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
     console.error('ROUTE LAYER ADD FAILED', e);
+    return message;
   }
 }
 
@@ -109,6 +117,16 @@ export default function DriverMap3D({
   const [styleVersion, setStyleVersion] = useState(0);
   const [isDark, setIsDark] = useState(false);
   const [pos, setPos] = useState<[number, number]>(DEFAULT_CENTER);
+  const lastErrorRef = useRef<string | null>(null);
+  // On-screen debug badge state - CEO/support can read this straight off the screenshot, no phone
+  // logs, no devtools, no Eruda needed.
+  const [debugInfo, setDebugInfo] = useState({
+    routeLen: 0,
+    driverPos: DEFAULT_CENTER as [number, number],
+    hasSource: false,
+    hasLayer: false,
+    lastError: null as string | null,
+  });
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('mapTheme');
@@ -140,11 +158,14 @@ export default function DriverMap3D({
     map.on('load', () => {
       map.resize();
       setTimeout(() => map.resize(), 1000);
-    });
-    map.on('style.load', () => {
+      lastErrorRef.current = addRouteLayer(map);
       setStyleLoaded(true);
       setStyleVersion((version) => version + 1);
-      addRouteLayer(map);
+    });
+    map.on('style.load', () => {
+      lastErrorRef.current = addRouteLayer(map);
+      setStyleLoaded(true);
+      setStyleVersion((version) => version + 1);
     });
     mapRef.current = map;
     carMarkerRef.current = new maplibregl.Marker({ element: carElement() }).setLngLat([pos[1], pos[0]]).addTo(map);
@@ -222,19 +243,19 @@ export default function DriverMap3D({
   // Route polyline.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !styleLoaded) {
-      console.log('ROUTE LAYER SKIPPED', { hasMap: !!map, styleLoaded });
-      return;
-    }
-    addRouteLayer(map);
+    if (!map || !styleLoaded) return;
+    lastErrorRef.current = addRouteLayer(map);
     const geojson: GeoJSON.Feature<GeoJSON.LineString> = {
       type: 'Feature',
       properties: {},
       geometry: { type: 'LineString', coordinates: (routePath ?? []).map(([lat, lng]) => [lng, lat]) },
     };
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    console.log('ROUTE LAYER APPLY', { routePath, hasSource: !!source, hasLayer: !!map.getLayer(ROUTE_LAYER_ID), coords: geojson.geometry.coordinates });
-    source?.setData(geojson);
+    if (!source) {
+      lastErrorRef.current = 'driver-route source missing on setData';
+    } else {
+      source.setData(geojson);
+    }
   }, [routePath, styleLoaded, styleVersion]);
 
   // V1 brute-force safety net: if the parent hasn't handed us a real routePath/driverLocation yet
@@ -258,27 +279,55 @@ export default function DriverMap3D({
       const map = mapRef.current;
       if (!map || !styleLoaded) return;
       if (routePathRef.current && routePathRef.current.length >= 2) return; // real route already drawn
-      const target = markersRef.current.find((m) => m.id === 'dropoff-pin') ?? markersRef.current.find((m) => m.id === 'pickup-pin');
-      if (!target) return;
-      addRouteLayer(map);
+      const pickup = markersRef.current.find((m) => m.id === 'pickup-pin');
+      const dropoff = markersRef.current.find((m) => m.id === 'dropoff-pin') ?? markersRef.current.find((m) => m.id === 'nav-destination');
+      if (!pickup && !dropoff) return;
+      lastErrorRef.current = addRouteLayer(map);
       const from = posRef.current;
-      const to = target.position;
-      const coords: [number, number][] = [[from[1], from[0]], [to[1], to[0]]];
+      // driverLocation -> pickup -> dropoff, whichever pins are actually present.
+      const coords: [number, number][] = [[from[1], from[0]]];
+      if (pickup) coords.push([pickup.position[1], pickup.position[0]]);
+      if (dropoff) coords.push([dropoff.position[1], dropoff.position[0]]);
       const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-      source?.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
-      console.log('AUTO BLUE V1', coords);
+      if (!source) {
+        lastErrorRef.current = 'driver-route source missing on fallback setData';
+        return;
+      }
+      source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
     };
     drawFallbackBlue();
-    const intervalId = window.setInterval(drawFallbackBlue, 1500);
+    const intervalId = window.setInterval(drawFallbackBlue, 1000);
     return () => window.clearInterval(intervalId);
   }, [styleLoaded]);
+
+  // On-screen debug badge data - polls actual map state so it's truthful even if an effect above
+  // silently no-ops; this is the only debugging surface the CEO/support needs, ever.
+  useEffect(() => {
+    const tick = () => {
+      const map = mapRef.current;
+      setDebugInfo({
+        routeLen: routePathRef.current?.length ?? 0,
+        driverPos: posRef.current,
+        hasSource: !!map?.getSource(ROUTE_SOURCE_ID),
+        hasLayer: !!map?.getLayer(ROUTE_LAYER_ID),
+        lastError: lastErrorRef.current,
+      });
+    };
+    tick();
+    const intervalId = window.setInterval(tick, 500);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   // V1: hardcoded straight line, no OSRM - when raw driverLocation/destination coords are passed directly.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !styleLoaded || !driverLocation || !destination) return;
+    lastErrorRef.current = addRouteLayer(map);
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (!source) return;
+    if (!source) {
+      lastErrorRef.current = 'driver-route source missing on direct-line setData';
+      return;
+    }
     const coords: [number, number][] = [
       [driverLocation[1], driverLocation[0]],
       [destination[1], destination[0]],
@@ -297,6 +346,28 @@ export default function DriverMap3D({
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+      {/* Always-visible on-screen debug badge - readable straight off a screenshot, no phone logs needed. */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 8,
+          left: 8,
+          zIndex: 600,
+          background: 'rgba(0,0,0,0.75)',
+          color: debugInfo.lastError ? '#FF5252' : '#00E676',
+          fontFamily: 'monospace',
+          fontSize: 11,
+          lineHeight: 1.4,
+          padding: '6px 8px',
+          borderRadius: 6,
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <div>route:{debugInfo.routeLen} | src:{String(debugInfo.hasSource)} | layer:{String(debugInfo.hasLayer)}</div>
+        <div>pos:{debugInfo.driverPos[0].toFixed(4)},{debugInfo.driverPos[1].toFixed(4)}</div>
+        <div>err:{debugInfo.lastError ?? 'none'}</div>
+      </div>
       <button
         type="button"
         aria-label="Recenter on my location"
