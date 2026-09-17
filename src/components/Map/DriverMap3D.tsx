@@ -32,8 +32,24 @@ const DARK_MAP_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.95) contrast(
 const DEFAULT_CENTER: [number, number] = [-23.9045, 29.4582]; // Polokwane fallback
 const DRIVE_PITCH = 0;
 const ROUTE_SOURCE_ID = 'driver-route';
-const ROUTE_GLOW_LAYER_ID = 'driver-route-glow';
+const ROUTE_OUTLINE_LAYER_ID = 'driver-route-blue-outline';
 const ROUTE_LAYER_ID = 'driver-route-blue';
+// Limpopo/South Africa bounding box - used only to auto-correct an accidentally swapped
+// [lat,lng] pair so one bad upstream coordinate can never silently make the whole line vanish.
+const SA_LNG_RANGE: [number, number] = [15, 34];
+const SA_LAT_RANGE: [number, number] = [-35, -21];
+
+// This file's convention is [lat, lng] everywhere (see DriverMapMarker/props comments). This
+// converts to GeoJSON [lng, lat], falling back to the other orientation if the "lat,lng" reading
+// lands outside South Africa but the swapped reading doesn't.
+function toLngLatSafe([a, b]: [number, number]): [number, number] {
+  const asLatLng: [number, number] = [b, a]; // treat input as [lat, lng] -> [lng, lat]
+  const inRange = (lng: number, lat: number) =>
+    lng >= SA_LNG_RANGE[0] && lng <= SA_LNG_RANGE[1] && lat >= SA_LAT_RANGE[0] && lat <= SA_LAT_RANGE[1];
+  if (inRange(asLatLng[0], asLatLng[1])) return asLatLng;
+  if (inRange(a, b)) return [a, b]; // input was already [lng, lat]
+  return asLatLng; // out of range either way - keep the documented convention
+}
 
 function pinElement(color: string, emoji: string) {
   const el = document.createElement('div');
@@ -50,7 +66,7 @@ function carElement() {
 }
 
 // Route source/layers must be re-added every time the style reloads (theme switch, fallback swap).
-// Thick blue BuddyRide nav line: soft glow casing plus a solid core line on top.
+// Solid, opaque blue line with a white outline underneath for contrast against any tile color.
 // Returns a human-readable error string on failure (or null on success) so callers can surface it
 // on-screen instead of requiring someone to pull phone/devtools logs.
 function addRouteLayer(map: maplibregl.Map): string | null {
@@ -61,13 +77,13 @@ function addRouteLayer(map: maplibregl.Map): string | null {
         data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } },
       });
     }
-    if (!map.getLayer(ROUTE_GLOW_LAYER_ID)) {
+    if (!map.getLayer(ROUTE_OUTLINE_LAYER_ID)) {
       map.addLayer({
-        id: ROUTE_GLOW_LAYER_ID,
+        id: ROUTE_OUTLINE_LAYER_ID,
         type: 'line',
         source: ROUTE_SOURCE_ID,
         layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
-        paint: { 'line-color': '#8AB4FF', 'line-width': 14, 'line-opacity': 0.35 },
+        paint: { 'line-color': '#FFFFFF', 'line-width': 16, 'line-opacity': 1 },
       });
     }
     if (!map.getLayer(ROUTE_LAYER_ID)) {
@@ -76,12 +92,15 @@ function addRouteLayer(map: maplibregl.Map): string | null {
         type: 'line',
         source: ROUTE_SOURCE_ID,
         layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'visible' },
-        paint: { 'line-color': '#0066FF', 'line-width': 8, 'line-opacity': 1 },
+        paint: { 'line-color': '#0066FF', 'line-width': 12, 'line-opacity': 1 },
       });
     }
-    // Belt-and-braces: force visibility + re-assert paint every call in case a style reload reset it.
+    // Force both layers to the very top of the stack every call - outline first, blue drawn last
+    // (on top of the white halo) - so a style reload or marker re-add can never bury the line.
+    map.moveLayer(ROUTE_OUTLINE_LAYER_ID);
+    map.moveLayer(ROUTE_LAYER_ID);
     map.setLayoutProperty(ROUTE_LAYER_ID, 'visibility', 'visible');
-    map.setLayoutProperty(ROUTE_GLOW_LAYER_ID, 'visibility', 'visible');
+    map.setLayoutProperty(ROUTE_OUTLINE_LAYER_ID, 'visibility', 'visible');
     return null;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -118,6 +137,7 @@ export default function DriverMap3D({
   const [isDark, setIsDark] = useState(false);
   const [pos, setPos] = useState<[number, number]>(DEFAULT_CENTER);
   const lastErrorRef = useRef<string | null>(null);
+  const firstCoordRef = useRef<[number, number] | null>(null);
   // On-screen debug badge state - CEO/support can read this straight off the screenshot, no phone
   // logs, no devtools, no Eruda needed.
   const [debugInfo, setDebugInfo] = useState({
@@ -126,6 +146,7 @@ export default function DriverMap3D({
     hasSource: false,
     hasLayer: false,
     lastError: null as string | null,
+    firstCoord: null as [number, number] | null,
   });
   // Collapsed to a small dot by default - tap to expand. Auto-expands itself the moment an error
   // shows up so a real problem is never hidden, but stays out of the way of the UI otherwise.
@@ -251,10 +272,13 @@ export default function DriverMap3D({
     const map = mapRef.current;
     if (!map || !styleLoaded) return;
     lastErrorRef.current = addRouteLayer(map);
+    const coords = (routePath ?? []).map(toLngLatSafe);
+    firstCoordRef.current = coords[0] ?? null;
+    console.log('ROUTE LAYER APPLY', { routeLen: coords.length, firstCoord: coords[0] });
     const geojson: GeoJSON.Feature<GeoJSON.LineString> = {
       type: 'Feature',
       properties: {},
-      geometry: { type: 'LineString', coordinates: (routePath ?? []).map(([lat, lng]) => [lng, lat]) },
+      geometry: { type: 'LineString', coordinates: coords },
     };
     const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (!source) {
@@ -291,9 +315,11 @@ export default function DriverMap3D({
       lastErrorRef.current = addRouteLayer(map);
       const from = posRef.current;
       // driverLocation -> pickup -> dropoff, whichever pins are actually present.
-      const coords: [number, number][] = [[from[1], from[0]]];
-      if (pickup) coords.push([pickup.position[1], pickup.position[0]]);
-      if (dropoff) coords.push([dropoff.position[1], dropoff.position[0]]);
+      const latLngCoords: [number, number][] = [from];
+      if (pickup) latLngCoords.push(pickup.position);
+      if (dropoff) latLngCoords.push(dropoff.position);
+      const coords = latLngCoords.map(toLngLatSafe);
+      firstCoordRef.current = coords[0] ?? null;
       const source = map.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       if (!source) {
         lastErrorRef.current = 'driver-route source missing on fallback setData';
@@ -317,6 +343,7 @@ export default function DriverMap3D({
         hasSource: !!map?.getSource(ROUTE_SOURCE_ID),
         hasLayer: !!map?.getLayer(ROUTE_LAYER_ID),
         lastError: lastErrorRef.current,
+        firstCoord: firstCoordRef.current,
       });
     };
     tick();
@@ -334,10 +361,8 @@ export default function DriverMap3D({
       lastErrorRef.current = 'driver-route source missing on direct-line setData';
       return;
     }
-    const coords: [number, number][] = [
-      [driverLocation[1], driverLocation[0]],
-      [destination[1], destination[0]],
-    ];
+    const coords: [number, number][] = [driverLocation, destination].map(toLngLatSafe);
+    firstCoordRef.current = coords[0] ?? null;
     source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
     const bounds = new maplibregl.LngLatBounds();
     coords.forEach((c) => bounds.extend(c));
@@ -380,6 +405,7 @@ export default function DriverMap3D({
         >
           <div>route:{debugInfo.routeLen} | src:{String(debugInfo.hasSource)} | layer:{String(debugInfo.hasLayer)}</div>
           <div>pos:{debugInfo.driverPos[0].toFixed(4)},{debugInfo.driverPos[1].toFixed(4)}</div>
+          <div>first(lng,lat):{debugInfo.firstCoord ? `${debugInfo.firstCoord[0].toFixed(4)},${debugInfo.firstCoord[1].toFixed(4)}` : 'none'}</div>
           <div>err:{debugInfo.lastError ?? 'none'}</div>
         </div>
       ) : (
