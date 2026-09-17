@@ -127,6 +127,12 @@ export default function DriverMap3D({
     hasLayer: false,
     lastError: null as string | null,
   });
+  // Collapsed to a small dot by default - tap to expand. Auto-expands itself the moment an error
+  // shows up so a real problem is never hidden, but stays out of the way of the UI otherwise.
+  const [badgeExpanded, setBadgeExpanded] = useState(false);
+  useEffect(() => {
+    if (debugInfo.lastError) setBadgeExpanded(true);
+  }, [debugInfo.lastError]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('mapTheme');
@@ -346,28 +352,55 @@ export default function DriverMap3D({
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
-      {/* Always-visible on-screen debug badge - readable straight off a screenshot, no phone logs needed. */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 8,
-          left: 8,
-          zIndex: 600,
-          background: 'rgba(0,0,0,0.75)',
-          color: debugInfo.lastError ? '#FF5252' : '#00E676',
-          fontFamily: 'monospace',
-          fontSize: 11,
-          lineHeight: 1.4,
-          padding: '6px 8px',
-          borderRadius: 6,
-          pointerEvents: 'none',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        <div>route:{debugInfo.routeLen} | src:{String(debugInfo.hasSource)} | layer:{String(debugInfo.hasLayer)}</div>
-        <div>pos:{debugInfo.driverPos[0].toFixed(4)},{debugInfo.driverPos[1].toFixed(4)}</div>
-        <div>err:{debugInfo.lastError ?? 'none'}</div>
-      </div>
+      {/* Debug status - collapsed to a small dot above the trip sheet by default so it never sits
+          under the hamburger/shield buttons; tap to expand full details. No phone logs needed. */}
+      {badgeExpanded ? (
+        <div
+          onClick={() => setBadgeExpanded(false)}
+          role="button"
+          aria-label="Collapse debug status"
+          style={{
+            position: 'absolute',
+            bottom: 110,
+            left: 12,
+            zIndex: 50,
+            maxWidth: '85%',
+            background: 'rgba(0,0,0,0.75)',
+            color: debugInfo.lastError ? '#FF5252' : '#00E676',
+            fontFamily: 'monospace',
+            fontSize: 11,
+            lineHeight: 1.4,
+            padding: '6px 8px',
+            borderRadius: 6,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          <div>route:{debugInfo.routeLen} | src:{String(debugInfo.hasSource)} | layer:{String(debugInfo.hasLayer)}</div>
+          <div>pos:{debugInfo.driverPos[0].toFixed(4)},{debugInfo.driverPos[1].toFixed(4)}</div>
+          <div>err:{debugInfo.lastError ?? 'none'}</div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setBadgeExpanded(true)}
+          aria-label="Show debug status"
+          style={{
+            position: 'absolute',
+            bottom: 110,
+            left: 12,
+            zIndex: 50,
+            width: 14,
+            height: 14,
+            borderRadius: '50%',
+            background: debugInfo.lastError ? '#FF5252' : '#00E676',
+            border: '2px solid rgba(0,0,0,0.35)',
+            padding: 0,
+          }}
+        />
+      )}
       <button
         type="button"
         aria-label="Recenter on my location"

@@ -835,7 +835,20 @@ export function DriverDashboard() {
         </Suspense>
       </div>
 
-      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-4 pointer-events-auto">
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pt-4 pointer-events-none">
+        <div className="h-11 w-11" aria-hidden="true" />
+        {!isActiveNav && (
+          <div className="pointer-events-auto flex flex-col items-center rounded-full bg-[#3A3D45] px-5 py-2 shadow-lg">
+            <span className="text-base font-bold leading-none text-white">R {todayEarnings.toFixed(2)}</span>
+            <span className="text-[11px] text-gray-400">Today</span>
+          </div>
+        )}
+        <button type="button" aria-label="Safety" className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
+          <ShieldCheck size={20} />
+        </button>
+      </div>
+      {/* Hamburger gets its own top-left container so it never sits under the map debug badge/controls. */}
+      <div className="absolute z-[60]" style={{ top: 12, left: 12 }}>
         <button
           type="button"
           onClick={() => setIsDrawerOpen(true)}
@@ -843,15 +856,6 @@ export function DriverDashboard() {
           className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg"
         >
           <Menu size={20} />
-        </button>
-        {!isActiveNav && (
-          <div className="flex flex-col items-center rounded-full bg-[#3A3D45] px-5 py-2 shadow-lg">
-            <span className="text-base font-bold leading-none text-white">R {todayEarnings.toFixed(2)}</span>
-            <span className="text-[11px] text-gray-400">Today</span>
-          </div>
-        )}
-        <button type="button" aria-label="Safety" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
-          <ShieldCheck size={20} />
         </button>
       </div>
 
