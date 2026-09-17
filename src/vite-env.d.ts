@@ -14,6 +14,9 @@ interface ImportMetaEnv {
   readonly VITE_NOMINATIM_URL: string;
   readonly VITE_MAPBOX_TOKEN: string;
   readonly NEXT_PUBLIC_MAPBOX_TOKEN: string;
+  // Restricted (HTTP-referrer-locked) browser key for Maps JS only - Directions calls go through
+  // /api/directions so the billable server key never ships to the client.
+  readonly VITE_GOOGLE_MAPS_BROWSER_KEY: string;
 }
 
 interface ImportMeta {

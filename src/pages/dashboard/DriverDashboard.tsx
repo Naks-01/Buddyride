@@ -4,7 +4,6 @@ import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firest
 import { ref, set, update, remove } from 'firebase/database';
 import {
   Car as CarPin,
-  Compass,
   HelpCircle,
   Home as HomeNav,
   Menu,
@@ -23,9 +22,8 @@ import { calcDistance } from '../../lib/maps';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
-import type { DriverMapMarker } from '../../components/Map/DriverMap3D';
 
-const DriverMap3D = lazy(() => import('../../components/Map/DriverMap3D'));
+const DriverGoogleMapSecure = lazy(() => import('../../components/Map/DriverGoogleMapSecure'));
 import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
@@ -126,10 +124,7 @@ export function DriverDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
-  const [centerTrigger, setCenterTrigger] = useState(0);
   const [checkingArrival, setCheckingArrival] = useState(false);
-  const [routePath, setRoutePath] = useState<[number, number][] | null>(null);
-  const [routeMarkers, setRouteMarkers] = useState<DriverMapMarker[]>([]);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
@@ -546,18 +541,11 @@ export function DriverDashboard() {
     return () => window.clearInterval(timer);
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.stopArrivalTime]);
 
-  // Google/Waze open the external app; 'inapp' draws a hardcoded straight blue line on the map instead.
+  // Google/Waze open the external app; otherwise the in-app secure Google Maps route takes over.
   const navigateTo = async (destination: Coordinates, origin?: Coordinates) => {
     const provider = getMapProvider();
-    const openedExternally = openExternalNavigation(destination.lat, destination.lng, provider);
-    if (openedExternally) {
-      setRouteMarkers([]);
-      return;
-    }
-    setRouteMarkers([{ id: 'nav-destination', position: [destination.lat, destination.lng], color: '#FF3B30', emoji: '📍' }]);
-    if (origin) {
-      setRoutePath([[origin.lat, origin.lng], [destination.lat, destination.lng]]);
-    }
+    openExternalNavigation(destination.lat, destination.lng, provider);
+    void origin;
   };
 
   const getDriverLocation = (): Promise<Coordinates | undefined> =>
@@ -577,8 +565,6 @@ export function DriverDashboard() {
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
       );
     });
-
-  const recenterMap = () => setCenterTrigger((prev) => prev + 1);
 
   // Single source of truth for the driver's live position - runs for the entire active ride
   // (assigned through trip_started) so the passenger's driver marker never freezes mid-trip.
@@ -613,50 +599,6 @@ export function DriverDashboard() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [acceptedRide?.id, acceptedRide?.status]);
 
-  // Auto-draws/refreshes the driver's own navigation route on the in-app map (pickup while
-  // approaching, dropoff/current stop once trip_started). Runs on a steady 10s interval keyed
-  // only on ride id/status. V1: hardcoded straight line, no OSRM - reads the latest driver
-  // position via a ref so the blue line is always visible immediately every tick.
-  const driverLocationRef = useRef(driverLocation);
-  useEffect(() => {
-    driverLocationRef.current = driverLocation;
-  }, [driverLocation]);
-  const acceptedRideForRouteRef = useRef(acceptedRide);
-  useEffect(() => {
-    acceptedRideForRouteRef.current = acceptedRide;
-  }, [acceptedRide]);
-
-  useEffect(() => {
-    if (!acceptedRide || !LOCATION_SHARING_STATUSES.has(acceptedRide.status ?? '')) return;
-
-    const run = async () => {
-      const ride = acceptedRideForRouteRef.current;
-      if (!ride) return;
-      const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
-      const dropoff = getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
-      const target = ride.status === 'trip_started' ? dropoff : pickup;
-      if (!target) return;
-
-      // Pickup pin only shows before the passenger is on board - once trip_started it would sit
-      // right on top of the driver's own live position (already at/near the pickup point).
-      setRouteMarkers([
-        ...(pickup && ride.status !== 'trip_started' ? [{ id: 'pickup-pin', position: [pickup.lat, pickup.lng] as [number, number], color: '#FF9500', emoji: '📍' }] : []),
-        ...(dropoff ? [{ id: 'dropoff-pin', position: [dropoff.lat, dropoff.lng] as [number, number], color: '#FF3B30', emoji: '🏁' }] : []),
-      ]);
-
-      // Fall back to the pickup point as the origin if this device's own GPS hasn't reported
-      // yet (driverLocation null) - never bail out with no line drawn at all.
-      const location = driverLocationRef.current ?? pickup ?? target;
-      const line: [number, number][] = [[location.lat, location.lng], [target.lat, target.lng]];
-      console.log('ROUTE DEBUG (driver)', { status: ride.status, pickup, dropoff, target, driverLocation: driverLocationRef.current, location, line });
-      setRoutePath(line);
-    };
-
-    void run();
-    const intervalId = window.setInterval(() => void run(), 2000);
-    return () => window.clearInterval(intervalId);
-  }, [acceptedRide?.id, acceptedRide?.status]);
-
   // Clear the nav overlay once the ride ends (completed/cancelled/dismissed).
   const lastRideIdForCleanupRef = useRef<string | null>(null);
   useEffect(() => {
@@ -664,7 +606,6 @@ export function DriverDashboard() {
   }, [acceptedRide?.id]);
   useEffect(() => {
     if (!acceptedRide) {
-      setRouteMarkers([]);
       setRouteDistanceM(null);
       setRouteDurationSec(null);
       const rideId = lastRideIdForCleanupRef.current;
@@ -827,11 +768,11 @@ export function DriverDashboard() {
       )}
       <div className={`absolute inset-x-0 top-0 z-0 ${isActiveNav ? 'bottom-0' : 'bottom-[72px]'}`}>
         <Suspense fallback={<div className="h-full w-full bg-slate-200" />}>
-          <DriverMap3D
-            centerBtn={centerTrigger}
-            routePath={routePath ?? undefined}
-            markers={routeMarkers}
-          />
+          {driverLocation && navTarget ? (
+            <DriverGoogleMapSecure driver={driverLocation} dropoff={navTarget} />
+          ) : (
+            <div className="h-full w-full bg-slate-200" />
+          )}
         </Suspense>
       </div>
 
@@ -894,9 +835,6 @@ export function DriverDashboard() {
           isActiveNav ? (sheetExpanded ? 'bottom-[46vh]' : 'bottom-[104px]') : 'bottom-24'
         }`}
       >
-        <button type="button" onClick={recenterMap} aria-label="Recenter map" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
-          <Compass size={20} />
-        </button>
         {!hasActiveOverlay && (
           <button type="button" aria-label="Filter" className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
             <SlidersHorizontal size={20} />
