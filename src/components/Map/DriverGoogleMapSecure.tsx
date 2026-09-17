@@ -14,7 +14,7 @@ type DriverGoogleMapSecureProps = {
 export default function DriverGoogleMapSecure({ driver, dropoff }: DriverGoogleMapSecureProps) {
   const { isLoaded } = useJsApiLoader({
     id: 'google-map-script',
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY ?? '',
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '',
   });
   const [path, setPath] = useState<LatLng[]>([]);
 
