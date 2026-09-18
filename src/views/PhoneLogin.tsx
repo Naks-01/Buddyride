@@ -146,8 +146,6 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
       {!otpSent ? (
         <>
           <p className="role-subtitle">{t('enterPhone', lang)}</p>
-          <p style={{ fontSize: 12 }}>Demo: use +27793051213 and code 123456</p>
-
           <div className="form-group w-full">
             <label className="form-label">{t('fullName', lang)}</label>
             <input

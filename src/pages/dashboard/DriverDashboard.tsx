@@ -22,7 +22,7 @@ import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
 
-const DriverGoogleMapSecure = lazy(() => import('../../components/Map/DriverGoogleMapSecure'));
+const DriverMapLeaflet = lazy(() => import('../../components/Map/DriverMapLeaflet'));
 import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
@@ -33,7 +33,6 @@ import {
   subscribeToRide,
   updateRideFields,
 } from '../../lib/rideService';
-import { getMapProvider, openNavigation as openExternalNavigation } from '../../lib/navigation';
 import { RIDE_CATEGORIES } from '../../config/categories';
 
 // Statuses during which the driver's live GPS position should keep broadcasting to the ride doc.
@@ -131,7 +130,6 @@ export function DriverDashboard() {
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [passengerName, setPassengerName] = useState('Passenger');
   const sheetTouchStartY = useRef<number | null>(null);
-  const externalNavTimerRef = useRef<number | null>(null);
 
   const requestLocation = () => {
     if (!navigator.geolocation) {
@@ -529,11 +527,8 @@ export function DriverDashboard() {
     return () => window.clearInterval(timer);
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.stopArrivalTime]);
 
-  // Google/Waze open the external app; otherwise the in-app secure Google Maps route takes over.
-  const navigateTo = async (destination: Coordinates, origin?: Coordinates) => {
-    const provider = getMapProvider();
-    openExternalNavigation(destination.lat, destination.lng, provider);
-    void origin;
+  const navigateTo = async (_destination: Coordinates, _origin?: Coordinates) => {
+    setFollowTrigger((prev) => prev + 1);
   };
 
   const getDriverLocation = (): Promise<Coordinates | undefined> =>
@@ -649,25 +644,6 @@ export function DriverDashboard() {
     await navigateTo(destination, pickup ?? undefined);
   };
 
-  // Always opens the real Google Maps app/website (independent of the in-app/Waze navigation preference).
-  const openGoogleMapsNav = (destination: Coordinates, origin?: Coordinates) => {
-    const originParam = origin ? `&origin=${origin.lat},${origin.lng}` : '';
-    window.open(`https://www.google.com/maps/dir/?api=1${originParam}&destination=${destination.lat},${destination.lng}&travelmode=driving`, '_blank');
-  };
-
-  const startExternalNavigationLongPress = () => {
-    externalNavTimerRef.current = window.setTimeout(() => {
-      if (navTarget) openGoogleMapsNav(navTarget, driverLocation ?? undefined);
-    }, 700);
-  };
-
-  const cancelExternalNavigationLongPress = () => {
-    if (externalNavTimerRef.current != null) {
-      window.clearTimeout(externalNavTimerRef.current);
-      externalNavTimerRef.current = null;
-    }
-  };
-
   // Whichever point the driver should currently be heading to: pickup pre-trip, dropoff/current stop once trip_started.
   const getCurrentNavTarget = (ride: RideRequest): Coordinates | null => {
     if (ride.status === 'trip_started') {
@@ -768,7 +744,7 @@ export function DriverDashboard() {
       <div className={`absolute inset-x-0 top-0 z-0 ${isActiveNav ? 'bottom-0' : 'bottom-[72px]'}`}>
         <Suspense fallback={<div className="h-full w-full bg-[#0a0a0a]" />}>
           {driverLocation && navTarget ? (
-            <DriverGoogleMapSecure driver={driverLocation} dropoff={navTarget} followTrigger={followTrigger} />
+            <DriverMapLeaflet driver={driverLocation} dropoff={navTarget} followTrigger={followTrigger} />
           ) : (
             <div className="h-full w-full bg-slate-200" />
           )}
@@ -949,12 +925,7 @@ export function DriverDashboard() {
               <button
                 type="button"
                 onClick={() => setFollowTrigger((prev) => prev + 1)}
-                onPointerDown={startExternalNavigationLongPress}
-                onPointerUp={cancelExternalNavigationLongPress}
-                onPointerCancel={cancelExternalNavigationLongPress}
-                onPointerLeave={cancelExternalNavigationLongPress}
-                onContextMenu={(event) => event.preventDefault()}
-                title="Hold to open external navigation"
+                title="Center the OSM map on the route"
                 className="flex items-center justify-center gap-1 rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white shadow-[0_0_18px_rgba(255,107,0,0.28)]"
               >
                 <NavigationIcon size={14} /> NAVIGATE

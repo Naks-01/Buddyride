@@ -22,7 +22,6 @@ export const RIDE_STATUS = {
   CANCELLED: 'cancelled',
 };
 
-// Google Maps removed (billing risk) - OSM only, both fall back to the free public instances.
 const NOMINATIM_URL = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
 const OSRM_URL = import.meta.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
 
@@ -36,7 +35,7 @@ export async function searchAddress(q) {
   return res.json();
 }
 
-// FREE ROUTING - OSRM public demo server.
+// Free routing through the public OSRM service.
 // Aborts after 6s so a slow/unreachable OSRM server can never hang the UI forever (caller falls back to straight-line distance).
 export async function getFreeRoute(from, to) {
   const controller = new AbortController();

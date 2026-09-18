@@ -1,5 +1,4 @@
 import { XIcon } from './Icons';
-import { MapProviderSelector } from './MapProviderSelector';
 
 type PassengerSettingsModalProps = { onClose: () => void };
 
@@ -14,11 +13,6 @@ export function PassengerSettingsModal({ onClose }: PassengerSettingsModalProps)
           </button>
         </div>
 
-        <div className="rounded-2xl border border-gray-200 p-4">
-          <p className="mb-1 font-bold text-gray-800">Navigation</p>
-          <p className="mb-3 text-sm text-gray-500">Choose Navigation App</p>
-          <MapProviderSelector theme="light" />
-        </div>
       </div>
     </div>
   );

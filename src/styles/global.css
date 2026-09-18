@@ -44,7 +44,6 @@ html, body {
   display: none;
 }
 
-/* Cap the Google Places autocomplete dropdown to ~4 visible results */
 .pac-container {
   max-height: 210px;
   overflow-y: auto;

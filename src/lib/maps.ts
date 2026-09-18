@@ -10,7 +10,6 @@ export const LIMPOPO_TOWNS = {
 export const DEFAULT_CENTER: [number, number] = [-23.9045, 29.7167];
 export const DEFAULT_ZOOM = 13;
 
-// Google Maps removed (billing risk) - map rendering is OSM/Leaflet-only via components/Map/AppMap.tsx.
 
 // Haversine distance calculation in km
 export function calcDistance(
