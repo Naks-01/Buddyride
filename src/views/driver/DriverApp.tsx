@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
+import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from '../../lib/supabaseDb';
+import { auth, db } from '../../lib/supabaseDb';
 import { toTrip } from '../../lib/converters';
 import { useAuth } from '../../context/AuthContext';
 import { CarIcon, CheckIcon, LogOutIcon, MapPinIcon } from '../../components/Icons';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { collection, doc, onSnapshot, updateDoc } from '../../lib/supabaseDb';
+import { db } from '../../lib/supabaseDb';
 import AppMap, { type AppMapMarker } from '../../components/Map/AppMap';
 
 type Emergency = {

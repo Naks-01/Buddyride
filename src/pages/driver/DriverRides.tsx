@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { collection, getDocs, limit, orderBy, query, where } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
+import { collection, getDocs, limit, orderBy, query, where } from '../../lib/supabaseDb';
+import { auth, db } from '../../lib/supabaseDb';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { DriverPageShell } from './DriverPageShell';
 

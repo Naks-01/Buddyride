@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
+import { collection, doc, onSnapshot, setDoc, updateDoc } from '../../lib/supabaseDb';
+import { auth, db } from '../../lib/supabaseDb';
 import { LogOutIcon, SearchIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { AdminApiDashboard } from './AdminApiDashboard';

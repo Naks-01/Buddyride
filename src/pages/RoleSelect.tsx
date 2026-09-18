@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
 import { LangSelector } from '../components/LangSelector';
 import { Logo } from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
 import { t } from '../lib/i18n';
 import type { AppRole } from '../types';
-import { auth } from '../lib/firebase';
+import { supabase } from '../lib/supabaseClient';
 import { ADMIN_EMAIL } from '../config/admin';
 
 const publicRoles: Array<{ role: AppRole; icon: string; description: string; card: string }> = [
@@ -17,12 +16,16 @@ const publicRoles: Array<{ role: AppRole; icon: string; description: string; car
 export function RoleSelect() {
   const { lang } = useAuth();
   const navigate = useNavigate();
-  const [userEmail, setUserEmail] = useState(auth.currentUser?.email?.toLowerCase() ?? null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const showAdmin = userEmail === ADMIN_EMAIL;
 
-  useEffect(() => onAuthStateChanged(auth, (user) => {
-    setUserEmail(user?.email?.toLowerCase() ?? null);
-  }), []);
+  useEffect(() => {
+    void supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email?.toLowerCase() ?? null));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserEmail(session?.user?.email?.toLowerCase() ?? null);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
 
   const roles = showAdmin
     ? [...publicRoles, { role: 'admin' as const, icon: '🛡️', description: 'Manage platform', card: 'bg-brandPurple/90 border-brandPurple' }]

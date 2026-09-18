@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { doc, increment, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { doc, increment, runTransaction, serverTimestamp } from '../lib/supabaseDb';
+import { db } from '../lib/supabaseDb';
 import { TIP_PRESETS } from '../config/pricing';
 
 interface TripReceiptProps {

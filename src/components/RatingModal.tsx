@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { collection, doc, runTransaction, serverTimestamp } from '../lib/supabaseDb';
+import { db } from '../lib/supabaseDb';
 
 type RatingModalProps = {
   rideId: string;

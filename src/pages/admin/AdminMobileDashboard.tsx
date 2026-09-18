@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc } from '../../lib/supabaseDb';
 import { ArrowRight, Ban, Check, LogOut, Settings2, ShieldCheck, TrendingUp, Users, Wallet } from 'lucide-react';
-import { db } from '../../lib/firebase';
-import { auth } from '../../firebase';
+import { db } from '../../lib/supabaseDb';
+import { auth } from '../../lib/supabaseDb';
 import PassengerMap3D from '../../components/Map/PassengerMap3D';
 
 type UserDoc = {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { db, auth } from '../firebase'
-import { collection, addDoc, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore'
+import { db, auth } from '../lib/supabaseDb'
+import { collection, addDoc, doc, onSnapshot, updateDoc, serverTimestamp } from '../lib/supabaseDb'
 
 const cats = [
   { id: 'go', label: 'Buddy Go', seats: 2, price: 45 },

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where } from '../../lib/supabaseDb';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { X } from 'lucide-react';
-import { db } from '../../lib/firebase';
+import { db } from '../../lib/supabaseDb';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 
 type EarningsModalProps = { driverId: string; onClose: () => void };
@@ -36,7 +36,7 @@ export function EarningsModal({ driverId, onClose }: EarningsModalProps) {
         startOfToday.setHours(0, 0, 0, 0);
 
         snapshot.docs.forEach((docSnapshot) => {
-          const data = docSnapshot.data();
+          const data = docSnapshot.data() ?? {};
           const completedAt = data.completedAt?.toDate?.() as Date | undefined;
           if (!completedAt || completedAt < startOfWeek) return;
           const total = Number(data.fare ?? data.price ?? 0);

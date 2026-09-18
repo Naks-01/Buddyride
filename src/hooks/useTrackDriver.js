@@ -1,7 +1,7 @@
 // Live driver position + ride data for the passenger's active trip.
 import { useEffect, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { doc, onSnapshot } from '../lib/supabaseDb';
+import { db } from '../lib/supabaseDb';
 
 export function useTrackDriver(rideId) {
   const [driverPos, setDriverPos] = useState(null);

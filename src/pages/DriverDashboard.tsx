@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { db, auth } from '../firebase'
-import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore'
+import { db, auth } from '../lib/supabaseDb'
+import { collection, query, where, onSnapshot, doc, updateDoc } from '../lib/supabaseDb'
 
 type RideStatus = 'searching' | 'accepted' | 'arrived' | 'onTrip' | 'completed'
 

@@ -1,7 +1,7 @@
 // Bolt-style live tracking helpers: drivers push their GPS position on an interval,
 // passengers read it back via onSnapshot on the ride document.
-import { db } from '../lib/firebase';
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { db } from '../lib/supabaseDb';
+import { doc, serverTimestamp, updateDoc } from '../lib/supabaseDb';
 
 export const RIDE_STATUS = {
   SEARCHING: 'searching',

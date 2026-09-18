@@ -1,6 +1,6 @@
 // Centralized ride lifecycle + 100% free OSM helpers (Nominatim search, OSRM routing).
 // Lifecycle: searching -> driver_assigned -> driver_en_route -> driver_arrived -> trip_started -> completed (or cancelled at any point).
-import { db } from './firebase';
+import { db } from './supabaseDb';
 import {
   addDoc,
   collection,
@@ -10,7 +10,7 @@ import {
   serverTimestamp,
   updateDoc,
   where,
-} from 'firebase/firestore';
+} from './supabaseDb';
 
 export const RIDE_STATUS = {
   REQUESTED: 'searching',

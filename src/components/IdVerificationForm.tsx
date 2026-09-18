@@ -1,8 +1,9 @@
 import { useRef, useState, type ChangeEvent } from 'react';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { doc, serverTimestamp, setDoc } from '../lib/supabaseDb';
+import { getDownloadURL, ref, uploadBytes } from '../lib/supabaseStorage';
 import { ShieldCheck, Camera, IdCard } from 'lucide-react';
-import { auth, db, storage } from '../lib/firebase';
+import { auth, db } from '../lib/supabaseDb';
+import { storage } from '../lib/supabaseStorage';
 import { getIdLast4, hashIdNumber, isValidSAID, validateSelfie } from '../lib/verifyId';
 import type { VerificationStatus } from '../types';
 

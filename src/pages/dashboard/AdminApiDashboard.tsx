@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from '../../lib/supabaseDb';
 import { ShieldCheck, ShieldX } from 'lucide-react';
-import { db } from '../../lib/firebase';
+import { db } from '../../lib/supabaseDb';
 import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, COMMISSION_RATE } from '../../config/pricing';
 import type { VerificationStatus } from '../../types';

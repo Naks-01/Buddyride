@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
+import { collection, getDocs } from '../../lib/supabaseDb';
+import { auth, db } from '../../lib/supabaseDb';
 import { toProfile, toTrip } from '../../lib/converters';
 import { LogOutIcon } from '../../components/Icons';
 import type { Profile, Trip } from '../../types';

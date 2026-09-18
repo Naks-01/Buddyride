@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp, updateDoc, doc, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp, updateDoc, doc, writeBatch } from '../lib/supabaseDb';
 import { MessageCircle, X, Send } from 'lucide-react';
-import { db } from '../lib/firebase';
+import { db } from '../lib/supabaseDb';
 
 export type ChatRole = 'driver' | 'passenger';
 
@@ -41,7 +41,7 @@ export function RideChat({ rideId, currentUserId, currentUserRole, rideStatus, c
     if (!rideId) return;
     const q = query(collection(db, `rides/${rideId}/messages`), orderBy('createdAt'));
     const unsubscribe = onSnapshot(q, (snap) => {
-      setMessages(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ChatMessage, 'id'>) })));
+      setMessages(snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as Omit<ChatMessage, 'id'>) })));
     });
     return () => unsubscribe();
   }, [rideId]);

@@ -3,7 +3,7 @@ import { Component, useEffect, useState, type ReactNode } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
-import { auth } from './lib/firebase';
+import { auth } from './lib/supabaseClient';
 import { RoleSelect } from './pages/RoleSelect';
 import RolePasswordLogin from './pages/RolePasswordLogin';
 import { PassengerDashboard } from './pages/dashboard/PassengerDashboard';

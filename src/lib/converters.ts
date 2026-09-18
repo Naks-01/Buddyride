@@ -1,4 +1,4 @@
-import type { Timestamp } from 'firebase/firestore';
+import type { Timestamp } from './supabaseDb';
 import type { Profile, Trip, UserRole } from '../types';
 
 function tsToIso(value: unknown): string {

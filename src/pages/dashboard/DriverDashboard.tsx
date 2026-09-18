@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from '../../lib/supabaseDb';
 import {
   Car as CarPin,
   HelpCircle,
@@ -13,7 +13,7 @@ import {
   SlidersHorizontal,
   Wallet,
 } from 'lucide-react';
-import { auth, db } from '../../lib/firebase';
+import { auth, db } from '../../lib/supabaseDb';
 import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
@@ -131,6 +131,7 @@ export function DriverDashboard() {
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [passengerName, setPassengerName] = useState('Passenger');
   const sheetTouchStartY = useRef<number | null>(null);
+  const externalNavTimerRef = useRef<number | null>(null);
 
   const requestLocation = () => {
     if (!navigator.geolocation) {
@@ -654,6 +655,19 @@ export function DriverDashboard() {
     window.open(`https://www.google.com/maps/dir/?api=1${originParam}&destination=${destination.lat},${destination.lng}&travelmode=driving`, '_blank');
   };
 
+  const startExternalNavigationLongPress = () => {
+    externalNavTimerRef.current = window.setTimeout(() => {
+      if (navTarget) openGoogleMapsNav(navTarget, driverLocation ?? undefined);
+    }, 700);
+  };
+
+  const cancelExternalNavigationLongPress = () => {
+    if (externalNavTimerRef.current != null) {
+      window.clearTimeout(externalNavTimerRef.current);
+      externalNavTimerRef.current = null;
+    }
+  };
+
   // Whichever point the driver should currently be heading to: pickup pre-trip, dropoff/current stop once trip_started.
   const getCurrentNavTarget = (ride: RideRequest): Coordinates | null => {
     if (ride.status === 'trip_started') {
@@ -752,7 +766,7 @@ export function DriverDashboard() {
         </div>
       )}
       <div className={`absolute inset-x-0 top-0 z-0 ${isActiveNav ? 'bottom-0' : 'bottom-[72px]'}`}>
-        <Suspense fallback={<div className="h-full w-full bg-slate-200" />}>
+        <Suspense fallback={<div className="h-full w-full bg-[#0a0a0a]" />}>
           {driverLocation && navTarget ? (
             <DriverGoogleMapSecure driver={driverLocation} dropoff={navTarget} followTrigger={followTrigger} />
           ) : (
@@ -769,7 +783,7 @@ export function DriverDashboard() {
             <span className="text-[11px] text-gray-400">Today</span>
           </div>
         )}
-        <button type="button" aria-label="Safety" className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg">
+        <button type="button" aria-label="Safety" className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/70 text-white shadow-lg backdrop-blur-xl">
           <ShieldCheck size={20} />
         </button>
       </div>
@@ -779,7 +793,7 @@ export function DriverDashboard() {
           type="button"
           onClick={() => setIsDrawerOpen(true)}
           aria-label="Menu"
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3A3D45] text-white shadow-lg"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/70 text-white shadow-lg backdrop-blur-xl"
         >
           <Menu size={20} />
         </button>
@@ -895,7 +909,7 @@ export function DriverDashboard() {
 
       {acceptedRide && isActiveNav && (
         <div
-          className={`absolute inset-x-0 bottom-0 z-30 rounded-t-[20px] bg-[#121212] shadow-[0_-4px_20px_rgba(0,0,0,0.35)] transition-[max-height] duration-300 ${
+          className={`absolute inset-x-0 bottom-0 z-30 rounded-t-[24px] border border-white/10 border-b-0 bg-black/70 shadow-[0_-12px_40px_rgba(0,0,0,0.5)] backdrop-blur-xl transition-[max-height] duration-300 ${
             sheetExpanded ? 'max-h-[75vh] overflow-y-auto' : 'h-[90px] overflow-hidden'
           }`}
           onTouchStart={handleSheetTouchStart}
@@ -907,7 +921,7 @@ export function DriverDashboard() {
             className="flex w-full flex-col items-center pt-2 pb-1"
             aria-label={sheetExpanded ? 'Collapse ride details' : 'Expand ride details'}
           >
-            <span className="h-1 w-10 rounded-full bg-gray-600" />
+            <span className="h-1 w-10 rounded-full bg-white/30" />
           </button>
 
           <div className="px-4 pb-3">
@@ -915,11 +929,11 @@ export function DriverDashboard() {
               <span className="max-w-[38%] truncate text-sm font-bold">
                 {isTripPhase ? 'Trip in progress' : passengerName}
               </span>
-              <span className="max-w-[38%] truncate text-xs text-gray-300">
+              <span className="max-w-[38%] truncate text-xs text-white/60">
                 {isTripPhase ? 'Dropoff: ' : 'Pickup: '}
                 {formatLoc(isTripPhase ? acceptedRide.dropoff : acceptedRide.pickup)}
               </span>
-              <span className="whitespace-nowrap text-xs font-semibold text-gray-400">
+              <span className="whitespace-nowrap text-xs font-semibold text-white/50">
                 {routeDistanceKm != null ? `${routeDistanceKm}km` : '—'}
                 {routeEtaMin != null ? ` · ETA ${routeEtaMin}min` : ''}
               </span>
@@ -928,17 +942,20 @@ export function DriverDashboard() {
             <div className="mt-2 grid grid-cols-3 gap-2">
               <a
                 href={`tel:${acceptedRide.passengerPhone ?? ''}`}
-                className="flex items-center justify-center gap-1 rounded-lg border border-gray-600 py-2 text-xs font-bold text-white"
+                className="flex items-center justify-center gap-1 rounded-lg border border-white/15 bg-white/5 py-2 text-xs font-bold text-white"
               >
                 <Phone size={14} /> CALL
               </a>
               <button
                 type="button"
-                onClick={() => {
-                  setFollowTrigger((prev) => prev + 1); // re-enable in-app follow/close zoom
-                  if (navTarget) openGoogleMapsNav(navTarget, driverLocation ?? undefined); // optional external nav
-                }}
-                className="flex items-center justify-center gap-1 rounded-lg bg-green-600 py-2 text-xs font-bold text-white"
+                onClick={() => setFollowTrigger((prev) => prev + 1)}
+                onPointerDown={startExternalNavigationLongPress}
+                onPointerUp={cancelExternalNavigationLongPress}
+                onPointerCancel={cancelExternalNavigationLongPress}
+                onPointerLeave={cancelExternalNavigationLongPress}
+                onContextMenu={(event) => event.preventDefault()}
+                title="Hold to open external navigation"
+                className="flex items-center justify-center gap-1 rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white shadow-[0_0_18px_rgba(255,107,0,0.28)]"
               >
                 <NavigationIcon size={14} /> NAVIGATE
               </button>
@@ -947,7 +964,7 @@ export function DriverDashboard() {
                   type="button"
                   onClick={() => void markArrivedAtPickup(acceptedRide)}
                   disabled={updatingStatus || checkingArrival}
-                  className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                  className="rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white disabled:opacity-60"
                 >
                   {checkingArrival ? '...' : 'ARRIVED'}
                 </button>
@@ -957,7 +974,7 @@ export function DriverDashboard() {
                   type="button"
                   onClick={() => void startTrip(acceptedRide)}
                   disabled={updatingStatus}
-                  className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                  className="rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white disabled:opacity-60"
                 >
                   START TRIP
                 </button>
@@ -972,7 +989,7 @@ export function DriverDashboard() {
                       type="button"
                       onClick={() => completeTrip(acceptedRide)}
                       disabled={updatingStatus}
-                      className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                      className="rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white disabled:opacity-60"
                     >
                       COMPLETE TRIP
                     </button>
@@ -983,7 +1000,7 @@ export function DriverDashboard() {
                     type="button"
                     onClick={() => void continueToNextStop(acceptedRide)}
                     disabled={updatingStatus}
-                    className="rounded-lg bg-green-600 py-2 text-xs font-bold text-white disabled:opacity-60"
+                    className="rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white disabled:opacity-60"
                   >
                     CONTINUE
                   </button>
@@ -992,7 +1009,7 @@ export function DriverDashboard() {
                     type="button"
                     onClick={() => void arriveAtStop(acceptedRide)}
                     disabled={updatingStatus}
-                    className="rounded-lg bg-orange-500 py-2 text-xs font-bold text-white disabled:opacity-60"
+                    className="rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white disabled:opacity-60"
                   >
                     ARRIVED AT STOP
                   </button>
@@ -1003,18 +1020,18 @@ export function DriverDashboard() {
 
           {sheetExpanded && (
             <div className="px-4 pb-4">
-              <section className="mb-2 rounded-2xl border border-green-200 bg-white p-4 shadow-2xl">
-                <h2 className="mb-3 text-lg font-bold text-green-900">Accepted Ride</h2>
+              <section className="mb-2 rounded-2xl border border-white/10 bg-white/5 p-4 shadow-2xl">
+                <h2 className="mb-3 text-lg font-bold text-white">Accepted Ride</h2>
                 <RideDetails ride={acceptedRide} />
                 <PassengerBadge passengerId={acceptedRide.passengerId} revealed />
                 {acceptedRide.status === 'driver_arrived' && (
                   <>
-                    <div className="mt-2 rounded-lg bg-orange-50 border border-orange-200 py-2 px-3 text-center text-sm font-semibold text-orange-700">
+                    <div className="mt-2 rounded-lg border border-[#FF6B00]/30 bg-[#FF6B00]/10 px-3 py-2 text-center text-sm font-semibold text-[#FF9A52]">
                       {pickupWaitSeconds <= 180
                         ? `Free wait: ${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')} remaining`
                         : `Waiting: ${Math.floor(pickupWaitSeconds / 60)}:${String(pickupWaitSeconds % 60).padStart(2, '0')} - Extra R${waitFare(pickupWaitSeconds)}`}
                     </div>
-                    <p className="mt-2 text-center text-sm font-semibold text-orange-700">
+                    <p className="mt-2 text-center text-sm font-semibold text-[#FF9A52]">
                       {waitSecondsRemaining > 0
                         ? `Wait ${Math.floor(waitSecondsRemaining / 60)}:${String(waitSecondsRemaining % 60).padStart(2, '0')} before marking no-show`
                         : 'Passenger no-show is available'}
@@ -1034,7 +1051,7 @@ export function DriverDashboard() {
                   <button
                     onClick={() => void driverCancelRide(acceptedRide)}
                     disabled={updatingStatus}
-                    className="mt-2 w-full rounded-lg border border-red-500 py-2 font-semibold text-red-600 disabled:opacity-60"
+                    className="mt-2 w-full rounded-lg border border-red-400/60 py-2 font-semibold text-red-300 disabled:opacity-60"
                   >
                     Cancel Ride (no fee before wait)
                   </button>
@@ -1045,7 +1062,7 @@ export function DriverDashboard() {
                   const hasNextStop = currentStopIndex < stops.length - 1;
                   const waitingFare = waitFare(stopWaitingSeconds);
                   return hasNextStop && acceptedRide.stopArrivalTime ? (
-                    <p className="mt-2 text-center text-sm font-semibold text-orange-700">
+                    <p className="mt-2 text-center text-sm font-semibold text-[#FF9A52]">
                       Waiting: {Math.floor(stopWaitingSeconds / 60)}:{String(stopWaitingSeconds % 60).padStart(2, '0')} (R{waitingFare})
                     </p>
                   ) : null;

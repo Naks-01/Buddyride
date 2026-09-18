@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
-import '../firebase';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabaseClient';
+import { doc, setDoc } from '../lib/supabaseDb';
+import { db } from '../lib/supabaseDb';
 import { useAuth } from '../context/AuthContext';
 import { ADMIN_EMAIL } from '../config/admin';
 import type { AppRole } from '../types';
@@ -16,7 +15,6 @@ export default function RolePasswordLogin() {
   const [searchParams] = useSearchParams();
   const role = (searchParams.get('role') || 'passenger') as AppRole;
   const navigate = useNavigate();
-  const auth = getAuth();
   const { refreshProfile } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,11 +42,14 @@ export default function RolePasswordLogin() {
 
     try {
       if (isSignup) {
-        const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
+        const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password: normalizedPassword });
+        if (error) throw error;
+        const user = data.user;
+        if (!user) throw new Error('Account creation did not return a user.');
         if (role === 'driver') {
-          await setDoc(doc(db, 'users', credential.user.uid), {
-            uid: credential.user.uid,
-            email: credential.user.email,
+          await setDoc(doc(db, 'users', user.id), {
+            uid: user.id,
+            email: user.email,
             role,
           }, { merge: true });
           await refreshProfile();
@@ -61,14 +62,17 @@ export default function RolePasswordLogin() {
         return;
       }
 
-      const credential = await signInWithEmailAndPassword(auth, normalizedEmail, normalizedPassword);
-      if (role === 'admin' && credential.user.email?.toLowerCase() !== ADMIN_EMAIL) {
-        await auth.signOut();
+      const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password: normalizedPassword });
+      if (error) throw error;
+      const user = data.user;
+      if (!user) throw new Error('Sign-in did not return a user.');
+      if (role === 'admin' && user.email?.toLowerCase() !== ADMIN_EMAIL) {
+        await supabase.auth.signOut();
         throw new Error('Access denied. This account is not an administrator.');
       }
-      await setDoc(doc(db, 'users', credential.user.uid), {
-        uid: credential.user.uid,
-        email: credential.user.email,
+      await setDoc(doc(db, 'users', user.id), {
+        uid: user.id,
+        email: user.email,
         role,
       }, { merge: true });
       await refreshProfile();

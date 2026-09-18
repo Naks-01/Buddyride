@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { auth } from '../firebase';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabaseClient';
+import { doc, getDoc, serverTimestamp, setDoc } from '../lib/supabaseDb';
+import { db } from '../lib/supabaseDb';
 import { useAuth } from '../context/AuthContext';
 import type { AppRole } from '../types';
 
@@ -16,21 +15,8 @@ export default function Login() {
   const [phone, setPhone] = useState('');
   const [step, setStep] = useState(1);
   const [otp, setOtp] = useState('');
-  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
+  const [confirmation, setConfirmation] = useState(false);
   const [error, setError] = useState('');
-  const recaptchaVerifier = useRef<RecaptchaVerifier | null>(null);
-
-  useEffect(() => {
-    if (!recaptchaVerifier.current) {
-      recaptchaVerifier.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-      });
-      // Render immediately; StrictMode's double-invoke would otherwise tear down
-      // and recreate the widget mid-init, causing auth/internal-error.
-      void recaptchaVerifier.current.render();
-    }
-  }, []);
-
   const handleSendCode = async () => {
     setError('');
     try {
@@ -41,19 +27,13 @@ export default function Login() {
         formattedPhone = `+27${formattedPhone}`;
       }
 
-      if (!recaptchaVerifier.current) {
-        setError('Security verification is still loading. Please try again.');
-        return;
-      }
-
-      const result = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifier.current);
-      setConfirmation(result);
+      const { error } = await supabase.auth.signInWithOtp({ phone: formattedPhone });
+      if (error) throw error;
+      setConfirmation(true);
       setStep(2);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Unable to send the verification code.');
-      recaptchaVerifier.current?.clear();
-      recaptchaVerifier.current = null;
     }
   };
 
@@ -65,12 +45,15 @@ export default function Login() {
     }
 
     try {
-      const result = await confirmation.confirm(otp);
-      const userRef = doc(db, 'users', result.user.uid);
+      const result = await supabase.auth.verifyOtp({ phone: phone, token: otp, type: 'sms' });
+      if (result.error) throw result.error;
+      const user = result.data.user;
+      if (!user) throw new Error('Verification did not return a user.');
+      const userRef = doc(db, 'users', user.id);
       const existing = await getDoc(userRef);
       await setDoc(userRef, {
-        uid: result.user.uid,
-        phone: result.user.phoneNumber,
+        uid: user.id,
+        phone: user.phone,
         name: name || existing.data()?.name || '',
         role,
         ...(existing.exists() ? {} : { createdAt: serverTimestamp(), is_driver_approved: false, vehicle_plate: null, vehicle_model: null }),
@@ -86,7 +69,6 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-      <div id="recaptcha-container" />
       <div className="w-full max-w-md bg-gray-800 p-6 rounded-2xl">
         <button type="button" onClick={() => navigate('/')} className="text-gray-300 mb-4">Back</button>
         <h1 className="text-center text-2xl font-bold mb-4">BuddyRide1 - Limpopo eHailing</h1>

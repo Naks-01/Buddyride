@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebase';
+import { doc, getDoc } from '../../lib/supabaseDb';
+import { auth, db } from '../../lib/supabaseDb';
 import { DriverPageShell } from './DriverPageShell';
 
 export function DriverPerformance() {

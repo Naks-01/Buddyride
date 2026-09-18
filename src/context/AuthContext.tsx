@@ -1,8 +1,8 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { supabase } from '../lib/supabaseClient';
+import { doc, getDoc, setDoc, serverTimestamp } from '../lib/supabaseDb';
 import type { Lang } from '../lib/i18n';
-import { auth, db } from '../lib/firebase';
+import { db } from '../lib/supabaseDb';
 import { toProfile } from '../lib/converters';
 import type { Profile, UserRole } from '../types';
 
@@ -36,7 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const existing = await getDoc(userRef);
 
     if (existing.exists()) {
-      return toProfile(uid, existing.data());
+      return toProfile(uid, existing.data() ?? {});
     }
 
     const newUser = {
@@ -52,18 +52,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     await setDoc(userRef, newUser);
     const created = await getDoc(userRef);
-    return created.exists() ? toProfile(uid, created.data()) : null;
+    return created.exists() ? toProfile(uid, created.data() ?? {}) : null;
   };
 
   const loadProfile = async () => {
-    const user = auth.currentUser;
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       setProfile(null);
       setLoading(false);
       return;
     }
     try {
-      const userProfile = await ensureProfile(user.uid, user.phoneNumber);
+      const userProfile = await ensureProfile(user.id, user.phone ?? null);
       setProfile(userProfile);
     } catch (err) {
       console.error('Failed to load profile:', err);
@@ -78,31 +78,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    // Safety net: never let the app hang on the splash/loading screen if
-    // Firebase auth is slow or fails to respond.
+    // Safety net: never let the app hang on the splash/loading screen if auth is slow.
     const safetyTimer = setTimeout(() => setLoading(false), 2000);
 
-    const unsubscribe = onAuthStateChanged(
-      auth,
+    const { data: listener } = supabase.auth.onAuthStateChange(
       () => {
         clearTimeout(safetyTimer);
         void loadProfile();
       },
-      (err) => {
-        console.error('Auth state error:', err);
-        clearTimeout(safetyTimer);
-        setLoading(false);
-      }
     );
 
     return () => {
       clearTimeout(safetyTimer);
-      unsubscribe();
+      listener.subscription.unsubscribe();
     };
   }, []);
 
   const signOut = async () => {
-    await auth.signOut();
+    await supabase.auth.signOut();
     setProfile(null);
   };
 

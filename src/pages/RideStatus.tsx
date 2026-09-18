@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { doc, onSnapshot, type DocumentData } from 'firebase/firestore';
+import { doc, onSnapshot, type DocumentData } from '../lib/supabaseDb';
 import { useParams } from 'react-router-dom';
-import { db } from '../lib/firebase';
+import { db } from '../lib/supabaseDb';
 import AppMap, { type AppMapMarker } from '../components/Map/AppMap';
 
 const fallbackCenter: [number, number] = [-23.9045, 29.7167];

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabaseClient';
+import { doc, getDoc, serverTimestamp, setDoc } from '../lib/supabaseDb';
+import { db } from '../lib/supabaseDb';
 import { useAuth } from '../context/AuthContext';
 import { t } from '../lib/i18n';
 import { LangSelector } from '../components/LangSelector';
@@ -12,7 +12,7 @@ import type { AppRole } from '../types';
 
 declare global {
   interface Window {
-    confirmationResult?: ConfirmationResult;
+    confirmationResult?: boolean;
   }
 }
 
@@ -22,7 +22,6 @@ interface PhoneLoginProps {
 }
 
 export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
-  const auth = getAuth();
   const { lang, refreshProfile } = useAuth();
   const navigate = useNavigate();
   const [phone, setPhone] = useState('+27793051213');
@@ -31,24 +30,8 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [fullName, setFullName] = useState('');
-  const confirmationRef = useRef<ConfirmationResult | null>(null);
-  const verifierRef = useRef<RecaptchaVerifier | null>(null);
   const roleIcon = role === 'driver' ? '🚗' : role === 'admin' ? '🛡️' : '👤';
   const roleLabel = role === 'driver' ? t('driver', lang) : role === 'admin' ? t('admin', lang) : t('passenger', lang);
-
-  useEffect(() => {
-    if (!verifierRef.current) {
-      verifierRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-      });
-      void verifierRef.current.render();
-    }
-
-    return () => {
-      verifierRef.current?.clear();
-      verifierRef.current = null;
-    };
-  }, []);
 
   const formatPhone = (input: string): string => {
     let cleaned = input.replace(/\D/g, '');
@@ -70,13 +53,9 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
     setLoading(true);
     try {
       const formattedPhone = formatPhone(phone);
-      if (!verifierRef.current) {
-        setError('Security verification is still loading. Please try again.');
-        return;
-      }
-      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, verifierRef.current);
-      confirmationRef.current = confirmation;
-      window.confirmationResult = confirmation;
+      const { error } = await supabase.auth.signInWithOtp({ phone: formattedPhone });
+      if (error) throw error;
+      window.confirmationResult = true;
       setOtpSent(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send OTP');
@@ -91,23 +70,24 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
       setError(t('enterOtp', lang));
       return;
     }
-    const confirmation = window.confirmationResult ?? confirmationRef.current;
+    const confirmation = window.confirmationResult;
     if (!confirmation) {
       setError('Please request a new code');
       return;
     }
     setLoading(true);
     try {
-      const result = await confirmation.confirm(otp);
-      const user = result.user;
+      const result = await supabase.auth.verifyOtp({ phone: formatPhone(phone), token: otp, type: 'sms' });
+      if (result.error) throw result.error;
+      const user = result.data.user;
+      if (!user) throw new Error('Verification did not return a user.');
 
-      const userRef = doc(db, 'users', user.uid);
+      const userRef = doc(db, 'users', user.id);
       const existing = await getDoc(userRef);
       if (!existing.exists()) {
-        // Admin users will be set manually in Firebase Console.
         await setDoc(userRef, {
-          uid: user.uid,
-          phone: user.phoneNumber,
+          uid: user.id,
+          phone: user.phone,
           name: fullName,
           role,
           is_driver_approved: false,
@@ -122,7 +102,7 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
           createdAt: serverTimestamp(),
         });
       } else {
-        await setDoc(userRef, { name: fullName || existing.data().name, role }, { merge: true });
+        await setDoc(userRef, { name: fullName || existing.data()?.name, role }, { merge: true });
       }
 
       await refreshProfile();
@@ -141,7 +121,6 @@ export function PhoneLogin({ role, onBack }: PhoneLoginProps) {
 
   return (
     <div className="role-screen">
-      <div id="recaptcha-container" />
       <button
         onClick={onBack}
         style={{
