@@ -11,6 +11,18 @@ function roleLabel(role: AppRole) {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+async function persistUserProfile(user: { id: string; email?: string | null }, role: AppRole) {
+  try {
+    await setDoc(doc(db, 'users', user.id), {
+      uid: user.id,
+      email: user.email,
+      role,
+    }, { merge: true });
+  } catch (profileError) {
+    console.error('Supabase profile sync failed after authentication:', profileError);
+  }
+}
+
 export default function RolePasswordLogin() {
   const [searchParams] = useSearchParams();
   const role = (searchParams.get('role') || 'passenger') as AppRole;
@@ -47,11 +59,7 @@ export default function RolePasswordLogin() {
         const user = data.user;
         if (!user) throw new Error('Account creation did not return a user.');
         if (role === 'driver') {
-          await setDoc(doc(db, 'users', user.id), {
-            uid: user.id,
-            email: user.email,
-            role,
-          }, { merge: true });
+          await persistUserProfile(user, role);
           await refreshProfile();
           localStorage.setItem(`${role}LoggedIn`, 'true');
           navigate('/driver/dashboard', { replace: true });
@@ -70,11 +78,7 @@ export default function RolePasswordLogin() {
         await supabase.auth.signOut();
         throw new Error('Access denied. This account is not an administrator.');
       }
-      await setDoc(doc(db, 'users', user.id), {
-        uid: user.id,
-        email: user.email,
-        role,
-      }, { merge: true });
+      await persistUserProfile(user, role);
       await refreshProfile();
       localStorage.setItem(`${role}LoggedIn`, 'true');
       navigate(`/${role}/dashboard`, { replace: true });

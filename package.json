@@ -17,6 +17,8 @@
     "@capacitor/core": "^8.5.0",
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/local-notifications": "^8.3.1",
+    "@googlemaps/polyline-codec": "^1.0.28",
+    "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.116.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
