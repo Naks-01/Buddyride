@@ -1,6 +1,23 @@
-import { supabase, auth } from './supabaseClient';
+import { supabase } from './supabaseClient';
 
-export { auth };
+let currentUser: any = null;
+supabase.auth.getUser().then(({ data }) => { currentUser = data.user; });
+supabase.auth.onAuthStateChange((_event, session) => { currentUser = session?.user ?? null; });
+
+export const auth = {
+  get currentUser() {
+    if (!currentUser) return null;
+    return {
+      ...currentUser,
+      uid: currentUser.id,
+      phoneNumber: currentUser.phone ?? null,
+      displayName: currentUser.user_metadata?.full_name ?? currentUser.user_metadata?.name ?? null,
+      photoURL: currentUser.user_metadata?.avatar_url ?? null,
+    };
+  },
+  getUser: () => supabase.auth.getUser(),
+  signOut: () => supabase.auth.signOut(),
+};
 
 type Row = Record<string, any>;
 type Filter = { field: string; value: unknown };
