@@ -188,11 +188,16 @@ export function DriverDashboard() {
   }, []);
 
   useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading) return;
 
     const loadDriverProfile = async () => {
       try {
-        const driverRef = doc(db, 'drivers', user.uid);
+        const { data, error: authError } = await auth.getUser();
+        if (authError) throw authError;
+        const authenticatedUser = data.user;
+        if (!authenticatedUser) return;
+
+        const driverRef = doc(db, 'drivers', authenticatedUser.id);
         const existing = await getDoc(driverRef);
         if (existing.exists()) {
           const profile = existing.data();
@@ -203,8 +208,8 @@ export function DriverDashboard() {
         }
 
         const newDriver = {
-          uid: user.uid,
-          email: user.email ?? null,
+          uid: authenticatedUser.id,
+          email: authenticatedUser.email ?? null,
           role: 'driver',
           createdAt: serverTimestamp(),
         };
@@ -218,7 +223,7 @@ export function DriverDashboard() {
     };
 
     void loadDriverProfile();
-  }, [authLoading, user]);
+  }, [authLoading]);
 
   useEffect(() => {
     if (authLoading || !user || !isOnline) {
