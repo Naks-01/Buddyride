@@ -415,12 +415,17 @@ export function PassengerDashboard() {
     setRequesting(true);
     setMessage('');
     try {
+      const passengerId = profile?.id;
+      console.log('PASSENGER ID:', passengerId);
+      if (!passengerId) {
+        throw new Error('You must be signed in before requesting a ride.');
+      }
       const pickupPoint = { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' };
       const dropoffPoint = { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' };
       const rideRef = await createRide(
         pickupPoint,
         dropoffPoint,
-        profile?.id ?? 'test123',
+        passengerId,
         mode === 'send'
           ? {
               type: 'send',
@@ -481,9 +486,11 @@ export function PassengerDashboard() {
       setRated(false);
       setRatingValue(null);
       setMessage(mode === 'send' ? 'Parcel request sent! Looking for a driver...' : 'Ride requested! Looking for driver...');
-    } catch (err) {
-      console.error(err);
-      setMessage('Failed to request a ride. Please try again.');
+    } catch (error: any) {
+      console.error('REAL INSERT ERROR:', JSON.stringify(error, null, 2));
+      const errorMessage = error?.message || JSON.stringify(error) || 'Failed to request ride';
+      setMessage(errorMessage);
+      alert('Real error: ' + errorMessage);
     } finally {
       setRequesting(false);
     }

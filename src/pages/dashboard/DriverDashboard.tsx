@@ -260,8 +260,8 @@ export function DriverDashboard() {
         }
       },
       (err: any) => {
-        console.error(err);
-        setError('Failed to load ride requests.');
+        console.error('REAL RIDE REQUEST READ ERROR:', JSON.stringify(err, null, 2));
+        setError(err?.message || 'Failed to load ride requests.');
       },
     );
     return () => unsubscribe();

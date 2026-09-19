@@ -61,7 +61,7 @@ export async function getFreeRoute(from, to) {
 
 // CREATE RIDE - status: searching.
 export async function createRide(pickup, dropoff, passengerId, extra = {}) {
-  return addDoc(collection(db, 'rides'), {
+  const payload = {
     pickup,
     dropoff,
     pickupLatLng: { lat: pickup.lat, lng: pickup.lng },
@@ -70,7 +70,9 @@ export async function createRide(pickup, dropoff, passengerId, extra = {}) {
     status: RIDE_STATUS.REQUESTED,
     createdAt: serverTimestamp(),
     ...extra,
-  });
+  };
+  console.log('PAYLOAD BEING SENT:', payload);
+  return addDoc(collection(db, 'rides'), payload);
 }
 
 // Live feed of rides waiting for a driver.
