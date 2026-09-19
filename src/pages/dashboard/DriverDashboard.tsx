@@ -193,7 +193,10 @@ export function DriverDashboard() {
     const loadDriverProfile = async () => {
       try {
         const { data, error: authError } = await auth.getUser();
-        if (authError) throw authError;
+        if (authError) {
+          console.error('DRIVER PROFILE ERROR:', JSON.stringify(authError, null, 2));
+          throw authError;
+        }
         const authenticatedUser = data.user;
         if (!authenticatedUser) return;
 
@@ -208,17 +211,17 @@ export function DriverDashboard() {
         }
 
         const newDriver = {
+          id: authenticatedUser.id,
           uid: authenticatedUser.id,
           email: authenticatedUser.email ?? null,
           role: 'driver',
-          createdAt: serverTimestamp(),
         };
         await setDoc(driverRef, newDriver);
         setDriverProfile(newDriver);
         setDrivers([newDriver]);
-      } catch (err) {
-        console.error('Failed to load driver profile:', err);
-        setError('Failed to load driver profile.');
+      } catch (error: any) {
+        console.error('DRIVER PROFILE ERROR:', JSON.stringify(error, null, 2));
+        setError(error?.message || 'Failed to load driver profile.');
       }
     };
 
