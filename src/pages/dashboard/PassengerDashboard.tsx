@@ -82,10 +82,8 @@ export function PassengerDashboard() {
   const [cancelSecondsRemaining, setCancelSecondsRemaining] = useState(120);
   const [pickupAddress, setPickupAddress] = useState('');
   const [pickupLocation, setPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [pickupPlaceId, setPickupPlaceId] = useState<string | null>(null);
   const [dropoffAddress, setDropoffAddress] = useState('');
   const [dropoffLocation, setDropoffLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [dropoffPlaceId, setDropoffPlaceId] = useState<string | null>(null);
   const [rideStatus, setRideStatus] = useState<string | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [tripPickupLocation, setTripPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -146,7 +144,6 @@ export function PassengerDashboard() {
   const [recipientName, setRecipientName] = useState('');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [packageSize, setPackageSize] = useState<'small' | 'medium' | 'large'>('small');
-  const [sendPaymentMethod] = useState<'cash'>('cash');
   const [rideCategory, setRideCategory] = useState<RideCategoryId>('go');
   const [passengerCount, setPassengerCount] = useState(1);
   const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
@@ -281,14 +278,12 @@ export function PassengerDashboard() {
     if (activeStopIndex === 0) {
       setPickupLocation(nextLocation);
       setPickupAddress(result.address);
-      setPickupPlaceId(null);
       setIsLocationLocked(true);
       setLocationStep('dropoff');
       setActiveStopIndex(Math.min(1, stops.length - 1));
     } else if (activeStopIndex === stops.length - 1) {
       setDropoffLocation(nextLocation);
       setDropoffAddress(result.address);
-      setDropoffPlaceId(null);
     }
   };
 
@@ -298,7 +293,6 @@ export function PassengerDashboard() {
     if (activeStopIndex === 0) {
       setPickupLocation(mapLocation);
       setPickupAddress(mapAddress || 'Seshego Zone X');
-      setPickupPlaceId(null);
       setIsLocationLocked(true);
       setLocationStep('dropoff');
       setActiveStopIndex(Math.min(1, stops.length - 1));
@@ -307,7 +301,6 @@ export function PassengerDashboard() {
     } else if (activeStopIndex === stops.length - 1) {
       setDropoffLocation(mapLocation);
       setDropoffAddress(mapAddress || 'Seshego Zone X');
-      setDropoffPlaceId(null);
       setSearchText('');
       setMapAddress('');
     }
@@ -436,43 +429,25 @@ export function PassengerDashboard() {
         mode === 'send'
           ? {
               type: 'send',
-              packageDescription: packageDescription.trim(),
-              recipientName: recipientName.trim(),
-              recipientPhone: recipientPhone.trim(),
-              packageSize,
-              distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
+              distance_km: distanceKm,
               price: total,
               fare: total - BOOKING_FEE,
-              totalFare: total,
-              baseFare: total,
-              stops,
-              currentStopIndex: 0,
-              stopArrivalTime: null,
-              waitingSeconds: 0,
-              waitingFare: 0,
+              base_fare: total,
+              booking_fee: BOOKING_FEE,
+              total_fare: total,
               category: 'send',
-              paymentMethod: sendPaymentMethod,
-              pickupPlaceId: pickupPlaceId ?? null,
-              dropoffPlaceId: dropoffPlaceId ?? null,
+              passenger_count: 1,
             }
           : {
               type: 'ride',
-              distance: distance || `${(distanceKm ?? 0).toFixed(1)} km`,
+              distance_km: distanceKm,
               price: total,
               fare: total - BOOKING_FEE - extrasFee,
-              totalFare: total,
-              baseFare: total,
-              stops,
-              currentStopIndex: 0,
-              stopArrivalTime: null,
-              waitingSeconds: 0,
-              waitingFare: 0,
+              base_fare: total,
+              booking_fee: BOOKING_FEE,
+              total_fare: total,
               category: rideCategory,
-              passengerCount,
-              extras: selectedExtras,
-              extrasFee,
-              pickupPlaceId: pickupPlaceId ?? null,
-              dropoffPlaceId: dropoffPlaceId ?? null,
+              passenger_count: passengerCount,
             }
       );
 

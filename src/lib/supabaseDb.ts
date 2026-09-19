@@ -66,11 +66,39 @@ function normalize(value: unknown) {
   return value;
 }
 
-function rowSnapshot(row: Row | null): DocumentSnapshot {
+function normalizeRideRow(row: Row): Row {
+  if (!row || !('passenger_id' in row)) return row;
   return {
-    exists: () => Boolean(row),
-    data: () => row ?? {},
-    id: row?.id ?? '',
+    ...row,
+    pickup: row.pickup ?? {
+      address: row.pickup_address,
+      lat: row.pickup_lat,
+      lng: row.pickup_lng,
+    },
+    dropoff: row.dropoff ?? {
+      address: row.dropoff_address,
+      lat: row.dropoff_lat,
+      lng: row.dropoff_lng,
+    },
+    pickupLatLng: row.pickupLatLng ?? { lat: row.pickup_lat, lng: row.pickup_lng },
+    dropoffLatLng: row.dropoffLatLng ?? { lat: row.dropoff_lat, lng: row.dropoff_lng },
+    passengerId: row.passengerId ?? row.passenger_id,
+    distance: row.distance ?? row.distance_km,
+    price: row.price ?? row.total_fare,
+    baseFare: row.baseFare ?? row.base_fare,
+    bookingFee: row.bookingFee ?? row.booking_fee,
+    totalFare: row.totalFare ?? row.total_fare,
+    passengerCount: row.passengerCount ?? row.passenger_count,
+    createdAt: row.createdAt ?? row.created_at,
+  };
+}
+
+function rowSnapshot(row: Row | null): DocumentSnapshot {
+  const normalizedRow = row ? normalizeRideRow(row) : null;
+  return {
+    exists: () => Boolean(normalizedRow),
+    data: () => normalizedRow ?? {},
+    id: normalizedRow?.id ?? '',
   };
 }
 
@@ -83,7 +111,7 @@ async function read(source: any) {
   }
   const { data, error } = await request;
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map((row: Row) => normalizeRideRow(row));
 }
 
 export async function getDoc(reference: any): Promise<DocumentSnapshot> {
