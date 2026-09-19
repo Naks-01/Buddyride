@@ -113,6 +113,7 @@ export function DriverDashboard() {
   const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
   const [rides, setRides] = useState<RideRequest[]>([]);
   const [acceptedRide, setAcceptedRide] = useState<RideRequest | null>(null);
+  const [isAccepted, setIsAccepted] = useState(false);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
@@ -307,11 +308,11 @@ export function DriverDashboard() {
     const destination = `${pickup.lat},${pickup.lng}`;
     const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
     const nativeNavigationUrl = `google.navigation:q=${destination}`;
-    const isNativeDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (isNativeDevice) {
-      window.location.href = nativeNavigationUrl;
-    } else {
-      window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+    window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      window.setTimeout(() => {
+        window.location.href = nativeNavigationUrl;
+      }, 150);
     }
   };
 
@@ -322,24 +323,30 @@ export function DriverDashboard() {
     stopRequestLoop();
     try {
       const location = await getDriverLocation();
-      await acceptRideService(ride.id, {
-        driverId: uid,
-        driverName: profile?.full_name || auth.currentUser?.displayName || 'Driver',
-        driverPhone: auth.currentUser?.phoneNumber ?? null,
-        driverPhotoUrl: auth.currentUser?.photoURL ?? null,
-        carPlate: profile?.vehicle_plate ?? null,
-        driverCar: profile?.vehicle_model ?? null,
-        driverPlate: profile?.vehicle_plate ?? null,
-        driverRating: Number(driverProfile?.avgRating ?? 4.9),
-        ...(location && {
-          driverLocation: { ...location, updatedAt: serverTimestamp() },
-          driverStatus: 'coming',
-        }),
-      });
+      try {
+        await acceptRideService(ride.id, {
+          driverId: uid,
+          driverName: profile?.full_name || auth.currentUser?.displayName || 'Driver',
+          driverPhone: auth.currentUser?.phoneNumber ?? null,
+          driverPhotoUrl: auth.currentUser?.photoURL ?? null,
+          carPlate: profile?.vehicle_plate ?? null,
+          driverCar: profile?.vehicle_model ?? null,
+          driverPlate: profile?.vehicle_plate ?? null,
+          driverRating: Number(driverProfile?.avgRating ?? 4.9),
+          ...(location && {
+            driverLocation: { ...location, updatedAt: serverTimestamp() },
+            driverStatus: 'coming',
+          }),
+        });
+      } catch (acceptError) {
+        console.error('Failed to accept ride with driver details:', JSON.stringify(acceptError));
+        await updateRideFields(ride.id, { status: 'driver_assigned' });
+      }
       const nextAcceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(nextAcceptedRide);
+      setIsAccepted(true);
       showToast('Ride Accepted! Navigating to pickup...');
-      window.setTimeout(() => openRideNavigation(ride), 500);
+      window.setTimeout(() => openRideNavigation(ride), 800);
       window.setTimeout(() => {
         setAcceptedRide((prev) => {
           if (!prev || prev.id !== ride.id || prev.status !== 'driver_assigned') return prev;
@@ -351,7 +358,7 @@ export function DriverDashboard() {
       }, 3000);
       await navigateToPickup(nextAcceptedRide);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to accept ride:', JSON.stringify(err));
       setError('Failed to accept ride.');
     } finally {
       setAccepting(null);
@@ -465,6 +472,7 @@ export function DriverDashboard() {
       setUpdatingStatus(false);
     }
     setAcceptedRide(null);
+    setIsAccepted(false);
   };
 
   useEffect(() => {
@@ -704,10 +712,16 @@ export function DriverDashboard() {
     return getLocationCoordinates(ride.pickup, ride.pickupLatLng);
   };
 
-  const finishRide = () => setAcceptedRide(null);
+  const finishRide = () => {
+    setAcceptedRide(null);
+    setIsAccepted(false);
+  };
 
   // Dismisses the full-screen RIDE CANCELLED overlay (e.g. passenger cancelled while driver was en route).
-  const clearCancelledRide = () => setAcceptedRide(null);
+  const clearCancelledRide = () => {
+    setAcceptedRide(null);
+    setIsAccepted(false);
+  };
 
   if (authLoading) {
     return <div className="min-h-screen bg-[#121212] p-8 text-white">Loading...</div>;
@@ -754,7 +768,7 @@ export function DriverDashboard() {
 
   return (
     <>
-      <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#171717]">
+      <div className="relative h-screen overflow-hidden bg-[#F6F7F9] text-[#171717]">
         {acceptedRide?.status === 'cancelled' && (
           <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-red-600 p-6 text-center text-white">
             <h1 className="mb-5 text-4xl font-black">RIDE CANCELLED</h1>
@@ -764,7 +778,7 @@ export function DriverDashboard() {
           </div>
         )}
 
-        <header className="flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm">
+        <header className={`relative z-30 flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm transition-all duration-300 ease-in-out ${isAccepted ? '-translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
           <button type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open driver menu" className="flex h-10 w-10 items-center justify-center rounded-lg text-[#171717]"><Menu size={26} /></button>
           <span className="text-lg font-bold">Go Online</span>
           <button type="button" role="switch" aria-checked={isOnline} aria-label={isOnline ? 'Go offline' : 'Go online'} onClick={() => (isOnline ? void handleGoOffline() : void toggleOnline())} className={`relative h-7 w-12 rounded-full transition-colors ${isOnline ? 'bg-[#FF5500]' : 'bg-[#D1D5DB]'}`}>
@@ -774,14 +788,14 @@ export function DriverDashboard() {
 
         <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />
 
-        <main className="mx-auto flex w-full max-w-xl flex-col gap-4 px-4 py-4">
-          <section className="h-[250px] overflow-hidden rounded-2xl bg-[#DDE4E8] shadow-sm">
+        <main className="relative mx-auto flex h-[calc(100vh-4rem)] w-full max-w-xl flex-col gap-4 overflow-hidden px-4 py-4">
+          <section className={`transition-all duration-500 ease-in-out ${isAccepted ? 'fixed inset-0 z-20 h-screen w-screen rounded-none' : 'h-[250px] rounded-2xl'} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
               <DriverMapLeaflet driver={driverLocation} pickup={displayPickup} dropoff={displayDropoff} followTrigger={followTrigger} />
             </Suspense>
           </section>
 
-          <section className="rounded-2xl bg-white p-5 shadow-sm">
+          <section className={`rounded-2xl bg-white p-5 shadow-sm transition-all duration-500 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-center text-[32px] font-black leading-none text-[#171717]">R{displayFare.toFixed(2)}</p>
@@ -799,13 +813,13 @@ export function DriverDashboard() {
           {toast && <div className="rounded-xl bg-[#171717] px-4 py-3 text-center text-sm font-semibold text-white">{toast}</div>}
           {!displayRide && <p className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gray-500 shadow-sm">{isOnline ? 'Waiting for nearby ride requests...' : 'Turn on Go Online to receive rides.'}</p>}
 
-          {displayRide && !acceptedRide && <div className="flex flex-col gap-3">
+          {displayRide && !acceptedRide && <div className={`flex flex-col gap-3 transition-all duration-500 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
             <button type="button" onClick={() => void acceptRide(displayRide)} disabled={accepting === displayRide.id} className="h-14 w-full rounded-xl bg-[#FF5500] text-base font-bold text-white shadow-sm disabled:opacity-60">{accepting === displayRide.id ? 'Accepting...' : 'Accept Ride'}</button>
             <button type="button" onClick={() => openRideNavigation(displayRide)} className="h-14 w-full rounded-xl border-2 border-[#FF5500] bg-white text-base font-bold text-[#FF5500]">Open in Maps</button>
             <button type="button" onClick={() => void declineRide(displayRide)} className="self-center px-3 py-3 text-sm text-[#666] underline">Decline</button>
           </div>}
 
-          {acceptedRide && <section className="rounded-2xl bg-white p-5 shadow-sm">
+          {acceptedRide && !isAccepted && <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between"><p className="font-bold text-[#171717]">{acceptedRide.status === 'completed' ? 'Ride completed' : `Status: ${acceptedRide.status?.split('_').join(' ')}`}</p><button type="button" onClick={() => setFollowTrigger((prev) => prev + 1)} aria-label="Recenter route" className="rounded-lg p-2 text-[#FF5500]"><NavigationIcon size={20} /></button></div>
             <div className="flex flex-col gap-3">
               {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>}
@@ -816,6 +830,24 @@ export function DriverDashboard() {
             </div>
           </section>}
         </main>
+
+        {acceptedRide && isAccepted && (
+          <section className="fixed inset-x-0 bottom-0 z-30 rounded-t-3xl bg-white p-5 shadow-[0_-8px_30px_rgba(0,0,0,0.2)] transition-transform duration-500 ease-out">
+            <button type="button" onClick={() => setIsAccepted(false)} aria-label="Minimize map" className="absolute right-4 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600">
+              <span className="text-xl leading-none">×</span>
+            </button>
+            <div className="pr-10">
+              <div className="flex items-center gap-2 text-lg font-bold text-gray-900"><span className="h-3 w-3 animate-pulse rounded-full bg-green-500" />Driving to pickup</div>
+              <p className="mt-2 text-sm text-gray-600">{displayPickupLabel}</p>
+              <p className="mt-1 text-sm font-semibold text-gray-800">Customer: {passengerName}</p>
+            </div>
+            <div className="mt-5 flex flex-col gap-3">
+              <button type="button" onClick={() => openRideNavigation(acceptedRide)} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white">Open Navigation</button>
+              <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl border-2 border-[#FF5500] bg-white font-bold text-[#FF5500] disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>
+            </div>
+            <button type="button" onClick={() => void driverCancelRide(acceptedRide)} className="mt-4 w-full py-2 text-center text-sm text-gray-600 underline">Cancel Ride</button>
+          </section>
+        )}
 
         {acceptedRide && <RideChat rideId={acceptedRide.id} currentUserId={user.uid} currentUserRole="driver" rideStatus={acceptedRide.status} />}
       </div>
