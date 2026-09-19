@@ -1,16 +1,18 @@
 import { lazy, Suspense, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { doc, getDoc, serverTimestamp, updateDoc } from '../../lib/supabaseDb';
+import { collection, doc, getDoc, getDocs, query, serverTimestamp, updateDoc, where } from '../../lib/supabaseDb';
 import {
   Car as CarPin,
   HelpCircle,
   Home as HomeNav,
+  MapPin,
   Menu,
   Navigation as NavigationIcon,
   Phone,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  UserRound,
   Wallet,
 } from 'lucide-react';
 import { auth, db } from '../../lib/supabaseDb';
@@ -120,6 +122,7 @@ export function DriverDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
+  const [toast, setToast] = useState('');
   const [checkingArrival, setCheckingArrival] = useState(false);
   const [followTrigger, setFollowTrigger] = useState(0);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
@@ -175,6 +178,34 @@ export function DriverDashboard() {
   useEffect(() => {
     if ('Notification' in window) void Notification.requestPermission();
   }, []);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const loadTodayEarnings = async () => {
+      try {
+        const snapshot = await getDocs(query(collection(db, 'rides'), where('driverId', '==', user.uid), where('status', '==', 'completed')));
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const total = snapshot.docs.reduce((sum, rideSnapshot) => {
+          const data = rideSnapshot.data() as Record<string, unknown>;
+          const completedAtValue = data.completedAt ?? data.completed_at;
+          const completedAt = completedAtValue instanceof Date
+            ? completedAtValue
+            : typeof completedAtValue === 'string'
+              ? new Date(completedAtValue)
+              : toMillis(completedAtValue) != null
+                ? new Date(toMillis(completedAtValue) as number)
+                : null;
+          if (!completedAt || Number.isNaN(completedAt.getTime()) || completedAt < startOfToday) return sum;
+          return sum + Number(data.fare ?? data.totalFare ?? data.price ?? data.total_fare ?? 0);
+        }, 0);
+        setTodayEarnings(total);
+      } catch (earningsError) {
+        console.error('Failed to load today earnings:', earningsError);
+      }
+    };
+    void loadTodayEarnings();
+  }, [authLoading, user]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -262,6 +293,28 @@ export function DriverDashboard() {
     }
   }, [authLoading, user, isOnline]);
 
+  const showToast = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(''), 3200);
+  };
+
+  const openRideNavigation = (ride: RideRequest) => {
+    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
+    if (!pickup) {
+      setError('Pickup location is missing coordinates.');
+      return;
+    }
+    const destination = `${pickup.lat},${pickup.lng}`;
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
+    const nativeNavigationUrl = `google.navigation:q=${destination}`;
+    const isNativeDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isNativeDevice) {
+      window.location.href = nativeNavigationUrl;
+    } else {
+      window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   const acceptRide = async (ride: RideRequest) => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
@@ -283,8 +336,10 @@ export function DriverDashboard() {
           driverStatus: 'coming',
         }),
       });
-      const acceptedRide = { ...ride, status: 'driver_assigned' };
-      setAcceptedRide(acceptedRide);
+      const nextAcceptedRide = { ...ride, status: 'driver_assigned' };
+      setAcceptedRide(nextAcceptedRide);
+      showToast('Ride Accepted! Navigating to pickup...');
+      window.setTimeout(() => openRideNavigation(ride), 500);
       window.setTimeout(() => {
         setAcceptedRide((prev) => {
           if (!prev || prev.id !== ride.id || prev.status !== 'driver_assigned') return prev;
@@ -294,7 +349,7 @@ export function DriverDashboard() {
           return { ...prev, status: 'driver_en_route' };
         });
       }, 3000);
-      await navigateToPickup(acceptedRide);
+      await navigateToPickup(nextAcceptedRide);
     } catch (err) {
       console.error(err);
       setError('Failed to accept ride.');
@@ -690,7 +745,82 @@ export function DriverDashboard() {
     else if (deltaY > 30) setSheetExpanded(false);
   };
 
+  const displayRide = acceptedRide ?? rides[0] ?? null;
+  const displayPickup = displayRide ? getLocationCoordinates(displayRide.pickup, displayRide.pickupLatLng) : null;
+  const displayDropoff = displayRide ? getLocationCoordinates(displayRide.dropoff, displayRide.dropoffLatLng) : null;
+  const displayFare = displayRide ? Number(displayRide.fare ?? displayRide.totalFare ?? displayRide.price ?? 0) : 0;
+  const displayPickupLabel = displayRide ? formatLoc(displayRide.pickup) : 'Waiting for a ride request';
+  const displayDropoffLabel = displayRide ? formatLoc(displayRide.dropoff) : 'Go online to receive rides';
+
   return (
+    <>
+      <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#171717]">
+        {acceptedRide?.status === 'cancelled' && (
+          <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-red-600 p-6 text-center text-white">
+            <h1 className="mb-5 text-4xl font-black">RIDE CANCELLED</h1>
+            <p className="mb-2 text-xl">{acceptedRide.cancelledBy === 'passenger' ? 'Cancelled by passenger' : 'Cancelled by driver'}</p>
+            <p className="text-base opacity-90">{acceptedRide.cancelReason || 'No reason provided'}</p>
+            <button onClick={clearCancelledRide} className="mt-8 rounded-xl bg-white px-10 py-3 text-lg font-bold text-red-600">OK, Got it</button>
+          </div>
+        )}
+
+        <header className="flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm">
+          <button type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open driver menu" className="flex h-10 w-10 items-center justify-center rounded-lg text-[#171717]"><Menu size={26} /></button>
+          <span className="text-lg font-bold">Go Online</span>
+          <button type="button" role="switch" aria-checked={isOnline} aria-label={isOnline ? 'Go offline' : 'Go online'} onClick={() => (isOnline ? void handleGoOffline() : void toggleOnline())} className={`relative h-7 w-12 rounded-full transition-colors ${isOnline ? 'bg-[#FF5500]' : 'bg-[#D1D5DB]'}`}>
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${isOnline ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </header>
+
+        <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />
+
+        <main className="mx-auto flex w-full max-w-xl flex-col gap-4 px-4 py-4">
+          <section className="h-[250px] overflow-hidden rounded-2xl bg-[#DDE4E8] shadow-sm">
+            <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
+              <DriverMapLeaflet driver={driverLocation} pickup={displayPickup} dropoff={displayDropoff} followTrigger={followTrigger} />
+            </Suspense>
+          </section>
+
+          <section className="rounded-2xl bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-center text-[32px] font-black leading-none text-[#171717]">R{displayFare.toFixed(2)}</p>
+                <div className="mt-5 space-y-4">
+                  <div className="flex items-start gap-3"><MapPin size={22} className="mt-0.5 shrink-0 text-green-600" /><p className="text-sm text-gray-700"><span className="font-bold">Pickup</span> • {displayPickupLabel}</p></div>
+                  <div className="flex items-start gap-3"><MapPin size={22} className="mt-0.5 shrink-0 text-red-600" /><p className="text-sm text-gray-700"><span className="font-bold">Dropoff</span> • {displayDropoffLabel}</p></div>
+                </div>
+              </div>
+              <div className="flex w-24 shrink-0 flex-col items-center gap-1 text-center"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-orange-600"><UserRound size={20} /></div><p className="text-[11px] font-semibold leading-tight text-gray-600">Passenger • {passengerName}</p></div>
+            </div>
+          </section>
+
+          {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+          {locationError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><p>Location permission is required.</p><button onClick={requestLocation} className="mt-2 font-bold underline">Enable location</button></div>}
+          {toast && <div className="rounded-xl bg-[#171717] px-4 py-3 text-center text-sm font-semibold text-white">{toast}</div>}
+          {!displayRide && <p className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gray-500 shadow-sm">{isOnline ? 'Waiting for nearby ride requests...' : 'Turn on Go Online to receive rides.'}</p>}
+
+          {displayRide && !acceptedRide && <div className="flex flex-col gap-3">
+            <button type="button" onClick={() => void acceptRide(displayRide)} disabled={accepting === displayRide.id} className="h-14 w-full rounded-xl bg-[#FF5500] text-base font-bold text-white shadow-sm disabled:opacity-60">{accepting === displayRide.id ? 'Accepting...' : 'Accept Ride'}</button>
+            <button type="button" onClick={() => openRideNavigation(displayRide)} className="h-14 w-full rounded-xl border-2 border-[#FF5500] bg-white text-base font-bold text-[#FF5500]">Open in Maps</button>
+            <button type="button" onClick={() => void declineRide(displayRide)} className="self-center px-3 py-3 text-sm text-[#666] underline">Decline</button>
+          </div>}
+
+          {acceptedRide && <section className="rounded-2xl bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between"><p className="font-bold text-[#171717]">{acceptedRide.status === 'completed' ? 'Ride completed' : `Status: ${acceptedRide.status?.split('_').join(' ')}`}</p><button type="button" onClick={() => setFollowTrigger((prev) => prev + 1)} aria-label="Recenter route" className="rounded-lg p-2 text-[#FF5500]"><NavigationIcon size={20} /></button></div>
+            <div className="flex flex-col gap-3">
+              {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>}
+              {acceptedRide.status === 'driver_arrived' && <button type="button" onClick={() => void startTrip(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Start Trip</button>}
+              {isTripPhase && <button type="button" onClick={() => completeTrip(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Complete Trip</button>}
+              {acceptedRide.status !== 'completed' && <button type="button" onClick={() => void driverCancelRide(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl border border-gray-300 bg-white font-semibold text-gray-600 disabled:opacity-60">Cancel Ride</button>}
+              {acceptedRide.status === 'completed' && <button type="button" onClick={finishRide} className="h-12 rounded-xl bg-gray-100 font-bold text-gray-700">Done</button>}
+            </div>
+          </section>}
+        </main>
+
+        {acceptedRide && <RideChat rideId={acceptedRide.id} currentUserId={user.uid} currentUserRole="driver" rideStatus={acceptedRide.status} />}
+      </div>
+      {acceptedRide && false && ((acceptedRide: RideRequest) => {
+        return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#121212] text-white">
       {acceptedRide?.status === 'cancelled' && (
         <div
@@ -1094,6 +1224,9 @@ export function DriverDashboard() {
         </div>
       )}
     </div>
+        );
+      })(acceptedRide!)}
+    </>
   );
 }
 

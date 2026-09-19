@@ -1,15 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  BarChart3,
-  Car,
   ChevronRight,
-  FileText,
-  HelpCircle,
   LogOut,
   Route,
-  Settings,
   Star,
+  ShieldCheck,
+  UserRound,
   Wallet,
   X,
 } from 'lucide-react';
@@ -28,7 +25,7 @@ type DriverDrawerProps = {
   onGoOffline: () => void;
 };
 
-type MenuAction = 'rides' | 'earnings' | 'performance' | 'vehicle' | 'documents' | 'help' | 'settings' | 'logout';
+type MenuAction = 'rides' | 'earnings' | 'profile' | 'safety' | 'logout';
 
 export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, todayEarnings, isOnline, onGoOffline }: DriverDrawerProps) {
   const navigate = useNavigate();
@@ -47,25 +44,13 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
       case 'earnings':
         setShowEarnings(true);
         break;
-      case 'performance':
+      case 'profile':
         onClose();
-        navigate('/driver/performance');
+        navigate('/profile');
         break;
-      case 'vehicle':
-        onClose();
-        navigate('/driver/vehicle');
-        break;
-      case 'documents':
-        onClose();
-        navigate('/driver/documents');
-        break;
-      case 'help':
+      case 'safety':
         onClose();
         navigate('/driver/help');
-        break;
-      case 'settings':
-        onClose();
-        navigate('/driver/settings');
         break;
       case 'logout':
         onClose();
@@ -77,13 +62,10 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
   };
 
   const menuItems: Array<{ action: MenuAction; label: string; icon: typeof Route }> = [
-    { action: 'rides', label: 'My Rides', icon: Route },
     { action: 'earnings', label: 'Earnings', icon: Wallet },
-    { action: 'performance', label: 'Performance', icon: BarChart3 },
-    { action: 'vehicle', label: 'Vehicle', icon: Car },
-    { action: 'documents', label: 'Documents', icon: FileText },
-    { action: 'help', label: 'Help Center', icon: HelpCircle },
-    { action: 'settings', label: 'Settings', icon: Settings },
+    { action: 'rides', label: 'My Rides', icon: Route },
+    { action: 'profile', label: 'Profile', icon: UserRound },
+    { action: 'safety', label: 'Safety', icon: ShieldCheck },
   ];
 
   return (
@@ -94,38 +76,38 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
         aria-hidden="true"
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-[85%] max-w-sm flex-col overflow-y-auto bg-[#1A1D23] shadow-2xl transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col overflow-y-auto bg-white text-gray-900 shadow-2xl transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'}`}
         style={{ borderTopRightRadius: 24, borderBottomRightRadius: 24 }}
       >
         <div className="flex items-center justify-between px-5 pt-5">
           <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2ECC71] text-lg font-black text-white">B</span>
-            <span className="text-lg font-bold text-white">uddyRide</span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#FF5500] text-lg font-black text-white">B</span>
+            <span className="text-lg font-bold text-gray-900">uddyRide</span>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close menu" className="rounded-full p-1 text-gray-400 hover:text-white">
+          <button type="button" onClick={onClose} aria-label="Close menu" className="rounded-full p-1 text-gray-500 hover:text-gray-900">
             <X size={22} />
           </button>
         </div>
 
         <div className="mt-6 flex items-center gap-3 px-5">
-          <div className="relative h-16 w-16 shrink-0 rounded-full ring-2 ring-[#2ECC71] ring-offset-2 ring-offset-[#1A1D23]">
+          <div className="relative h-16 w-16 shrink-0 rounded-full ring-2 ring-[#FF5500] ring-offset-2 ring-offset-white">
             {profile?.selfieUrl ? (
               <img src={profile.selfieUrl} alt="Driver avatar" className="h-full w-full rounded-full object-cover" />
             ) : (
-              <div className="flex h-full w-full items-center justify-center rounded-full bg-[#2A2D36] text-xl font-bold text-white">
+              <div className="flex h-full w-full items-center justify-center rounded-full bg-orange-100 text-xl font-bold text-orange-600">
                 {(profile?.full_name ?? 'D').slice(0, 1).toUpperCase()}
               </div>
             )}
           </div>
           <div className="min-w-0">
-            <p className="truncate text-[22px] font-bold text-white">{profile?.full_name ?? 'Driver'}</p>
-            <p className="truncate text-sm text-gray-400">{profile?.phone ?? 'No phone on file'}</p>
+            <p className="truncate text-[22px] font-bold text-gray-900">{profile?.full_name ?? 'Driver'}</p>
+            <p className="truncate text-sm text-gray-500">{profile?.email ?? 'No email on file'}</p>
             <div className="mt-1 flex items-center gap-2 text-xs">
               <span className="flex items-center gap-1 font-semibold text-[#2ECC71]">
-                <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-[#2ECC71]' : 'bg-gray-500'}`} /> {isOnline ? 'Online' : 'Offline'}
+                <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-gray-400'}`} /> {isOnline ? 'Online' : 'Offline'}
               </span>
-              <span className="flex items-center gap-1 font-semibold text-yellow-400">
-                <Star size={12} className="fill-yellow-400" /> {rating.toFixed(2)}
+              <span className="flex items-center gap-1 font-semibold text-yellow-600">
+                <Star size={12} className="fill-yellow-500" /> {rating.toFixed(2)}
               </span>
               {isOnline && (
                 <button type="button" onClick={onGoOffline} className="font-semibold text-[#FF3B30] underline">
@@ -136,22 +118,22 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
           </div>
         </div>
 
-        <div className="mx-5 mt-5 grid grid-cols-3 divide-x divide-white/10 rounded-2xl bg-[#252A33] py-4">
+        <div className="mx-5 mt-5 grid grid-cols-3 divide-x divide-gray-200 rounded-2xl bg-gray-50 py-4">
           <div className="flex flex-col items-center px-2">
-            <span className="text-base font-bold text-white">R{todayEarnings.toFixed(2)}</span>
-            <span className="mt-1 text-[11px] text-gray-400">Earnings Today</span>
+            <span className="text-base font-bold text-gray-900">R{todayEarnings.toFixed(2)}</span>
+            <span className="mt-1 text-[11px] text-gray-500">Earnings Today</span>
           </div>
           <div className="flex flex-col items-center px-2">
-            <span className="text-base font-bold text-white">{ridesCount}</span>
-            <span className="mt-1 text-[11px] text-gray-400">Rides</span>
+            <span className="text-base font-bold text-gray-900">{ridesCount}</span>
+            <span className="mt-1 text-[11px] text-gray-500">Rides</span>
           </div>
           <div className="flex flex-col items-center px-2">
-            <span className="text-base font-bold text-white">0h</span>
-            <span className="mt-1 text-[11px] text-gray-400">Hours</span>
+            <span className="text-base font-bold text-gray-900">0h</span>
+            <span className="mt-1 text-[11px] text-gray-500">Hours</span>
           </div>
         </div>
 
-        <p className="mt-6 px-5 text-xs font-bold uppercase tracking-wide text-gray-500">Main menu</p>
+        <p className="mt-6 px-5 text-xs font-bold uppercase tracking-wide text-gray-500">Driver menu</p>
 
         <nav className="mt-2 flex-1 px-2 pb-4">
           {menuItems.map(({ action, label, icon: Icon }) => (
@@ -159,12 +141,12 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
               key={action}
               type="button"
               onClick={() => void handleAction(action)}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/5"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-orange-50"
             >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#2ECC71]">
-                <Icon size={18} className="text-white" />
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-100">
+                <Icon size={18} className="text-[#FF5500]" />
               </span>
-              <span className="flex-1 text-base text-white">{label}</span>
+              <span className="flex-1 text-base text-gray-800">{label}</span>
               <ChevronRight size={18} className="text-gray-500" />
             </button>
           ))}
@@ -172,7 +154,7 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
           <button
             type="button"
             onClick={() => void handleAction('logout')}
-            className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/5"
+            className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-red-50"
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FF3B30]">
               <LogOut size={18} className="text-white" />
