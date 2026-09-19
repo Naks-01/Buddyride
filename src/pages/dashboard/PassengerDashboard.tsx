@@ -231,7 +231,9 @@ export function PassengerDashboard() {
     setDistanceKm(km);
     setDurationMin(minutes);
     setPlannedRoutePath([[origin.lat!, origin.lng!], [dest.lat!, dest.lng!]]);
-    setEstimatedFare(calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE);
+    const distanceFare = Math.round((km * 5 + BOOKING_FEE) * 100) / 100;
+    const calculatedFare = calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE;
+    setEstimatedFare(Math.max(calculatedFare, distanceFare));
     setPriceLoading(false);
   };
 

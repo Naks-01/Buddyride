@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from '../../lib/supabaseDb';
+import { doc, getDoc, serverTimestamp, updateDoc } from '../../lib/supabaseDb';
 import {
   Car as CarPin,
   HelpCircle,
@@ -109,7 +109,6 @@ export function DriverDashboard() {
   const location = useLocation();
   const user = auth.currentUser;
   const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
-  const [drivers, setDrivers] = useState<Record<string, unknown>[] | null>(null);
   const [rides, setRides] = useState<RideRequest[]>([]);
   const [acceptedRide, setAcceptedRide] = useState<RideRequest | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
@@ -164,11 +163,6 @@ export function DriverDashboard() {
     const next = !isOnline;
     setIsOnline(next);
     if (next) requestLocation();
-    if (user) {
-      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: next, lastSeen: serverTimestamp() }).catch((err) => {
-        console.error('Failed to update online status:', err);
-      });
-    }
   };
 
   const handleGoOffline = async () => {
@@ -176,11 +170,6 @@ export function DriverDashboard() {
     setIsOnline(false);
     setRides([]);
     stopRequestLoop();
-    if (user) {
-      await updateDoc(doc(db, 'drivers', user.uid), { isOnline: false, lastOffline: serverTimestamp(), lastSeen: serverTimestamp() }).catch((err) => {
-        console.error('Failed to update offline status:', err);
-      });
-    }
   };
 
   useEffect(() => {
@@ -200,25 +189,14 @@ export function DriverDashboard() {
         const authenticatedUser = data.user;
         if (!authenticatedUser) return;
 
-        const driverRef = doc(db, 'drivers', authenticatedUser.id);
-        const existing = await getDoc(driverRef);
-        if (existing.exists()) {
-          const profile = existing.data();
-          setDriverProfile(profile);
-          setDrivers([profile]);
-          setIsOnline(Boolean(profile.isOnline));
-          return;
-        }
-
-        const newDriver = {
+        const driver = {
+          ...(profile ?? {}),
           id: authenticatedUser.id,
           uid: authenticatedUser.id,
-          email: authenticatedUser.email ?? null,
-          role: 'driver',
+          email: profile?.email ?? authenticatedUser.email ?? null,
+          role: profile?.role ?? 'driver',
         };
-        await setDoc(driverRef, newDriver);
-        setDriverProfile(newDriver);
-        setDrivers([newDriver]);
+        setDriverProfile(driver);
       } catch (error: any) {
         console.error('DRIVER PROFILE ERROR:', JSON.stringify(error, null, 2));
         setError(error?.message || 'Failed to load driver profile.');
@@ -679,10 +657,6 @@ export function DriverDashboard() {
   if (!user) {
     navigate('/login?role=driver', { replace: true });
     return null;
-  }
-
-  if (!drivers && !error) {
-    return <div className="min-h-screen bg-[#121212] p-8 text-white">Loading...</div>;
   }
 
   const hasActiveOverlay = Boolean(acceptedRide) || rides.length > 0;
