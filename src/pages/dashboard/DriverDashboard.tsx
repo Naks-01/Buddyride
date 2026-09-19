@@ -231,13 +231,22 @@ export function DriverDashboard() {
 
         for (const ride of newRides) {
           if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
-          if ('Notification' in window && Notification.permission === 'granted') {
-            const pickupLabel = typeof ride.pickup === 'string' ? ride.pickup : ride.pickup?.address ?? 'Pickup';
-            const dropoffLabel = typeof ride.dropoff === 'string' ? ride.dropoff : ride.dropoff?.address ?? 'Dropoff';
-            new Notification('New Buddy Request! 🚗', {
-              body: `${pickupLabel} -> ${dropoffLabel} - R${Number(ride.price ?? ride.fare ?? 0).toFixed(2)}`,
-            });
-          }
+          void (async () => {
+            try {
+              if ('Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+                const registration = await navigator.serviceWorker.ready;
+                const pickupLabel = typeof ride.pickup === 'string' ? ride.pickup : ride.pickup?.address ?? 'Pickup';
+                const dropoffLabel = typeof ride.dropoff === 'string' ? ride.dropoff : ride.dropoff?.address ?? 'Dropoff';
+                await registration.showNotification('New Buddy Request!', {
+                  body: `${pickupLabel} -> ${dropoffLabel} - R${Number(ride.price ?? ride.fare ?? 0).toFixed(2)}`,
+                });
+              } else {
+                console.log('Notification not supported or not granted - skipping');
+              }
+            } catch (notificationError) {
+              console.error('Failed to show ride notification:', notificationError);
+            }
+          })();
         }
       },
       (err: any) => {
@@ -461,9 +470,8 @@ export function DriverDashboard() {
   };
   const completeTrip = (ride: RideRequest) => {
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed' } : prev));
-    const total = Number(ride.fare ?? ride.price ?? 0);
-    const driverPayout = Math.max(total - BOOKING_FEE, 0) * DRIVER_RATE + Number(ride.tipAmount ?? 0);
-    setTodayEarnings((prev) => prev + driverPayout);
+    const fare = Number(ride.fare ?? ride.totalFare ?? ride.price ?? 0);
+    setTodayEarnings((prev) => prev + fare);
     void completeRideService(ride.id);
   };
 

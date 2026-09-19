@@ -529,9 +529,18 @@ export function PassengerDashboard() {
         else if (nextStatus === 'driver_arrived') {
           playSoundTimes('arrived', 3);
           if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification('Driver is outside', { body: 'Your driver has arrived at the pickup point.' });
-          }
+          void (async () => {
+            try {
+              if ('Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+                const registration = await navigator.serviceWorker.ready;
+                await registration.showNotification('Driver is outside', { body: 'Your driver has arrived at the pickup point.' });
+              } else {
+                console.log('Notification not supported or not granted - skipping');
+              }
+            } catch (notificationError) {
+              console.error('Failed to show arrival notification:', notificationError);
+            }
+          })();
         } else if (nextStatus === 'cancelled') {
           playSound('cancel');
           setCancelledBy(typeof data.cancelledBy === 'string' ? data.cancelledBy : null);
