@@ -71,13 +71,7 @@ export async function createRide(pickup, dropoff, passengerId, extra = {}) {
     dropoff_lng: dropoff.lng,
     distance_km: extra.distance_km ?? null,
     fare: extra.fare ?? null,
-    base_fare: extra.base_fare ?? null,
-    booking_fee: extra.booking_fee ?? null,
-    total_fare: extra.total_fare ?? null,
     status: RIDE_STATUS.REQUESTED,
-    created_at: serverTimestamp(),
-    category: extra.category ?? null,
-    passenger_count: extra.passenger_count ?? null,
   };
   console.log('PAYLOAD BEING SENT:', payload);
   return addDoc(collection(db, 'rides'), payload);

@@ -432,22 +432,12 @@ export function PassengerDashboard() {
               distance_km: distanceKm,
               price: total,
               fare: total - BOOKING_FEE,
-              base_fare: total,
-              booking_fee: BOOKING_FEE,
-              total_fare: total,
-              category: 'send',
-              passenger_count: 1,
             }
           : {
               type: 'ride',
               distance_km: distanceKm,
               price: total,
               fare: total - BOOKING_FEE - extrasFee,
-              base_fare: total,
-              booking_fee: BOOKING_FEE,
-              total_fare: total,
-              category: rideCategory,
-              passenger_count: passengerCount,
             }
       );
 
