@@ -25,6 +25,7 @@ import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
 
 const DriverMapLeaflet = lazy(() => import('../../components/Map/DriverMapLeaflet'));
+import AppMap from '../../components/Map/AppMap';
 import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
@@ -128,6 +129,7 @@ export function DriverDashboard() {
   const [followTrigger, setFollowTrigger] = useState(0);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
+  const [routePath, setRoutePath] = useState<[number, number][]>([]);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [sheetExpanded, setSheetExpanded] = useState(false);
@@ -261,24 +263,15 @@ export function DriverDashboard() {
           stopRequestLoop();
         }
 
-        for (const ride of newRides) {
+        for (const _ride of newRides) {
           if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
-          void (async () => {
+          if ('Notification' in window && Notification.permission === 'granted') {
             try {
-              if ('Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
-                const registration = await navigator.serviceWorker.ready;
-                const pickupLabel = typeof ride.pickup === 'string' ? ride.pickup : ride.pickup?.address ?? 'Pickup';
-                const dropoffLabel = typeof ride.dropoff === 'string' ? ride.dropoff : ride.dropoff?.address ?? 'Dropoff';
-                await registration.showNotification('New Buddy Request!', {
-                  body: `${pickupLabel} -> ${dropoffLabel} - R${Number(ride.price ?? ride.fare ?? 0).toFixed(2)}`,
-                });
-              } else {
-                console.log('Notification not supported or not granted - skipping');
-              }
+              new Notification('New ride');
             } catch (notificationError) {
-              console.error('Failed to show ride notification:', notificationError);
+              console.log(notificationError);
             }
-          })();
+          }
         }
       },
       (err: any) => {
@@ -393,6 +386,38 @@ export function DriverDashboard() {
     }
     return () => unsubscribe();
   }, [acceptedRide?.id]);
+
+  useEffect(() => {
+    const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
+    if (!acceptedRide || !driverLocation || !pickup) {
+      setRoutePath([]);
+      setRouteDistanceM(null);
+      setRouteDurationSec(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const loadRoadRoute = async () => {
+      try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${driverLocation.lng},${driverLocation.lat};${pickup.lng},${pickup.lat}?overview=full&geometries=geojson`;
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error(`OSRM request failed with ${response.status}`);
+        const data = await response.json() as { routes?: Array<{ distance?: number; duration?: number; geometry?: { coordinates?: Array<[number, number]> } }> };
+        const route = data.routes?.[0];
+        const coordinates = route?.geometry?.coordinates ?? [];
+        if (!route || !coordinates.length) throw new Error('OSRM returned no route geometry');
+        setRoutePath(coordinates.map(([lng, lat]) => [lat, lng] as [number, number]));
+        setRouteDistanceM(typeof route.distance === 'number' ? route.distance : null);
+        setRouteDurationSec(typeof route.duration === 'number' ? route.duration : null);
+      } catch (routeError) {
+        if ((routeError as Error).name === 'AbortError') return;
+        console.error('Failed to load road route:', routeError);
+        setRoutePath([[driverLocation.lat, driverLocation.lng], [pickup.lat, pickup.lng]]);
+      }
+    };
+    void loadRoadRoute();
+    return () => controller.abort();
+  }, [acceptedRide?.id, acceptedRide?.pickup, acceptedRide?.pickupLatLng, driverLocation?.lat, driverLocation?.lng]);
 
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
@@ -780,18 +805,29 @@ export function DriverDashboard() {
 
         <header className={`relative z-30 flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm transition-all duration-300 ease-in-out ${isAccepted ? '-translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
           <button type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open driver menu" className="flex h-10 w-10 items-center justify-center rounded-lg text-[#171717]"><Menu size={26} /></button>
-          <span className="text-lg font-bold">Go Online</span>
-          <button type="button" role="switch" aria-checked={isOnline} aria-label={isOnline ? 'Go offline' : 'Go online'} onClick={() => (isOnline ? void handleGoOffline() : void toggleOnline())} className={`relative h-7 w-12 rounded-full transition-colors ${isOnline ? 'bg-[#FF5500]' : 'bg-[#D1D5DB]'}`}>
-            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${isOnline ? 'translate-x-6' : 'translate-x-1'}`} />
+          <span className="text-lg font-bold">{isOnline ? 'Online' : 'Offline'}</span>
+          <button type="button" role="switch" aria-checked={isOnline} aria-label={isOnline ? 'Go offline' : 'Go online'} onClick={() => (isOnline ? void handleGoOffline() : void toggleOnline())} className={`relative h-9 w-16 rounded-full p-1 transition-all duration-300 ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}>
+            <span className={`absolute left-1 top-1 h-7 w-7 rounded-full bg-white shadow transition-transform duration-300 ${isOnline ? 'translate-x-6' : 'translate-x-0'}`} />
           </button>
         </header>
 
         <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />
 
         <main className="relative mx-auto flex h-[calc(100vh-4rem)] w-full max-w-xl flex-col gap-4 overflow-hidden px-4 py-4">
-          <section className={`transition-all duration-500 ease-in-out ${isAccepted ? 'fixed inset-0 z-20 h-screen w-screen rounded-none' : 'h-[250px] rounded-2xl'} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
+          <section className={`transition-all duration-500 ease-in-out ${isAccepted ? 'fixed inset-0 z-20 h-screen w-screen rounded-none' : isOnline ? 'h-[60vh] rounded-2xl' : 'h-[35vh] rounded-2xl'} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
-              <DriverMapLeaflet driver={driverLocation} pickup={displayPickup} dropoff={displayDropoff} followTrigger={followTrigger} />
+              <AppMap
+                mode="driver"
+                center={driverLocation ? [driverLocation.lat, driverLocation.lng] : displayPickup ? [displayPickup.lat, displayPickup.lng] : undefined}
+                centerBtn={followTrigger}
+                routePath={routePath.length > 1 ? routePath : undefined}
+                routeColor="#FF5500"
+                routeWeight={5}
+                markers={[
+                  ...(displayPickup ? [{ id: 'pickup', position: [displayPickup.lat, displayPickup.lng] as [number, number], color: '#16A34A', emoji: '●' }] : []),
+                  ...(displayDropoff ? [{ id: 'dropoff', position: [displayDropoff.lat, displayDropoff.lng] as [number, number], color: '#DC2626', emoji: '●' }] : []),
+                ]}
+              />
             </Suspense>
           </section>
 
@@ -808,9 +844,9 @@ export function DriverDashboard() {
             </div>
           </section>
 
-          {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-          {locationError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><p>Location permission is required.</p><button onClick={requestLocation} className="mt-2 font-bold underline">Enable location</button></div>}
-          {toast && <div className="rounded-xl bg-[#171717] px-4 py-3 text-center text-sm font-semibold text-white">{toast}</div>}
+          {!isAccepted && error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+          {!isAccepted && locationError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><p>Location permission is required.</p><button onClick={requestLocation} className="mt-2 font-bold underline">Enable location</button></div>}
+          {!isAccepted && toast && <div className="rounded-xl bg-[#171717] px-4 py-3 text-center text-sm font-semibold text-white">{toast}</div>}
           {!displayRide && <p className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gray-500 shadow-sm">{isOnline ? 'Waiting for nearby ride requests...' : 'Turn on Go Online to receive rides.'}</p>}
 
           {displayRide && !acceptedRide && <div className={`flex flex-col gap-3 transition-all duration-500 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
@@ -832,6 +868,15 @@ export function DriverDashboard() {
         </main>
 
         {acceptedRide && isAccepted && (
+          <div className="fixed inset-x-0 top-0 z-30 flex items-center gap-3 px-4 py-4 text-white drop-shadow-lg">
+            <button type="button" onClick={() => setIsAccepted(false)} aria-label="Minimize navigation" className="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-xl">←</button>
+            <div className="rounded-full bg-black/55 px-4 py-2 text-sm font-semibold backdrop-blur-sm">
+              Driving to pickup {routeDistanceKm ? `• ${routeDistanceKm} km` : ''} {routeEtaMin ? `• ${routeEtaMin} min` : ''}
+            </div>
+          </div>
+        )}
+
+        {acceptedRide && isAccepted && (
           <section className="fixed inset-x-0 bottom-0 z-30 rounded-t-3xl bg-white p-5 shadow-[0_-8px_30px_rgba(0,0,0,0.2)] transition-transform duration-500 ease-out">
             <button type="button" onClick={() => setIsAccepted(false)} aria-label="Minimize map" className="absolute right-4 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600">
               <span className="text-xl leading-none">×</span>
@@ -843,7 +888,7 @@ export function DriverDashboard() {
             </div>
             <div className="mt-5 flex flex-col gap-3">
               <button type="button" onClick={() => openRideNavigation(acceptedRide)} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white">Open Navigation</button>
-              <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl border-2 border-[#FF5500] bg-white font-bold text-[#FF5500] disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>
+              <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl border-2 border-green-500 bg-white font-bold text-green-600 disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>
             </div>
             <button type="button" onClick={() => void driverCancelRide(acceptedRide)} className="mt-4 w-full py-2 text-center text-sm text-gray-600 underline">Cancel Ride</button>
           </section>
