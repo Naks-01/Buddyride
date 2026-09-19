@@ -5,6 +5,7 @@ import { LockKeyhole } from 'lucide-react';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
 import { createRide, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
+import { supabase } from '../../lib/supabaseClient';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
@@ -67,7 +68,7 @@ function bearingBetween(from: { lat: number; lng: number }, to: { lat: number; l
 }
 
 export function PassengerDashboard() {
-  const { profile, signOut } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const navigate = useNavigate();
   const geocodeTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
@@ -415,11 +416,17 @@ export function PassengerDashboard() {
     setRequesting(true);
     setMessage('');
     try {
-      const passengerId = profile?.id;
-      console.log('PASSENGER ID:', passengerId);
-      if (!passengerId) {
-        throw new Error('You must be signed in before requesting a ride.');
+      const { data: { session } } = await supabase.auth.getSession();
+      console.log('DEBUG SESSION:', session);
+      console.log('DEBUG USER from context:', user);
+      const realUser = session?.user || user;
+      if (!realUser) {
+        setMessage('No session - please login again');
+        alert('No session - please login again');
+        return;
       }
+      const passengerId = realUser.id;
+      console.log('PASSENGER ID:', passengerId);
       const pickupPoint = { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' };
       const dropoffPoint = { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' };
       const rideRef = await createRide(
