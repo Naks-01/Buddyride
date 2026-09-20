@@ -1,15 +1,17 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.VITE_MAPBOX_TOKEN || '';
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  const mapboxToken = env.NEXT_PUBLIC_MAPBOX_TOKEN || env.VITE_MAPBOX_TOKEN || '';
 
-export default defineConfig({
-  base: '/',
-  define: {
-    'import.meta.env.NEXT_PUBLIC_MAPBOX_TOKEN': JSON.stringify(mapboxToken),
-  },
-  plugins: [
+  return {
+    base: '/',
+    define: {
+      'import.meta.env.NEXT_PUBLIC_MAPBOX_TOKEN': JSON.stringify(mapboxToken),
+    },
+    plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -45,18 +47,19 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
       },
     }),
-  ],
-  server: {
-    host: 'localhost',
-    port: 3000,
-    strictPort: false,
-  },
-  optimizeDeps: {
-    exclude: ['maplibre-gl'],
-  },
-  build: {
-    target: 'es2020', // maplibre-gl uses BigInt literals, which es2018 can't parse
-    chunkSizeWarningLimit: 1300,
-    outDir: 'dist',
-  },
+    ],
+    server: {
+      host: 'localhost',
+      port: 3000,
+      strictPort: false,
+    },
+    optimizeDeps: {
+      exclude: ['maplibre-gl'],
+    },
+    build: {
+      target: 'es2020', // maplibre-gl uses BigInt literals, which es2018 can't parse
+      chunkSizeWarningLimit: 1300,
+      outDir: 'dist',
+    },
+  };
 });

@@ -26,6 +26,10 @@ import type { PassengerMapMarker } from '../../components/Map/PassengerMap3D';
 const PassengerMap3D = lazy(() => import('../../components/Map/PassengerMap3D'));
 
 const formatR = (n: number) => `R${Number(n || 0).toFixed(2)}`;
+const BACKUP_POOL_RIDES = [
+  { id: 'pool-go', name: 'Buddy Pool', fare: 25, eta: '5 min away', seats: 2 },
+  { id: 'pool-ride', name: 'Buddy Pool Plus', fare: 32, eta: '7 min away', seats: 3 },
+];
 
 // "Helen Joseph St, Seshego Ext 6, Polokwane, 0742, South Africa" -> "Helen Joseph St, Seshego"
 function shortAddress(full: string): string {
@@ -152,6 +156,8 @@ export function PassengerDashboard() {
   const total = estimatedFare * categoryMultiplier;
   const roundedTotal = Math.round(total * 100) / 100;
   const ridePrice = total - BOOKING_FEE - extrasFee;
+  const displayedFare = fare ?? totalFare ?? baseFare ?? (roundedTotal > 0 ? roundedTotal : BACKUP_POOL_RIDES[0].fare);
+  const usingBackupPoolFare = fare == null && totalFare == null && baseFare == null && roundedTotal <= 0;
 
   const reverseGeocode = async (location: { lat: number; lng: number }) => {
     const fallback = searchPolokwanePlaces(`${location.lat.toFixed(3)} ${location.lng.toFixed(3)}`)[0];
@@ -1017,7 +1023,7 @@ export function PassengerDashboard() {
               )}
               <div className="bg-white border border-gray-200 rounded-lg py-2 px-3 mb-3 text-sm text-gray-700">
                 {tripDistanceKm != null && <span>Distance: {tripDistanceKm.toFixed(1)} km • </span>}
-                <span>Fare: {formatR((baseFare ?? totalFare ?? fare ?? 0) + pickupWaitFare + waitingFare)}</span>
+                <span>Fare: {formatR(displayedFare + pickupWaitFare + waitingFare)}{usingBackupPoolFare ? ' (pool estimate)' : ''}</span>
               </div>
               {rideStatus === 'driver_arrived' && (
                 <div className="mb-3 rounded-xl border-2 border-green-500 bg-green-100 px-4 py-3 text-center animate-pulse">
@@ -1211,7 +1217,16 @@ export function PassengerDashboard() {
 
           {!rideId && !priceLoading && priceError && (
             <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-center text-sm font-semibold text-red-700">
-              {priceError}
+              <p>{priceError}</p>
+              <p className="mt-2 text-xs font-normal text-gray-700">Backup pool rides are available:</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {BACKUP_POOL_RIDES.map((poolRide) => (
+                  <div key={poolRide.id} className="rounded-lg bg-white p-2 text-left text-gray-800">
+                    <p className="font-bold">{poolRide.name} - {formatR(poolRide.fare)}</p>
+                    <p className="text-xs text-gray-500">{poolRide.seats} seats - {poolRide.eta}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1315,7 +1330,7 @@ export function PassengerDashboard() {
 
           {isCompleted && (
             <div className="text-center mb-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg py-3 px-3">
-              <p className="mb-2">Trip Complete. Pay {formatR(fare ?? 0)} cash to driver</p>
+              <p className="mb-2">Trip Complete. Pay {formatR(displayedFare)} cash to driver</p>
               {driverId && !rated && (
                 <button type="button" onClick={() => setShowRating(true)} className="mb-2 rounded-lg bg-yellow-500 px-4 py-2 font-bold text-white">
                   Rate your driver
@@ -1329,7 +1344,7 @@ export function PassengerDashboard() {
               >
                 {rated ? 'Thanks for rating!' : 'Rate Driver'}
               </button>
-              {rideId && <TripReceipt rideId={rideId} fare={fare ?? 0} driverId={driverId} paymentMethod={paymentMethod} />}
+              {rideId && <TripReceipt rideId={rideId} fare={displayedFare} driverId={driverId} paymentMethod={paymentMethod} />}
             </div>
           )}
           {message && (

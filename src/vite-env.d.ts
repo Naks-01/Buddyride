@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_ANON_KEY: string;
   readonly VITE_OSRM_URL: string;
   readonly VITE_NOMINATIM_URL: string;
+  readonly VITE_MAPBOX_TOKEN: string;
+  readonly NEXT_PUBLIC_MAPBOX_TOKEN: string;
 }
 
 interface ImportMeta {
