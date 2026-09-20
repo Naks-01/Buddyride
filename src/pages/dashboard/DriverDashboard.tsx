@@ -389,7 +389,14 @@ export function DriverDashboard() {
 
   useEffect(() => {
     const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
-    if (!acceptedRide || !driverLocation || !pickup) {
+    const currentStop = acceptedRide?.stops?.[acceptedRide.currentStopIndex ?? 1];
+    const destination = acceptedRide?.status === 'trip_started'
+      ? currentStop && currentStop.lat != null && currentStop.lng != null
+        ? { lat: currentStop.lat, lng: currentStop.lng }
+        : acceptedRide ? getLocationCoordinates(acceptedRide.dropoff, acceptedRide.dropoffLatLng) : null
+      : pickup;
+    const origin = acceptedRide?.status === 'trip_started' ? pickup : driverLocation;
+    if (!acceptedRide || !origin || !destination) {
       setRoutePath([]);
       setRouteDistanceM(null);
       setRouteDurationSec(null);
@@ -397,9 +404,10 @@ export function DriverDashboard() {
     }
 
     const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 6000);
     const loadRoadRoute = async () => {
       try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${driverLocation.lng},${driverLocation.lat};${pickup.lng},${pickup.lat}?overview=full&geometries=geojson`;
+        const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`;
         const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) throw new Error(`OSRM request failed with ${response.status}`);
         const data = await response.json() as { routes?: Array<{ distance?: number; duration?: number; geometry?: { coordinates?: Array<[number, number]> } }> };
@@ -412,12 +420,15 @@ export function DriverDashboard() {
       } catch (routeError) {
         if ((routeError as Error).name === 'AbortError') return;
         console.error('Failed to load road route:', routeError);
-        setRoutePath([[driverLocation.lat, driverLocation.lng], [pickup.lat, pickup.lng]]);
+        setRoutePath([[origin.lat, origin.lng], [destination.lat, destination.lng]]);
       }
     };
     void loadRoadRoute();
-    return () => controller.abort();
-  }, [acceptedRide?.id, acceptedRide?.pickup, acceptedRide?.pickupLatLng, driverLocation?.lat, driverLocation?.lng]);
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.pickup, acceptedRide?.pickupLatLng, acceptedRide?.dropoff, acceptedRide?.dropoffLatLng, acceptedRide?.currentStopIndex, acceptedRide?.stops, driverLocation?.lat, driverLocation?.lng]);
 
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
@@ -764,6 +775,11 @@ export function DriverDashboard() {
   const hasActiveOverlay = Boolean(acceptedRide) || rides.length > 0;
   const isActiveNav = Boolean(acceptedRide && ACTIVE_NAV_STATUSES.has(acceptedRide.status ?? ''));
   const isTripPhase = acceptedRide?.status === 'trip_started';
+  const mapContainerClass = acceptedRide?.status === 'driver_assigned' || acceptedRide?.status === 'driver_en_route' || acceptedRide?.status === 'driver_arrived' || acceptedRide?.status === 'trip_started'
+    ? 'fixed inset-0 h-screen w-screen z-20 rounded-none'
+    : isOnline
+      ? 'h-[70vh] w-full rounded-2xl'
+      : 'h-[40vh] w-full rounded-2xl';
   const navTarget = acceptedRide ? getCurrentNavTarget(acceptedRide) : null;
   const routeDistanceKm = routeDistanceM != null ? (routeDistanceM / 1000).toFixed(1) : null;
   const routeEtaMin = routeDurationSec != null ? Math.max(1, Math.round(routeDurationSec / 60)) : null;
@@ -807,14 +823,14 @@ export function DriverDashboard() {
           <button type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open driver menu" className="flex h-10 w-10 items-center justify-center rounded-lg text-[#171717]"><Menu size={26} /></button>
           <span className="text-lg font-bold">{isOnline ? 'Online' : 'Offline'}</span>
           <button type="button" role="switch" aria-checked={isOnline} aria-label={isOnline ? 'Go offline' : 'Go online'} onClick={() => (isOnline ? void handleGoOffline() : void toggleOnline())} className={`relative h-9 w-16 rounded-full p-1 transition-all duration-300 ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}>
-            <span className={`absolute left-1 top-1 h-7 w-7 rounded-full bg-white shadow transition-transform duration-300 ${isOnline ? 'translate-x-6' : 'translate-x-0'}`} />
+            <span className={`absolute left-1 top-1 h-7 w-7 rounded-full bg-white shadow transition-transform duration-300 ${isOnline ? 'translate-x-7' : 'translate-x-0'}`} />
           </button>
         </header>
 
         <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />
 
         <main className="relative mx-auto flex h-[calc(100vh-4rem)] w-full max-w-xl flex-col gap-4 overflow-hidden px-4 py-4">
-          <section className={`transition-all duration-500 ease-in-out ${isAccepted ? 'fixed inset-0 z-20 h-screen w-screen rounded-none' : isOnline ? 'h-[60vh] rounded-2xl' : 'h-[35vh] rounded-2xl'} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
+          <section className={`transition-all duration-500 ease-in-out ${mapContainerClass} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
               <AppMap
                 mode="driver"
