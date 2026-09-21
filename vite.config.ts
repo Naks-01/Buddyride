@@ -3,10 +3,14 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
-  loadEnv(mode, process.cwd(), '');
+  const env = loadEnv(mode, process.cwd(), '');
 
   return {
     base: '/',
+    define: {
+      'process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN': JSON.stringify(env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ''),
+      'process.env.NEXT_PUBLIC_MAPBOX_TOKEN': JSON.stringify(env.NEXT_PUBLIC_MAPBOX_TOKEN ?? ''),
+    },
     plugins: [
     react(),
     VitePWA({

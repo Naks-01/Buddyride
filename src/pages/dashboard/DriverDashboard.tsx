@@ -20,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
+import { MAPBOX_TOKEN } from '../../lib/mapbox';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
@@ -407,8 +408,12 @@ export function DriverDashboard() {
     const timeoutId = window.setTimeout(() => controller.abort(), 6000);
     const loadRoadRoute = async () => {
       try {
-        const token = import.meta.env.VITE_MAPBOX_TOKEN;
-        if (!token) throw new Error('Mapbox token is missing');
+        const token = MAPBOX_TOKEN;
+        if (!token) {
+          console.error('Mapbox token missing');
+          setRoutePath([]);
+          return;
+        }
         const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&access_token=${encodeURIComponent(token)}`;
         const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) throw new Error(`Mapbox Directions request failed with ${response.status}`);
@@ -834,13 +839,15 @@ export function DriverDashboard() {
         <main className="relative mx-auto flex h-[calc(100vh-4rem)] w-full max-w-xl flex-col gap-4 overflow-hidden px-4 py-4">
           <section className={`transition-all duration-500 ease-in-out ${mapContainerClass} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
-              <DriverMapMapbox
-                driver={driverLocation}
-                pickup={displayPickup}
-                dropoff={displayDropoff}
-                followTrigger={followTrigger}
-                routePath={routePath}
-              />
+              {MAPBOX_TOKEN && (
+                <DriverMapMapbox
+                  driver={driverLocation}
+                  pickup={displayPickup}
+                  dropoff={displayDropoff}
+                  followTrigger={followTrigger}
+                  routePath={routePath}
+                />
+              )}
             </Suspense>
           </section>
 

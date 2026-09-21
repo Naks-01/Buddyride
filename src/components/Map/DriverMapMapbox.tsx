@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { initMapbox, MAPBOX_TOKEN } from '../../lib/mapbox';
 
 type Coordinates = { lat: number; lng: number };
 
@@ -19,14 +20,16 @@ export default function DriverMapMapbox({ driver, pickup, dropoff, routePath = [
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const markerRefs = useRef<mapboxgl.Marker[]>([]);
   const [isFullMap, setIsFullMap] = useState(false);
-  const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
   const center = driver ? [driver.lng, driver.lat] as [number, number] : pickup ? [pickup.lng, pickup.lat] as [number, number] : DEFAULT_CENTER;
 
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current || !MAPBOX_TOKEN) return;
-    mapboxgl.accessToken = MAPBOX_TOKEN;
-    console.log('Mapbox token exists:', !!MAPBOX_TOKEN);
-    const map = new mapboxgl.Map({
+    if (!MAPBOX_TOKEN) {
+      initMapbox();
+      return;
+    }
+    if (!mapContainerRef.current || mapRef.current) return;
+    const mapbox = initMapbox();
+    const map = new mapbox.Map({
       container: mapContainerRef.current,
       style: 'mapbox://styles/mapbox/streets-v12',
       center,
