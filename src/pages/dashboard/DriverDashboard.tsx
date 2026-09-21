@@ -25,7 +25,7 @@ import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
 
 const DriverMapLeaflet = lazy(() => import('../../components/Map/DriverMapLeaflet'));
-import AppMap from '../../components/Map/AppMap';
+import DriverMapMapbox from '../../components/Map/DriverMapMapbox';
 import {
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
@@ -407,9 +407,11 @@ export function DriverDashboard() {
     const timeoutId = window.setTimeout(() => controller.abort(), 6000);
     const loadRoadRoute = async () => {
       try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`;
+        const token = import.meta.env.VITE_MAPBOX_TOKEN;
+        if (!token) throw new Error('Mapbox token is missing');
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&access_token=${encodeURIComponent(token)}`;
         const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) throw new Error(`OSRM request failed with ${response.status}`);
+        if (!response.ok) throw new Error(`Mapbox Directions request failed with ${response.status}`);
         const data = await response.json() as { routes?: Array<{ distance?: number; duration?: number; geometry?: { coordinates?: Array<[number, number]> } }> };
         const route = data.routes?.[0];
         const coordinates = route?.geometry?.coordinates ?? [];
@@ -832,17 +834,12 @@ export function DriverDashboard() {
         <main className="relative mx-auto flex h-[calc(100vh-4rem)] w-full max-w-xl flex-col gap-4 overflow-hidden px-4 py-4">
           <section className={`transition-all duration-500 ease-in-out ${mapContainerClass} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
-              <AppMap
-                mode="driver"
-                center={driverLocation ? [driverLocation.lat, driverLocation.lng] : displayPickup ? [displayPickup.lat, displayPickup.lng] : undefined}
-                centerBtn={followTrigger}
-                routePath={routePath.length > 1 ? routePath : undefined}
-                routeColor="#FF5500"
-                routeWeight={5}
-                markers={[
-                  ...(displayPickup ? [{ id: 'pickup', position: [displayPickup.lat, displayPickup.lng] as [number, number], color: '#16A34A', emoji: '●' }] : []),
-                  ...(displayDropoff ? [{ id: 'dropoff', position: [displayDropoff.lat, displayDropoff.lng] as [number, number], color: '#DC2626', emoji: '●' }] : []),
-                ]}
+              <DriverMapMapbox
+                driver={driverLocation}
+                pickup={displayPickup}
+                dropoff={displayDropoff}
+                followTrigger={followTrigger}
+                routePath={routePath}
               />
             </Suspense>
           </section>

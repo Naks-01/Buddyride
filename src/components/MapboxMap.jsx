@@ -6,7 +6,7 @@ export default function MapboxMap() {
   const mapRef = useRef(null);
 
   useEffect(() => {
-    const token = import.meta.env.VITE_MAPBOX_TOKEN || import.meta.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    const token = import.meta.env.VITE_MAPBOX_TOKEN;
     if (!token || !mapRef.current) return undefined;
 
     mapboxgl.accessToken = token;
