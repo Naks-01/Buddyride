@@ -18,7 +18,7 @@ export default function MapboxMap({ center = [28.0473, -26.2041] }: { center?: [
   }, [center]);
 
   if (!MAPBOX_TOKEN) {
-    return <div className="bg-yellow-100 p-4">Mapbox token missing - add it to .env.local</div>;
+    return <div>Map loading...</div>;
   }
-  return <div ref={mapContainer} style={{ width: '100%', height: '400px' }} />;
+  return <div ref={mapContainer} style={{ width: '100%', height: '400px', borderRadius: '12px' }} />;
 }

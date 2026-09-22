@@ -83,23 +83,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    // Safety net: never let the app hang on the splash/loading screen if auth is slow.
-    const safetyTimer = setTimeout(() => setLoading(false), 2000);
+    let mounted = true;
+    const safetyTimer = setTimeout(() => {
+      if (mounted) setLoading(false);
+    }, 2500);
 
     void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
       setUser(session?.user ?? null);
       void loadProfile();
+    }).finally(() => {
+      if (mounted) setLoading(false);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        clearTimeout(safetyTimer);
-        setUser(session?.user ?? null);
-        void loadProfile();
+        if (mounted) {
+          setUser(session?.user ?? null);
+          setLoading(false);
+        }
       },
     );
 
     return () => {
+      mounted = false;
       clearTimeout(safetyTimer);
       listener.subscription.unsubscribe();
     };

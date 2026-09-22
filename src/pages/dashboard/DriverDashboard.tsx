@@ -20,7 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
-import { MAPBOX_TOKEN } from '../../lib/mapbox';
+import { initMapbox, MAPBOX_TOKEN } from '../../lib/mapbox';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
@@ -408,7 +408,7 @@ export function DriverDashboard() {
     const timeoutId = window.setTimeout(() => controller.abort(), 6000);
     const loadRoadRoute = async () => {
       try {
-        const token = MAPBOX_TOKEN;
+        const token = initMapbox().accessToken;
         if (!token) {
           console.error('Mapbox token missing');
           setRoutePath([]);

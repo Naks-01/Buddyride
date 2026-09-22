@@ -1,16 +1,9 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
-
-  return {
+export default defineConfig({
     base: '/',
-    define: {
-      'process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN': JSON.stringify(env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ''),
-      'process.env.NEXT_PUBLIC_MAPBOX_TOKEN': JSON.stringify(env.NEXT_PUBLIC_MAPBOX_TOKEN ?? ''),
-    },
     plugins: [
     react(),
     VitePWA({
@@ -50,8 +43,8 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       host: 'localhost',
-      port: 3000,
-      strictPort: false,
+      port: 5173,
+      strictPort: true,
     },
     optimizeDeps: {
       exclude: ['maplibre-gl'],
@@ -61,5 +54,4 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1300,
       outDir: 'dist',
     },
-  };
 });
