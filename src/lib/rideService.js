@@ -102,11 +102,17 @@ export async function acceptRide(rideId, driverData = {}) {
 
 // ARRIVED - driver is at the pickup point. Also notifies the passenger.
 export async function markArrived(rideId, passengerId, extra = {}) {
-  await updateDoc(doc(db, 'rides', rideId), {
+  const payload = {
     status: RIDE_STATUS.ARRIVED,
     arrivedAt: serverTimestamp(),
     ...extra,
-  });
+  };
+
+  await Promise.allSettled([
+    updateDoc(doc(db, 'rides', rideId), payload),
+    updateDoc(doc(db, 'ride_requests', rideId), payload),
+  ]);
+
   try {
     await addDoc(collection(db, 'notifications'), {
       rideId,
@@ -147,12 +153,19 @@ export async function completeRide(rideId, extra = {}) {
 
 // CANCELLED - ride cancelled by either party.
 export async function cancelRide(rideId, extra = {}) {
-  await updateDoc(doc(db, 'rides', rideId), {
+  const payload = {
     status: RIDE_STATUS.CANCELLED,
     cancelledAt: serverTimestamp(),
     cancelReason: extra.cancelReason ?? extra.cancellationReason ?? null,
+    cancelled_by: extra.cancelledBy ?? extra.cancelled_by ?? null,
+    cancelledBy: extra.cancelledBy ?? extra.cancelled_by ?? null,
     ...extra,
-  });
+  };
+
+  await Promise.allSettled([
+    updateDoc(doc(db, 'rides', rideId), payload),
+    updateDoc(doc(db, 'ride_requests', rideId), payload),
+  ]);
 }
 
 // Generic field patch for in-trip updates (waiting fares, live driver location, etc.).

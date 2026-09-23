@@ -2,6 +2,7 @@ import 'leaflet/dist/leaflet.css';
 import './styles/global.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { ThemeProvider } from 'next-themes';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
 import { AuthProvider } from './context/AuthContext';
@@ -23,8 +24,10 @@ console.log('AUTO RELOAD ADDED');
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <AuthProvider>
-      <App />
-    </AuthProvider>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );

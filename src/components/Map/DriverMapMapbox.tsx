@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { useTheme } from 'next-themes';
 import { initMapbox, MAPBOX_TOKEN } from '../../lib/mapbox';
 
 type Coordinates = { lat: number; lng: number };
@@ -19,6 +20,7 @@ export default function DriverMapMapbox({ driver, pickup, dropoff, routePath = [
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const markerRefs = useRef<mapboxgl.Marker[]>([]);
+  const { resolvedTheme } = useTheme();
   const [isFullMap, setIsFullMap] = useState(false);
   const center = driver ? [driver.lng, driver.lat] as [number, number] : pickup ? [pickup.lng, pickup.lat] as [number, number] : DEFAULT_CENTER;
 
@@ -73,6 +75,15 @@ export default function DriverMapMapbox({ driver, pickup, dropoff, routePath = [
     if (map.isStyleLoaded()) updateRoute();
     else map.once('load', updateRoute);
   }, [routePath]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const nextStyle = resolvedTheme === 'dark'
+      ? 'mapbox://styles/mapbox/dark-v11'
+      : 'mapbox://styles/mapbox/streets-v12';
+    map.setStyle(nextStyle);
+  }, [resolvedTheme]);
 
   useEffect(() => {
     const map = mapRef.current;

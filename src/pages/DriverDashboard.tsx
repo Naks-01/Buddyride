@@ -60,7 +60,11 @@ export default function DriverDashboard() {
 
   const handleArrived = async () => {
     if (!acceptedRide) return
-    await updateDoc(doc(db, 'rides', acceptedRide.id), { status: 'arrived' })
+    const payload = { status: 'arrived' }
+    await Promise.allSettled([
+      updateDoc(doc(db, 'rides', acceptedRide.id), payload),
+      updateDoc(doc(db, 'ride_requests', acceptedRide.id), payload),
+    ])
     setAcceptedRide({ ...acceptedRide, status: 'arrived' })
   }
 

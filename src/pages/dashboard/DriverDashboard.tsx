@@ -24,6 +24,7 @@ import { initMapbox, MAPBOX_TOKEN } from '../../lib/mapbox';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
+import ThemeToggle from '../../components/ThemeToggle';
 
 const DriverMapLeaflet = lazy(() => import('../../components/Map/DriverMapLeaflet'));
 import DriverMapMapbox from '../../components/Map/DriverMapMapbox';
@@ -826,12 +827,15 @@ export function DriverDashboard() {
           </div>
         )}
 
-        <header className={`relative z-30 flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm transition-all duration-300 ease-in-out ${isAccepted ? '-translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
-          <button type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open driver menu" className="flex h-10 w-10 items-center justify-center rounded-lg text-[#171717]"><Menu size={26} /></button>
-          <span className="text-lg font-bold">{isOnline ? 'Online' : 'Offline'}</span>
-          <button type="button" role="switch" aria-checked={isOnline} aria-label={isOnline ? 'Go offline' : 'Go online'} onClick={() => (isOnline ? void handleGoOffline() : void toggleOnline())} className={`relative h-9 w-16 rounded-full p-1 transition-all duration-300 ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}>
-            <span className={`absolute left-1 top-1 h-7 w-7 rounded-full bg-white shadow transition-transform duration-300 ${isOnline ? 'translate-x-7' : 'translate-x-0'}`} />
-          </button>
+        <header className={`relative z-30 flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm transition-all duration-300 ease-in-out dark:bg-zinc-900 ${isAccepted ? '-translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
+          <button type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open driver menu" className="flex h-10 w-10 items-center justify-center rounded-lg text-[#171717] dark:text-white"><Menu size={26} /></button>
+          <div className="flex items-center gap-3">
+            <span className="text-lg font-bold text-gray-900 dark:text-white">{isOnline ? 'Online' : 'Offline'}</span>
+            <button type="button" role="switch" aria-checked={isOnline} aria-label={isOnline ? 'Go offline' : 'Go online'} onClick={() => (isOnline ? void handleGoOffline() : void toggleOnline())} className={`relative h-9 w-16 rounded-full p-1 transition-all duration-300 ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}>
+              <span className={`absolute left-1 top-1 h-7 w-7 rounded-full bg-white shadow transition-transform duration-300 ${isOnline ? 'translate-x-7' : 'translate-x-0'}`} />
+            </button>
+            <ThemeToggle />
+          </div>
         </header>
 
         <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />
@@ -851,16 +855,16 @@ export function DriverDashboard() {
             </Suspense>
           </section>
 
-          <section className={`rounded-2xl bg-white p-5 shadow-sm transition-all duration-500 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
+          <section className={`rounded-2xl bg-white p-5 shadow-sm transition-all duration-500 dark:bg-zinc-900 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-center text-[32px] font-black leading-none text-[#171717]">R{displayFare.toFixed(2)}</p>
+                <p className="text-center text-[32px] font-black leading-none text-[#171717] dark:text-white">R{displayFare.toFixed(2)}</p>
                 <div className="mt-5 space-y-4">
-                  <div className="flex items-start gap-3"><MapPin size={22} className="mt-0.5 shrink-0 text-green-600" /><p className="text-sm text-gray-700"><span className="font-bold">Pickup</span> • {displayPickupLabel}</p></div>
-                  <div className="flex items-start gap-3"><MapPin size={22} className="mt-0.5 shrink-0 text-red-600" /><p className="text-sm text-gray-700"><span className="font-bold">Dropoff</span> • {displayDropoffLabel}</p></div>
+                  <div className="flex items-start gap-3"><MapPin size={22} className="mt-0.5 shrink-0 text-green-600" /><p className="text-sm text-gray-700 dark:text-gray-200"><span className="font-bold">Pickup</span> • {displayPickupLabel}</p></div>
+                  <div className="flex items-start gap-3"><MapPin size={22} className="mt-0.5 shrink-0 text-red-600" /><p className="text-sm text-gray-700 dark:text-gray-200"><span className="font-bold">Dropoff</span> • {displayDropoffLabel}</p></div>
                 </div>
               </div>
-              <div className="flex w-24 shrink-0 flex-col items-center gap-1 text-center"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-orange-600"><UserRound size={20} /></div><p className="text-[11px] font-semibold leading-tight text-gray-600">Passenger • {passengerName}</p></div>
+              <div className="flex w-24 shrink-0 flex-col items-center gap-1 text-center"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-orange-600"><UserRound size={20} /></div><p className="text-[11px] font-semibold leading-tight text-gray-600 dark:text-gray-300">Passenger • {passengerName}</p></div>
             </div>
           </section>
 

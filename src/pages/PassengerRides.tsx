@@ -74,7 +74,15 @@ export function PassengerRides() {
 
   const handleCancel = async () => {
     if (rideId) {
-      await updateDoc(doc(db, 'rides', rideId), { status: 'cancelled' })
+      const payload = {
+        status: 'cancelled',
+        cancelled_by: 'passenger',
+        cancelledBy: 'passenger',
+      }
+      await Promise.allSettled([
+        updateDoc(doc(db, 'rides', rideId), payload),
+        updateDoc(doc(db, 'ride_requests', rideId), payload),
+      ])
     }
     setRideStatus('idle')
     setRideId(null)
