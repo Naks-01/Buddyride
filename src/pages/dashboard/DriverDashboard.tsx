@@ -90,9 +90,6 @@ type RideRequest = {
 
 type Coordinates = { lat: number; lng: number };
 
-// Driver must be within this radius of the pickup pin to confirm arrival (accounts for GPS drift).
-const ARRIVAL_RADIUS_KM = 0.2;
-
 function toMillis(value: unknown): number | null {
   if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') {
     return value.toMillis();
@@ -128,6 +125,8 @@ export function DriverDashboard() {
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [toast, setToast] = useState('');
   const [checkingArrival, setCheckingArrival] = useState(false);
+  const lastArrivalCheckAtRef = useRef(0);
+  const arrivedHoldUntilRef = useRef(0);
   const [followTrigger, setFollowTrigger] = useState(0);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
@@ -387,7 +386,13 @@ export function DriverDashboard() {
             tipToastRef.current = `${acceptedRide.id}:${tipAmount}`;
             setError(`You received R${tipAmount.toFixed(2)} tip!`);
           }
-          setAcceptedRide((prev) => (prev ? { ...prev, ...data } : prev));
+          setAcceptedRide((prev) => {
+            if (!prev) return prev;
+            const keepArrived = prev.id === acceptedRide.id
+              && Date.now() < arrivedHoldUntilRef.current
+              && data.status !== 'trip_started';
+            return keepArrived ? { ...prev, ...data, status: 'driver_arrived' } : { ...prev, ...data };
+          });
         },
         (err: unknown) => {
           console.error('Failed to load accepted ride:', err);
@@ -468,6 +473,9 @@ export function DriverDashboard() {
   };
 
   const markArrivedAtPickup = async (ride: RideRequest) => {
+    const now = Date.now();
+    if (now - lastArrivalCheckAtRef.current < 3000) return;
+    lastArrivalCheckAtRef.current = now;
     setError('');
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
     setCheckingArrival(true);
@@ -479,12 +487,14 @@ export function DriverDashboard() {
       return;
     }
     const distanceKm = pickup ? calcDistance(location.lat, location.lng, pickup.lat, pickup.lng) : null;
-    if (distanceKm != null && distanceKm > ARRIVAL_RADIUS_KM) {
-      setError(`You must be within ${ARRIVAL_RADIUS_KM * 1000}m of the pickup point to confirm arrival (currently ${(distanceKm * 1000).toFixed(0)}m away).`);
+    const distanceToPickup = distanceKm == null ? null : distanceKm * 1000;
+    if (distanceToPickup != null && distanceToPickup >= 100) {
+      setError(`You must be within 100m of the pickup point to confirm arrival (currently ${distanceToPickup.toFixed(0)}m away).`);
       return;
     }
 
     // Update local state immediately so the Start Trip button appears without waiting on the snapshot round-trip.
+    arrivedHoldUntilRef.current = Date.now() + 5000;
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'driver_arrived', arrivedAt: Date.now() } : prev));
     setUpdatingStatus(true);
     try {
