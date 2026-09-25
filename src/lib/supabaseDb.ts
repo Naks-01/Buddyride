@@ -102,8 +102,9 @@ function rowSnapshot(row: Row | null): DocumentSnapshot {
   };
 }
 
-async function read(source: any) {
+async function read(source: any, signal?: AbortSignal) {
   let request: any = supabase.from(source.table).select('*');
+  if (signal) request = request.abortSignal(signal);
   for (const constraint of source.constraints ?? []) {
     if (constraint.field) request = request.eq(constraint.field, constraint.value);
     if (constraint.orderBy) request = request.order(constraint.orderBy.field, { ascending: constraint.orderBy.direction === 'asc' });
@@ -120,8 +121,8 @@ export async function getDoc(reference: any): Promise<DocumentSnapshot> {
   return rowSnapshot(data);
 }
 
-export async function getDocs(source: any): Promise<QuerySnapshot> {
-  const rows = await read(source);
+export async function getDocs(source: any, options?: { signal?: AbortSignal }): Promise<QuerySnapshot> {
+  const rows = await read(source, options?.signal);
   return { docs: rows.map((row: Row) => rowSnapshot(row)), empty: rows.length === 0, size: rows.length };
 }
 

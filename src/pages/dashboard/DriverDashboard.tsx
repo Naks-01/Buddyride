@@ -185,10 +185,16 @@ export function DriverDashboard() {
   }, []);
 
   useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading || !user?.id) return;
+    const controller = new AbortController();
+    let active = true;
+
     const loadTodayEarnings = async () => {
       try {
-        const snapshot = await getDocs(query(collection(db, 'rides'), where('driverId', '==', user.uid), where('status', '==', 'completed')));
+        const snapshot = await getDocs(
+          query(collection(db, 'rides'), where('driverId', '==', user.id), where('status', '==', 'completed')),
+          { signal: controller.signal },
+        );
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
         const total = snapshot.docs.reduce((sum, rideSnapshot) => {
@@ -204,13 +210,21 @@ export function DriverDashboard() {
           if (!completedAt || Number.isNaN(completedAt.getTime()) || completedAt < startOfToday) return sum;
           return sum + Number(data.fare ?? data.totalFare ?? data.price ?? data.total_fare ?? 0);
         }, 0);
-        setTodayEarnings(total);
+        if (active && !controller.signal.aborted) setTodayEarnings(total);
       } catch (earningsError) {
+        if (controller.signal.aborted) return;
         console.error('Failed to load today earnings:', earningsError);
       }
     };
     void loadTodayEarnings();
-  }, [authLoading, user]);
+    const intervalId = window.setInterval(() => void loadTodayEarnings(), 5000);
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [authLoading, user?.id]);
 
   useEffect(() => {
     if (authLoading) return;
