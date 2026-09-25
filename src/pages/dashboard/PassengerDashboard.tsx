@@ -5,7 +5,7 @@ import { LockKeyhole } from 'lucide-react';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
 import { createRide, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
-import { supabase } from '../../lib/supabaseClient';
+import { supabase } from '../../lib/supabase';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
@@ -38,8 +38,9 @@ function shortAddress(full: string): string {
   return parts.slice(0, 2).join(', ');
 }
 
-const ACTIVE_TRIP_STATUSES = ['searching', 'driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started'];
+const ACTIVE_TRIP_STATUSES = ['pending', 'searching', 'driver_assigned', 'driver_en_route', 'driver_arrived', 'trip_started'];
 const STATUS_BANNER: Record<string, string> = {
+  pending: 'Looking for a driver...',
   searching: 'Looking for a driver...',
   driver_assigned: 'Driver assigned - your driver is coming',
   driver_en_route: 'Driver en route - on the way to you',
@@ -76,6 +77,7 @@ export function PassengerDashboard() {
   const navigate = useNavigate();
   const geocodeTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
+  const requestingRef = useRef(false);
   const lastGeocodedLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const autoConfirmMapPinRef = useRef(false);
   const [requesting, setRequesting] = useState(false);
@@ -162,7 +164,7 @@ export function PassengerDashboard() {
   const reverseGeocode = async (location: { lat: number; lng: number }) => {
     const fallback = searchPolokwanePlaces(`${location.lat.toFixed(3)} ${location.lng.toFixed(3)}`)[0];
     try {
-      const nominatimUrl = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
+      const nominatimUrl = process.env.NEXT_PUBLIC_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
       const response = await fetch(
         `${nominatimUrl}/reverse?format=json&lat=${location.lat}&lon=${location.lng}`
       );
@@ -404,6 +406,7 @@ export function PassengerDashboard() {
   };
 
   const requestRide = async () => {
+    if (requestingRef.current) return;
     if (stops.some((stop) => stop.lat == null || stop.lng == null)) {
       setMessage('Set a location for every stop before requesting a ride.');
       return;
@@ -414,6 +417,7 @@ export function PassengerDashboard() {
       setMessage('Tell us what you are sending and the recipient name + phone number.');
       return;
     }
+    requestingRef.current = true;
     setRequesting(true);
     setMessage('');
     try {
@@ -427,7 +431,18 @@ export function PassengerDashboard() {
         return;
       }
       const passengerId = realUser.id;
-      console.log('PASSENGER ID:', passengerId);
+      const { data: existingPendingRide, error: pendingRideError } = await supabase
+        .from('rides')
+        .select('id')
+        .eq('passenger_id', passengerId)
+        .eq('status', 'pending')
+        .limit(1)
+        .maybeSingle();
+      if (pendingRideError) throw pendingRideError;
+      if (existingPendingRide) {
+        setMessage('You already have a ride request waiting for a driver.');
+        return;
+      }
       const pickupPoint = { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' };
       const dropoffPoint = { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' };
       const rideRef = await createRide(
@@ -453,7 +468,7 @@ export function PassengerDashboard() {
       setTripType(mode);
       setRideCreatedAt(Date.now());
       setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
-      setRideStatus('searching');
+      setRideStatus('pending');
       setDriverLocation(null);
       setTripPickupLocation({ lat: pickup.lat!, lng: pickup.lng! });
       setTripDropoffLocation({ lat: dropoff.lat!, lng: dropoff.lng! });
@@ -472,6 +487,7 @@ export function PassengerDashboard() {
       setMessage(errorMessage);
       alert('Real error: ' + errorMessage);
     } finally {
+      requestingRef.current = false;
       setRequesting(false);
     }
   };

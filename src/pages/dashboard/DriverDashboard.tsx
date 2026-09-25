@@ -278,13 +278,11 @@ export function DriverDashboard() {
       },
       (err: any) => {
         console.error('REAL RIDE REQUEST READ ERROR:', JSON.stringify(err, null, 2));
-        setError(err?.message || 'Failed to load ride requests.');
       },
     );
     return () => unsubscribe();
     } catch (err) {
       console.error('Failed to subscribe to ride requests:', err);
-      setError('Failed to load ride requests.');
       return undefined;
     }
   }, [authLoading, user, isOnline]);
@@ -868,10 +866,9 @@ export function DriverDashboard() {
             </div>
           </section>
 
-          {!isAccepted && error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
           {!isAccepted && locationError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><p>Location permission is required.</p><button onClick={requestLocation} className="mt-2 font-bold underline">Enable location</button></div>}
           {!isAccepted && toast && <div className="rounded-xl bg-[#171717] px-4 py-3 text-center text-sm font-semibold text-white">{toast}</div>}
-          {!displayRide && <p className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gray-500 shadow-sm">{isOnline ? 'Waiting for nearby ride requests...' : 'Turn on Go Online to receive rides.'}</p>}
+          {!displayRide && <p className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gray-500 shadow-sm">{isOnline ? 'Waiting for ride request' : 'Turn on Go Online to receive rides.'}</p>}
 
           {displayRide && !acceptedRide && <div className={`flex flex-col gap-3 transition-all duration-500 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
             <button type="button" onClick={() => void acceptRide(displayRide)} disabled={accepting === displayRide.id} className="h-14 w-full rounded-xl bg-[#FF5500] text-base font-bold text-white shadow-sm disabled:opacity-60">{accepting === displayRide.id ? 'Accepting...' : 'Accept Ride'}</button>

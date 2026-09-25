@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase';
 import { doc, getDoc, serverTimestamp, setDoc } from '../lib/supabaseDb';
 import { db } from '../lib/supabaseDb';
 import { useAuth } from '../context/AuthContext';

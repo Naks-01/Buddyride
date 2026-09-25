@@ -3,7 +3,7 @@ const BASE_FARE = 20;
 const PER_KILOMETER = 8.5;
 const PER_MINUTE = 1.2;
 const FLAT_FEE = 5;
-const OSRM_URL = process.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
+const OSRM_URL = process.env.NEXT_PUBLIC_OSRM_URL || 'https://router.project-osrm.org';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

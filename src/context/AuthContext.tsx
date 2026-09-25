@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase';
 import { doc, getDoc, setDoc, serverTimestamp } from '../lib/supabaseDb';
 import type { Lang } from '../lib/i18n';
 import { db } from '../lib/supabaseDb';
@@ -24,12 +24,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [lang, setLangState] = useState<Lang>(() => {
-    const saved = localStorage.getItem('buddyride-lang');
+    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('buddyride-lang') : null;
     return saved === 'nso' ? 'nso' : 'en';
   });
 
   const setLang = (l: Lang) => {
-    localStorage.setItem('buddyride-lang', l);
+    window.localStorage.setItem('buddyride-lang', l);
     setLangState(l);
   };
 

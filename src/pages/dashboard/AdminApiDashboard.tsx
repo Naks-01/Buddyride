@@ -7,7 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, COMMISSION_RATE } from '../../config/pricing';
 import type { VerificationStatus } from '../../types';
 
-const API = import.meta.env.VITE_API_URL || 'http://' + window.location.hostname + ':5000';
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://' + window.location.hostname + ':5000';
 
 type VerificationEntry = {
   id: string;

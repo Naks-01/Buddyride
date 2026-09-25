@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase';
 import { doc, setDoc } from '../lib/supabaseDb';
 import { db } from '../lib/supabaseDb';
 import { useAuth } from '../context/AuthContext';

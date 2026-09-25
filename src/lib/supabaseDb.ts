@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { supabase } from './supabase';
 
 let currentUser: any = null;
 supabase.auth.getUser().then(({ data }) => { currentUser = data.user; });

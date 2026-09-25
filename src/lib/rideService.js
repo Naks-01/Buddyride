@@ -1,19 +1,18 @@
 // Centralized ride lifecycle + 100% free OSM helpers (Nominatim search, OSRM routing).
-// Lifecycle: searching -> driver_assigned -> driver_en_route -> driver_arrived -> trip_started -> completed (or cancelled at any point).
+// Lifecycle: pending -> driver_assigned -> driver_en_route -> driver_arrived -> trip_started -> completed (or cancelled at any point).
 import { db } from './supabaseDb';
+import { supabase } from './supabase';
 import {
   addDoc,
   collection,
   doc,
   onSnapshot,
-  query,
   serverTimestamp,
   updateDoc,
-  where,
 } from './supabaseDb';
 
 export const RIDE_STATUS = {
-  REQUESTED: 'searching',
+  REQUESTED: 'pending',
   DRIVER_ASSIGNED: 'driver_assigned',
   EN_ROUTE: 'driver_en_route',
   ARRIVED: 'driver_arrived',
@@ -22,8 +21,8 @@ export const RIDE_STATUS = {
   CANCELLED: 'cancelled',
 };
 
-const NOMINATIM_URL = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
-const OSRM_URL = import.meta.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
+const NOMINATIM_URL = process.env.NEXT_PUBLIC_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
+const OSRM_URL = process.env.NEXT_PUBLIC_OSRM_URL || 'https://router.project-osrm.org';
 
 // FREE SEARCH - OpenStreetMap Nominatim, restricted to South Africa.
 export async function searchAddress(q) {
@@ -59,7 +58,20 @@ export async function getFreeRoute(from, to) {
   return null;
 }
 
-// CREATE RIDE - status: searching.
+function normalizeRideRow(row) {
+  return {
+    ...row,
+    pickup: row.pickup ?? { address: row.pickup_address, lat: row.pickup_lat, lng: row.pickup_lng },
+    dropoff: row.dropoff ?? { address: row.dropoff_address, lat: row.dropoff_lat, lng: row.dropoff_lng },
+    pickupLatLng: row.pickupLatLng ?? { lat: row.pickup_lat, lng: row.pickup_lng },
+    dropoffLatLng: row.dropoffLatLng ?? { lat: row.dropoff_lat, lng: row.dropoff_lng },
+    passengerId: row.passengerId ?? row.passenger_id,
+    totalFare: row.totalFare ?? row.total_fare,
+    createdAt: row.createdAt ?? row.created_at,
+  };
+}
+
+// CREATE RIDE - status: pending.
 export async function createRide(pickup, dropoff, passengerId, extra = {}) {
   const payload = {
     passenger_id: passengerId,
@@ -79,11 +91,37 @@ export async function createRide(pickup, dropoff, passengerId, extra = {}) {
 
 // Live feed of rides waiting for a driver.
 export function subscribeToRequestedRides(callback, onError) {
-  return onSnapshot(
-    query(collection(db, 'rides'), where('status', '==', RIDE_STATUS.REQUESTED)),
-    callback,
-    onError
-  );
+  let stopped = false;
+  const channel = supabase
+    .channel(`driver-ride-requests-${crypto.randomUUID()}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, () => { void load(); })
+    .subscribe();
+
+  async function load() {
+    const { data, error } = await supabase
+      .from('rides')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (stopped) return;
+    if (error) {
+      onError?.(error);
+      return;
+    }
+    callback({
+      docs: data ? [{ id: data.id, data: () => normalizeRideRow(data) }] : [],
+      empty: !data,
+      size: data ? 1 : 0,
+    });
+  }
+
+  void load();
+  return () => {
+    stopped = true;
+    void supabase.removeChannel(channel);
+  };
 }
 
 // Live updates for a single ride document.
