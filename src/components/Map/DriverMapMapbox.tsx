@@ -114,12 +114,12 @@ export default function DriverMapMapbox({ driver, pickup, dropoff, routePath = [
   }, [isFullMap]);
 
   if (!MAPBOX_TOKEN) {
-    return <div role="alert" className="flex h-full items-center justify-center bg-slate-100 p-6 text-center text-sm text-red-700">Mapbox token missing in .env</div>;
+    return <div role="alert" className="flex w-full h-[60vh] min-h-[450px] items-center justify-center bg-slate-100 p-6 text-center text-sm text-red-700" style={{ height: isFullMap ? '100%' : '60vh', minHeight: isFullMap ? '100%' : '450px' }}>Mapbox token missing in .env</div>;
   }
 
   return (
     <div className={isFullMap ? 'fixed inset-0 z-50' : 'relative h-full w-full'}>
-      <div ref={mapContainerRef} className="h-full w-full" />
+      <div ref={mapContainerRef} className="w-full h-[60vh] min-h-[450px]" style={{ height: isFullMap ? '100%' : '60vh', minHeight: isFullMap ? '100%' : '450px' }} />
       <button type="button" onClick={() => setIsFullMap((value) => !value)} className="absolute left-3 top-3 z-10 rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-800 shadow-md">
         {isFullMap ? 'Exit full map' : 'Full map'}
       </button>

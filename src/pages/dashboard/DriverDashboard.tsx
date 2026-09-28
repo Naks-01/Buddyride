@@ -20,7 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
 import { calcDistance } from '../../lib/maps';
-import { initMapbox, MAPBOX_TOKEN } from '../../lib/mapbox';
+import { initMapbox } from '../../lib/mapbox';
 import { startRequestLoop, stopRequestLoop } from '../../utils/sound';
 import { DriverDrawer } from '../../components/driver/DriverDrawer';
 import { RideChat } from '../../components/RideChat';
@@ -298,7 +298,7 @@ export function DriverDashboard() {
       console.error('Failed to subscribe to ride requests:', err);
       return undefined;
     }
-  }, [authLoading, user, isOnline]);
+  }, [authLoading, user, isOnline, acceptedRide?.id]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -510,6 +510,7 @@ export function DriverDashboard() {
     }
   };
   const driverCancelRide = async (ride: RideRequest) => {
+    let cancelled = false;
     setUpdatingStatus(true);
     try {
       const arrivedAt = toMillis(ride.arrivedAt);
@@ -528,17 +529,22 @@ export function DriverDashboard() {
           status: 'cancelled_by_driver',
           cancellationFee: 0,
           cancellationReason: 'driver_cancelled',
+          cancelledBy: 'driver',
+          cancelReason: 'Driver cancelled the ride',
           driverPenalty: true,
         });
       }
+      cancelled = true;
     } catch (err) {
       console.error(err);
       setError('Failed to update ride status.');
     } finally {
       setUpdatingStatus(false);
     }
-    setAcceptedRide(null);
-    setIsAccepted(false);
+    if (cancelled) {
+      setAcceptedRide(null);
+      setIsAccepted(false);
+    }
   };
 
   useEffect(() => {
@@ -809,7 +815,7 @@ export function DriverDashboard() {
     ? 'fixed inset-0 h-screen w-screen z-20 rounded-none'
     : isOnline
       ? 'h-[70vh] w-full rounded-2xl'
-      : 'h-[40vh] w-full rounded-2xl';
+      : 'h-[60vh] min-h-[450px] w-full rounded-2xl';
   const navTarget = acceptedRide ? getCurrentNavTarget(acceptedRide) : null;
   const routeDistanceKm = routeDistanceM != null ? (routeDistanceM / 1000).toFixed(1) : null;
   const routeEtaMin = routeDurationSec != null ? Math.max(1, Math.round(routeDurationSec / 60)) : null;
@@ -865,15 +871,13 @@ export function DriverDashboard() {
         <main className="relative mx-auto flex h-[calc(100vh-4rem)] w-full max-w-xl flex-col gap-4 overflow-hidden px-4 py-4">
           <section className={`transition-all duration-500 ease-in-out ${mapContainerClass} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
-              {MAPBOX_TOKEN && (
-                <DriverMapMapbox
-                  driver={driverLocation}
-                  pickup={displayPickup}
-                  dropoff={displayDropoff}
-                  followTrigger={followTrigger}
-                  routePath={routePath}
-                />
-              )}
+              <DriverMapMapbox
+                driver={driverLocation}
+                pickup={displayPickup}
+                dropoff={displayDropoff}
+                followTrigger={followTrigger}
+                routePath={routePath}
+              />
             </Suspense>
           </section>
 

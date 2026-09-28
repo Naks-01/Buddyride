@@ -142,14 +142,11 @@ export async function acceptRide(rideId, driverData = {}) {
 export async function markArrived(rideId, passengerId, extra = {}) {
   const payload = {
     status: RIDE_STATUS.ARRIVED,
-    arrivedAt: serverTimestamp(),
-    ...extra,
+    arrived_at: serverTimestamp(),
   };
 
-  await Promise.allSettled([
-    updateDoc(doc(db, 'rides', rideId), payload),
-    updateDoc(doc(db, 'ride_requests', rideId), payload),
-  ]);
+  await updateDoc(doc(db, 'rides', rideId), payload);
+  void updateDoc(doc(db, 'ride_requests', rideId), payload).catch(() => {});
 
   try {
     await addDoc(collection(db, 'notifications'), {
@@ -192,18 +189,30 @@ export async function completeRide(rideId, extra = {}) {
 // CANCELLED - ride cancelled by either party.
 export async function cancelRide(rideId, extra = {}) {
   const payload = {
-    status: RIDE_STATUS.CANCELLED,
-    cancelledAt: serverTimestamp(),
-    cancelReason: extra.cancelReason ?? extra.cancellationReason ?? null,
-    cancelled_by: extra.cancelledBy ?? extra.cancelled_by ?? null,
-    cancelledBy: extra.cancelledBy ?? extra.cancelled_by ?? null,
-    ...extra,
+    status: extra.status ?? RIDE_STATUS.CANCELLED,
+    cancelled_at: serverTimestamp(),
   };
 
-  await Promise.allSettled([
-    updateDoc(doc(db, 'rides', rideId), payload),
-    updateDoc(doc(db, 'ride_requests', rideId), payload),
-  ]);
+  await updateDoc(doc(db, 'rides', rideId), payload);
+
+  const metadata = {
+    cancelled_by: extra.cancelledBy ?? extra.cancelled_by ?? null,
+    cancel_reason: extra.cancelReason ?? extra.cancellationReason ?? null,
+  };
+  const extraFields = Object.fromEntries(
+    Object.entries(extra)
+      .filter(([key]) => !['status', 'cancelledBy', 'cancelled_by', 'cancelReason', 'cancellationReason'].includes(key))
+      .map(([key, value]) => [key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`), value]),
+  );
+  void updateDoc(doc(db, 'rides', rideId), metadata).catch((error) => {
+    console.error('Failed to save cancellation details:', error);
+  });
+  if (Object.keys(extraFields).length > 0) {
+    void updateDoc(doc(db, 'rides', rideId), extraFields).catch((error) => {
+      console.error('Failed to save cancellation metadata:', error);
+    });
+  }
+  void updateDoc(doc(db, 'ride_requests', rideId), { ...payload, ...metadata }).catch(() => {});
 }
 
 // Generic field patch for in-trip updates (waiting fares, live driver location, etc.).
