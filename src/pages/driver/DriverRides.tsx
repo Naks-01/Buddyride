@@ -33,7 +33,7 @@ export function DriverRides() {
     const loadRides = async () => {
       try {
         const snapshot = await getDocs(
-          query(collection(db, 'rides'), where('driverId', '==', uid), where('status', '==', 'completed'), orderBy('completedAt', 'desc'), limit(30)),
+          query(collection(db, 'rides'), where('driver_id', '==', uid), where('status', '==', 'completed'), orderBy('completedAt', 'desc'), limit(30)),
         );
         setRides(
           snapshot.docs.map((docSnapshot) => {

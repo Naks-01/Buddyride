@@ -82,6 +82,7 @@ function normalizeRideRow(row: Row): Row {
     },
     pickupLatLng: row.pickupLatLng ?? { lat: row.pickup_lat, lng: row.pickup_lng },
     dropoffLatLng: row.dropoffLatLng ?? { lat: row.dropoff_lat, lng: row.dropoff_lng },
+    driverId: row.driverId ?? row.driver_id,
     passengerId: row.passengerId ?? row.passenger_id,
     arrivedAt: row.arrivedAt ?? row.arrived_at,
     cancelledAt: row.cancelledAt ?? row.cancelled_at,

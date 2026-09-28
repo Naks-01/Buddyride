@@ -191,7 +191,7 @@ export function DriverDashboard() {
     const loadTodayEarnings = async () => {
       try {
         const snapshot = await getDocs(
-          query(collection(db, 'rides'), where('driverId', '==', user.id), where('status', '==', 'completed')),
+          query(collection(db, 'rides'), where('driver_id', '==', user.id), where('status', '==', 'completed')),
           { signal: controller.signal },
         );
         const startOfToday = new Date();
@@ -331,7 +331,7 @@ export function DriverDashboard() {
       const location = await getDriverLocation();
       try {
         await acceptRideService(ride.id, {
-          driverId: uid,
+          driver_id: uid,
           driverName: profile?.full_name || auth.currentUser?.displayName || 'Driver',
           driverPhone: auth.currentUser?.phoneNumber ?? null,
           driverPhotoUrl: auth.currentUser?.photoURL ?? null,

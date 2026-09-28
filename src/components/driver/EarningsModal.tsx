@@ -22,7 +22,7 @@ export function EarningsModal({ driverId, onClose }: EarningsModalProps) {
       setLoading(true);
       try {
         const snapshot = await getDocs(
-          query(collection(db, 'rides'), where('driverId', '==', driverId), where('status', '==', 'completed')),
+          query(collection(db, 'rides'), where('driver_id', '==', driverId), where('status', '==', 'completed')),
         );
         const now = new Date();
         const startOfWeek = new Date(now);

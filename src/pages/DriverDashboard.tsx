@@ -52,7 +52,7 @@ export default function DriverDashboard() {
     const uid = auth.currentUser?.uid
     await updateDoc(doc(db, 'rides', ride.id), {
       status: 'accepted',
-      driverId: uid,
+      driver_id: uid,
       driver: { name, phone, car, plate, eta: '3 min' },
     })
     setAcceptedRide({ ...ride, status: 'accepted' })
