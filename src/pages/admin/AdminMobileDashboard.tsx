@@ -61,10 +61,10 @@ export default function AdminMobileDashboard() {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    const stopUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+    const stopUsers = onSnapshot(collection(db, 'profiles'), (snapshot) => {
       setUsers(snapshot.docs.map((entry) => ({ id: entry.id, ...(entry.data() as Omit<UserDoc, 'id'>) })));
     });
-    const stopDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
+    const stopDrivers = onSnapshot(collection(db, 'profiles'), (snapshot) => {
       setDrivers(snapshot.docs.map((entry) => ({ id: entry.id, ...(entry.data() as Omit<DriverDoc, 'id'>) })));
     });
     const stopRides = onSnapshot(collection(db, 'rides'), (snapshot) => {
@@ -96,7 +96,7 @@ export default function AdminMobileDashboard() {
 
   const updateDriver = async (driverId: string, status: 'approved' | 'blocked') => {
     try {
-      await updateDoc(doc(db, 'users', driverId), { driverStatus: status, is_driver_approved: status === 'approved' });
+      await updateDoc(doc(db, 'profiles', driverId), { driverStatus: status, is_driver_approved: status === 'approved' });
       setNotice(status === 'approved' ? 'Driver approved' : 'Driver blocked');
     } catch (error) {
       console.error(error);

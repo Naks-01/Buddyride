@@ -22,7 +22,7 @@ export function AdminApp() {
     setError('');
     try {
       if (tab === 'users') {
-        const snapshot = await getDocs(collection(db, 'users'));
+        const snapshot = await getDocs(collection(db, 'profiles'));
         const list = snapshot.docs.map((d) => toProfile(d.id, d.data()));
         list.sort((a, b) => b.created_at.localeCompare(a.created_at));
         setUsers(list);

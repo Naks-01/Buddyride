@@ -32,7 +32,7 @@ export function startDriverTracking(driverId, rideId) {
     try {
       const position = await getCurrentPosition();
       const { latitude: lat, longitude: lng } = position.coords;
-      await updateDoc(doc(db, 'drivers', driverId), { lat, lng, lastUpdate: serverTimestamp() });
+      await updateDoc(doc(db, 'profiles', driverId), { lat, lng, lastUpdate: serverTimestamp() });
       await updateDoc(doc(db, 'rides', rideId), { driverLat: lat, driverLng: lng, driverUpdatedAt: Date.now() });
     } catch (err) {
       if (err && err.code === err.PERMISSION_DENIED && !locationDeniedAlertShown) {

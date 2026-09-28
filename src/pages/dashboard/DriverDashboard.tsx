@@ -739,7 +739,7 @@ export function DriverDashboard() {
       return;
     }
     let cancelled = false;
-    void getDoc(doc(db, 'users', passengerId)).then((snapshot) => {
+    void getDoc(doc(db, 'profiles', passengerId)).then((snapshot) => {
       if (cancelled) return;
       const data = snapshot.data() as Record<string, unknown> | undefined;
       setPassengerName((data?.full_name as string) || (data?.name as string) || 'Passenger');
@@ -1361,7 +1361,7 @@ function PassengerBadge({ passengerId, revealed }: { passengerId?: string | null
 
   useEffect(() => {
     if (!passengerId) return;
-    void getDoc(doc(db, 'users', passengerId)).then((snapshot) => {
+    void getDoc(doc(db, 'profiles', passengerId)).then((snapshot) => {
       if (snapshot.exists()) setPassenger(snapshot.data());
     });
   }, [passengerId]);

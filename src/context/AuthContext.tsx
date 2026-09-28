@@ -33,9 +33,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLangState(l);
   };
 
-  // Reads the users/{uid} doc, creating it on first login.
+  // Reads the profiles/{uid} row, creating it on first login.
   const ensureProfile = async (uid: string, phone: string | null): Promise<Profile | null> => {
-    const userRef = doc(db, 'users', uid);
+    const userRef = doc(db, 'profiles', uid);
     const existing = await getDoc(userRef);
 
     if (existing.exists()) {

@@ -24,7 +24,7 @@ export function RatingModal({ rideId, driverId, driverName, passengerId, onSaved
     setError('');
     try {
       await runTransaction(db, async (transaction) => {
-        const driverRef = doc(db, 'drivers', driverId);
+        const driverRef = doc(db, 'profiles', driverId);
         const driverSnapshot = await transaction.get(driverRef);
         const data = driverSnapshot.exists() ? driverSnapshot.data() : {};
         const totalRatings = Number(data.totalRatings ?? data.ratingCountTotal ?? 0);

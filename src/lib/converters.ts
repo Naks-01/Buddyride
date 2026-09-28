@@ -2,6 +2,10 @@ import type { Timestamp } from './supabaseDb';
 import type { Profile, Trip, UserRole } from '../types';
 
 function tsToIso(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
   const ts = value as Timestamp | undefined;
   return ts?.toDate ? ts.toDate().toISOString() : new Date().toISOString();
 }
@@ -11,18 +15,18 @@ export function toProfile(uid: string, data: Record<string, unknown>): Profile {
     id: uid,
     phone: (data.phone as string) ?? null,
     email: (data.email as string) ?? null,
-    full_name: (data.name as string) ?? null,
+    full_name: (data.full_name as string) ?? (data.name as string) ?? null,
     role: (data.role as UserRole) || 'passenger',
     is_driver_approved: Boolean(data.is_driver_approved),
     vehicle_plate: (data.vehicle_plate as string) ?? null,
     vehicle_model: (data.vehicle_model as string) ?? null,
-    created_at: tsToIso(data.createdAt),
-    idNumberVerified: Boolean(data.idNumberVerified),
-    idNumberLast4: (data.idNumberLast4 as string) ?? null,
-    idNumberHash: (data.idNumberHash as string) ?? null,
-    selfieUrl: (data.selfieUrl as string) ?? null,
-    verificationStatus: (data.verificationStatus as Profile['verificationStatus']) || 'unverified',
-    verifiedAt: data.verifiedAt ? tsToIso(data.verifiedAt) : null,
+    created_at: tsToIso(data.created_at ?? data.createdAt),
+    idNumberVerified: Boolean(data.id_number_verified ?? data.idNumberVerified),
+    idNumberLast4: (data.id_number_last4 as string) ?? (data.idNumberLast4 as string) ?? null,
+    idNumberHash: (data.id_number_hash as string) ?? (data.idNumberHash as string) ?? null,
+    selfieUrl: (data.selfie_url as string) ?? (data.selfieUrl as string) ?? null,
+    verificationStatus: ((data.verification_status ?? data.verificationStatus) as Profile['verificationStatus']) || 'unverified',
+    verifiedAt: data.verified_at || data.verifiedAt ? tsToIso(data.verified_at ?? data.verifiedAt) : null,
   };
 }
 

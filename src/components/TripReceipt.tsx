@@ -28,7 +28,7 @@ export function TripReceipt({ rideId, fare, driverId, paymentMethod = 'cash' }: 
     try {
       await runTransaction(db, async (transaction) => {
         const rideRef = doc(db, 'rides', rideId);
-        const driverRef = doc(db, 'drivers', driverId);
+        const driverRef = doc(db, 'profiles', driverId);
         const rideSnapshot = await transaction.get(rideRef);
         await transaction.get(driverRef);
         if (rideSnapshot.data()?.tipAmount != null) return;

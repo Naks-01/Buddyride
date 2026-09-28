@@ -49,7 +49,7 @@ export default function Login() {
       if (result.error) throw result.error;
       const user = result.data.user;
       if (!user) throw new Error('Verification did not return a user.');
-      const userRef = doc(db, 'users', user.id);
+      const userRef = doc(db, 'profiles', user.id);
       const existing = await getDoc(userRef);
       await setDoc(userRef, {
         uid: user.id,

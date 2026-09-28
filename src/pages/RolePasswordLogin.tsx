@@ -13,7 +13,7 @@ function roleLabel(role: AppRole) {
 
 async function persistUserProfile(user: { id: string; email?: string | null }, role: AppRole) {
   try {
-    await setDoc(doc(db, 'users', user.id), {
+    await setDoc(doc(db, 'profiles', user.id), {
       uid: user.id,
       email: user.email,
       role,

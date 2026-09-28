@@ -67,7 +67,7 @@ export function AdminApiDashboard() {
   }, {});
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
+    const unsubscribe = onSnapshot(collection(db, 'profiles'), (snapshot) => {
       const entries = snapshot.docs
         .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as VerificationEntry))
         .filter((u) => Boolean(u.idNumberLast4));
@@ -78,7 +78,7 @@ export function AdminApiDashboard() {
 
   const setVerification = async (userId: string, status: VerificationStatus) => {
     try {
-      await updateDoc(doc(db, 'users', userId), {
+      await updateDoc(doc(db, 'profiles', userId), {
         verificationStatus: status,
         idNumberVerified: status === 'verified',
         verifiedAt: status === 'verified' ? serverTimestamp() : null,

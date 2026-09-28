@@ -90,7 +90,7 @@ export function IdVerificationForm({ initialStatus = 'unverified', onVerified }:
       const selfieUrl = await getDownloadURL(selfieRef);
       const idNumberHash = await hashIdNumber(idNumber);
       const idNumberLast4 = getIdLast4(idNumber);
-      const userRef = doc(db, 'users', user.uid);
+      const userRef = doc(db, 'profiles', user.uid);
 
       await setDoc(
         userRef,

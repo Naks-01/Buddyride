@@ -9,7 +9,7 @@ export function DriverPerformance() {
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
-    void getDoc(doc(db, 'drivers', uid)).then((snapshot) => {
+    void getDoc(doc(db, 'profiles', uid)).then((snapshot) => {
       if (snapshot.exists()) setDriverProfile(snapshot.data());
     });
   }, []);

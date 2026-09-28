@@ -81,7 +81,7 @@ export function LegacyAdminDashboard() {
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
-      collection(db, 'users'),
+      collection(db, 'profiles'),
       (snapshot) => setUsers(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as UserDoc))),
       (err) => {
         console.error(err);
@@ -129,7 +129,7 @@ export function LegacyAdminDashboard() {
 
   const setDriverStatus = async (userId: string, status: 'approved' | 'blocked') => {
     try {
-      await updateDoc(doc(db, 'users', userId), {
+      await updateDoc(doc(db, 'profiles', userId), {
         driverStatus: status,
         is_driver_approved: status === 'approved',
       });

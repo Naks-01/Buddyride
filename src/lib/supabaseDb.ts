@@ -25,6 +25,61 @@ type DocumentSnapshot = { exists: () => boolean; data: () => Row; id: string };
 type QuerySnapshot = { docs: DocumentSnapshot[]; empty: boolean; size: number };
 type CallbackSnapshot = DocumentSnapshot & QuerySnapshot;
 
+const PROFILE_COLUMN_BY_APP_FIELD: Record<string, string> = {
+  uid: 'id',
+  name: 'full_name',
+  createdAt: 'created_at',
+  driverStatus: 'driver_status',
+  isOnline: 'is_online',
+  lastUpdate: 'last_update',
+  avgRating: 'avg_rating',
+  totalRatings: 'total_ratings',
+  ratingCountTotal: 'rating_count_total',
+  ratingCount: 'rating_count',
+  adminFlag: 'admin_flag',
+  totalTips: 'total_tips',
+  driverScore: 'driver_score',
+  acceptanceRate: 'acceptance_rate',
+  idNumberVerified: 'id_number_verified',
+  idNumberLast4: 'id_number_last4',
+  idNumberHash: 'id_number_hash',
+  selfieUrl: 'selfie_url',
+  verificationStatus: 'verification_status',
+  verifiedAt: 'verified_at',
+};
+
+function normalizeProfileRow(row: Row): Row {
+  return {
+    ...row,
+    uid: row.uid ?? row.id,
+    name: row.name ?? row.full_name,
+    createdAt: row.createdAt ?? row.created_at,
+    driverStatus: row.driverStatus ?? row.driver_status,
+    isOnline: row.isOnline ?? row.is_online,
+    lastUpdate: row.lastUpdate ?? row.last_update,
+    avgRating: row.avgRating ?? row.avg_rating,
+    totalRatings: row.totalRatings ?? row.total_ratings,
+    ratingCountTotal: row.ratingCountTotal ?? row.rating_count_total,
+    ratingCount: row.ratingCount ?? row.rating_count,
+    adminFlag: row.adminFlag ?? row.admin_flag,
+    totalTips: row.totalTips ?? row.total_tips,
+    driverScore: row.driverScore ?? row.driver_score,
+    acceptanceRate: row.acceptanceRate ?? row.acceptance_rate,
+    idNumberVerified: row.idNumberVerified ?? row.id_number_verified,
+    idNumberLast4: row.idNumberLast4 ?? row.id_number_last4,
+    idNumberHash: row.idNumberHash ?? row.id_number_hash,
+    selfieUrl: row.selfieUrl ?? row.selfie_url,
+    verificationStatus: row.verificationStatus ?? row.verification_status,
+    verifiedAt: row.verifiedAt ?? row.verified_at,
+  };
+}
+
+function normalizeProfilePayload(values: Row): Row {
+  return Object.fromEntries(
+    Object.entries(values).map(([field, value]) => [PROFILE_COLUMN_BY_APP_FIELD[field] ?? field, value]),
+  );
+}
+
 export const db = {};
 export const serverTimestamp = () => new Date().toISOString();
 export const increment = (value: number) => ({ __increment: value });
@@ -98,8 +153,12 @@ function normalizeRideRow(row: Row): Row {
   };
 }
 
-function rowSnapshot(row: Row | null): DocumentSnapshot {
-  const normalizedRow = row ? normalizeRideRow(row) : null;
+function rowSnapshot(row: Row | null, table?: string): DocumentSnapshot {
+  const normalizedRow = row
+    ? table === 'profiles'
+      ? normalizeProfileRow(row)
+      : normalizeRideRow(row)
+    : null;
   return {
     exists: () => Boolean(normalizedRow),
     data: () => normalizedRow ?? {},
@@ -117,13 +176,13 @@ async function read(source: any, signal?: AbortSignal) {
   }
   const { data, error } = await request;
   if (error) throw error;
-  return (data ?? []).map((row: Row) => normalizeRideRow(row));
+  return (data ?? []).map((row: Row) => source.table === 'profiles' ? normalizeProfileRow(row) : normalizeRideRow(row));
 }
 
 export async function getDoc(reference: any): Promise<DocumentSnapshot> {
   const { data, error } = await supabase.from(reference.table).select('*').eq('id', reference.id).maybeSingle();
   if (error) throw error;
-  return rowSnapshot(data);
+  return rowSnapshot(data, reference.table);
 }
 
 export async function getDocs(source: any, options?: { signal?: AbortSignal }): Promise<QuerySnapshot> {
@@ -132,13 +191,15 @@ export async function getDocs(source: any, options?: { signal?: AbortSignal }): 
 }
 
 export async function addDoc(reference: any, values: Row) {
-  const { data, error } = await supabase.from(reference.table).insert(values).select('id').single();
+  const payload = reference.table === 'profiles' ? normalizeProfilePayload(values) : values;
+  const { data, error } = await supabase.from(reference.table).insert(payload).select('id').single();
   if (error) throw error;
   return { id: data.id };
 }
 
 export async function setDoc(reference: any, values: Row, options?: { merge?: boolean }) {
-  const payload = { ...values, id: reference.id };
+  const valuesWithId = { ...values, id: reference.id };
+  const payload = reference.table === 'profiles' ? normalizeProfilePayload(valuesWithId) : valuesWithId;
   const { error } = options?.merge
     ? await supabase.from(reference.table).upsert(payload)
     : await supabase.from(reference.table).upsert(payload);
@@ -149,11 +210,12 @@ export async function updateDoc(reference: any, values: Row) {
   const { data: current, error: readError } = await supabase.from(reference.table).select('*').eq('id', reference.id).maybeSingle();
   if (readError) throw readError;
   const payload = Object.fromEntries(Object.entries(values).map(([key, value]) => {
+    const column = reference.table === 'profiles' ? PROFILE_COLUMN_BY_APP_FIELD[key] ?? key : key;
     const normalized = normalize(value);
     if (normalized && typeof normalized === 'object' && '__increment' in normalized) {
-      return [key, Number(current?.[key] ?? 0) + Number((normalized as { __increment: number }).__increment)];
+      return [column, Number(current?.[column] ?? 0) + Number((normalized as { __increment: number }).__increment)];
     }
-    return [key, normalized];
+    return [column, normalized];
   }));
   const { error } = await supabase.from(reference.table).update(payload).eq('id', reference.id);
   if (error) throw error;
@@ -163,7 +225,7 @@ export function onSnapshot(source: any, next: (snapshot: CallbackSnapshot) => vo
   let stopped = false;
   const emit = async () => {
     try {
-      if (source.kind === 'document') next(rowSnapshot((await getDoc(source)).data() ?? null) as CallbackSnapshot);
+      if (source.kind === 'document') next(await getDoc(source) as CallbackSnapshot);
       else next(await getDocs(source) as CallbackSnapshot);
     } catch (error) {
       onError?.(error as Error);
