@@ -11,7 +11,7 @@ export function LangSelector() {
         EN
       </button>
       <button
-        className={`lang-btn ${lang === 'nso' ? 'active' : ''}`}
+        className={`lang-btn ${(lang as any) === 'nso' ? 'active' : ''}`}
         onClick={() => setLang('nso' as any)}
       >
         Sepedi
@@ -19,3 +19,4 @@ export function LangSelector() {
     </div>
   );
 }
+
