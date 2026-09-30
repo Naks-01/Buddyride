@@ -1,5 +1,4 @@
 import { useAuth } from '../context/AuthContext';
-import type { Lang } from '../lib/i18n';
 
 export function LangSelector() {
   const { lang, setLang } = useAuth();
@@ -7,13 +6,13 @@ export function LangSelector() {
     <div className="lang-selector">
       <button
         className={`lang-btn ${lang === 'en' ? 'active' : ''}`}
-        onClick={() => setLang('en' as Lang)}
+        onClick={() => setLang('en' as any)}
       >
         EN
       </button>
       <button
         className={`lang-btn ${lang === 'nso' ? 'active' : ''}`}
-        onClick={() => setLang('nso' as Lang)}
+        onClick={() => setLang('nso' as any)}
       >
         Sepedi
       </button>
