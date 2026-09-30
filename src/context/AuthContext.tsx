@@ -1,18 +1,15 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
-import type { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { doc, getDoc, setDoc, serverTimestamp } from '../lib/supabaseDb';
-import type { Lang } from '../lib/i18n';
-import { db } from '../lib/supabaseDb';
-import { toProfile } from '../lib/converters';
+import type { User } from '@supabase/supabase-js';
 import type { Profile, UserRole } from '../types';
+import { toProfile } from '../lib/converters';
 
 interface AuthContextType {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
-  lang: Lang;
-  setLang: (lang: Lang) => void;
+  lang: 'en' | 'st';
+  setLang: (l: 'en' | 'st') => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -23,63 +20,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [lang, setLangState] = useState<Lang>(() => {
+  const [lang, setLang] = useState<'en' | 'st'>(() => {
     const saved = typeof window !== 'undefined' ? window.localStorage.getItem('buddyride-lang') : null;
-    return saved === 'nso' ? 'nso' : 'en';
+    return saved === 'st' || saved === 'en' ? saved : 'en';
   });
 
-  const setLang = (l: Lang) => {
-    window.localStorage.setItem('buddyride-lang', l);
-    setLangState(l);
+  const setLangState = (l: 'en' | 'st') => {
+    setLang(l);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('buddyride-lang', l);
+    }
   };
 
-  // Reads the profiles/{uid} row, creating it on first login.
   const ensureProfile = async (uid: string, phone: string | null): Promise<Profile | null> => {
-    const userRef = doc(db, 'profiles', uid);
-    const existing = await getDoc(userRef);
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', uid)
+      .maybeSingle();
 
-    if (existing.exists()) {
-      return toProfile(uid, existing.data() ?? {});
+    if (existing) {
+      return toProfile(existing);
     }
 
-    const newUser = {
-      uid,
-      phone,
-      name: '',
-      role: 'passenger' as UserRole,
-      is_driver_approved: false,
-      vehicle_plate: null,
-      vehicle_model: null,
-      createdAt: serverTimestamp(),
-    };
+    const { data: created, error: createError } = await supabase
+      .from('profiles')
+      .insert({
+        id: uid,
+        phone: phone,
+        name: null,
+        role: 'driver' as UserRole,
+        is_driver_approved: true,
+        vehicle_make: null,
+        vehicle_plate: null,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
 
-    await setDoc(userRef, newUser);
-    const created = await getDoc(userRef);
-    return created.exists() ? toProfile(uid, created.data() ?? {}) : null;
+    if (createError) {
+      console.error('Failed to create profile', createError);
+      return null;
+    }
+
+    return created ? toProfile(created) : null;
   };
 
-  const loadProfile = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    const currentUser = session?.user ?? null;
-    setUser(currentUser);
+  const loadProfile = async (currentUser: User | null) => {
     if (!currentUser) {
       setProfile(null);
       setLoading(false);
       return;
     }
     try {
-      const userProfile = await ensureProfile(currentUser.id, currentUser.phone ?? null);
-      setProfile(userProfile);
+      const p = await ensureProfile(currentUser.id, (currentUser as any).phone ?? null);
+      setProfile(p);
     } catch (err) {
-      console.error('Failed to load profile:', err);
-      setProfile(null);
+      console.error('Failed to load profile', err);
     } finally {
       setLoading(false);
     }
   };
 
   const refreshProfile = async () => {
-    await loadProfile();
+    const { data } = await supabase.auth.getSession();
+    await loadProfile(data.session?.user ?? null);
   };
 
   useEffect(() => {
@@ -88,22 +93,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (mounted) setLoading(false);
     }, 2500);
 
-    void supabase.auth.getSession().then(({ data: { session } }) => {
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      setUser(data.session?.user ?? null);
+      await loadProfile(data.session?.user ?? null);
+    };
+
+    init();
+
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return;
       setUser(session?.user ?? null);
-      void loadProfile();
-    }).finally(() => {
-      if (mounted) setLoading(false);
+      await loadProfile(session?.user ?? null);
     });
-
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (mounted) {
-          setUser(session?.user ?? null);
-          setLoading(false);
-        }
-      },
-    );
 
     return () => {
       mounted = false;
@@ -119,7 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, lang, setLang, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, lang, setLang: setLangState, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
