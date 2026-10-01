@@ -1,10 +1,58 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import type { AppRole } from '../types';
+
+const CLOCK_ERROR_MESSAGE = 'Clock error: Your PC time is wrong. Go to Windows Settings > Time > Set time automatically ON > Sync now, then refresh and login again.';
 
 function roleLabel(role: AppRole) {
   return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function errorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String(error.message);
+  }
+  return String(error);
+}
+
+function isJwtClockError(message: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  return normalizedMessage.includes('jwt')
+    && (normalizedMessage.includes('future') || normalizedMessage.includes('issued at'));
+}
+
+async function clearClockErrorSession() {
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error('Unable to sign out after JWT clock error:', error);
+  } catch (error) {
+    console.error('Unable to sign out after JWT clock error:', error);
+  } finally {
+    localStorage.clear();
+    sessionStorage.clear();
+  }
+}
+
+async function ensurePublicUser(user: { id: string; user_metadata?: Record<string, unknown> }, role: AppRole, fallbackName: string) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (data) return;
+
+  const metadataName = user.user_metadata?.full_name;
+  const { error: insertError } = await supabase.from('users').insert({
+    id: user.id,
+    user_type: role,
+    full_name: typeof metadataName === 'string' ? metadataName : fallbackName || null,
+  });
+
+  if (insertError) throw insertError;
 }
 
 export default function RolePasswordLogin() {
@@ -14,6 +62,7 @@ export default function RolePasswordLogin() {
   const { login, refreshProfile, signUp } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [isSignup, setIsSignup] = useState(false);
   const [error, setError] = useState('');
 
@@ -38,7 +87,7 @@ export default function RolePasswordLogin() {
 
     try {
       if (isSignup) {
-        await signUp(normalizedEmail, normalizedPassword, role);
+        await signUp(normalizedEmail, normalizedPassword, role, fullName.trim());
         if (role === 'driver') {
           await refreshProfile();
           localStorage.setItem(`${role}LoggedIn`, 'true');
@@ -50,12 +99,30 @@ export default function RolePasswordLogin() {
         return;
       }
 
-      await login(normalizedEmail, normalizedPassword, role);
-      await refreshProfile();
+      const authenticatedUser = await login(normalizedEmail, normalizedPassword, role);
+      try {
+        await ensurePublicUser(authenticatedUser, role, fullName.trim());
+        await refreshProfile();
+      } catch (profileError) {
+        const message = errorMessage(profileError);
+        if (isJwtClockError(message)) {
+          await clearClockErrorSession();
+          setError(CLOCK_ERROR_MESSAGE);
+          return;
+        }
+        throw profileError;
+      }
       localStorage.setItem(`${role}LoggedIn`, 'true');
       navigate(`/${role}/dashboard`, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to authenticate.');
+      console.error('Login error:', err);
+      const message = errorMessage(err);
+      if (isJwtClockError(message)) {
+        await clearClockErrorSession();
+        setError(CLOCK_ERROR_MESSAGE);
+      } else {
+        setError(message || 'Authentication failed for an unknown reason.');
+      }
     }
   };
 
@@ -66,6 +133,18 @@ export default function RolePasswordLogin() {
           Back
         </button>
         <h1 className="mb-6 text-2xl font-bold">{isSignup ? 'Create' : 'Login'} as {roleLabel(role)}</h1>
+        {isSignup && (
+          <label className="mb-4 block text-sm font-semibold">
+            Full name
+            <input
+              required
+              type="text"
+              value={fullName}
+              onChange={(event) => setFullName(event.target.value)}
+              className="mt-2 w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-3 font-normal outline-none focus:border-orange-500"
+            />
+          </label>
+        )}
         <label className="mb-4 block text-sm font-semibold">
           Email
           <input

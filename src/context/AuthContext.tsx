@@ -12,7 +12,7 @@ type AuthContextType = {
   profile: any;
   loading: boolean;
   login: (email: string, password: string, role: AppRole) => Promise<any>;
-  signUp: (email: string, password: string, role: AppRole) => Promise<any>;
+  signUp: (email: string, password: string, role: AppRole, fullName: string) => Promise<any>;
   logout: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -53,7 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
     setProfile(data ? {
       ...data,
-      email: data.email ?? currentUser.email ?? null,
+      email: currentUser.email ?? null,
+      role: data.user_type ?? data.role,
       uid: data.uid ?? data.id,
       name: data.name ?? data.full_name,
     } : null);
@@ -75,29 +76,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Access denied. This account is not an administrator.');
     }
 
-    const { error: profileError } = await supabase.from('profiles').upsert({
-      id: data.user.id,
-      email: data.user.email,
-      role,
-    }, { onConflict: 'id' });
-    if (profileError) throw profileError;
+    const { data: existingProfile, error: profileReadError } = await supabase
+      .from('profiles')
+      .select('id, user_type, full_name')
+      .eq('id', data.user.id)
+      .maybeSingle();
+    if (profileReadError) {
+      await supabase.auth.signOut();
+      throw new Error(`Could not read your profile: ${profileReadError.message}`);
+    }
+
+    const accountRole = existingProfile?.user_type as AppRole | null | undefined;
+    if (accountRole && accountRole !== role) {
+      await supabase.auth.signOut();
+      throw new Error(`This account is registered as ${accountRole}. Go to /login?role=${accountRole}.`);
+    }
+
+    if (!existingProfile) {
+      const { error: insertError } = await supabase.from('profiles').insert({
+        id: data.user.id,
+        user_type: role,
+        full_name: data.user.user_metadata?.full_name ?? data.user.email ?? null,
+      });
+      if (insertError) {
+        await supabase.auth.signOut();
+        throw new Error(`Could not create your profile: ${insertError.message}`);
+      }
+    } else if (!accountRole) {
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ user_type: role })
+        .eq('id', data.user.id);
+      if (updateError) {
+        await supabase.auth.signOut();
+        throw new Error(`Could not set your account role: ${updateError.message}`);
+      }
+    }
 
     setUser(data.user);
     await fetchProfile(data.user);
     return data.user;
   };
 
-  const signUp = async (email: string, password: string, role: AppRole) => {
+  const signUp = async (email: string, password: string, role: AppRole, fullName: string) => {
     if (role === 'admin') throw new Error('Admin accounts cannot be created here.');
     if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { role, full_name: fullName } },
+    });
     if (error) throw error;
     if (!data.user) throw new Error('Account creation did not return a user.');
 
     const { error: profileError } = await supabase.from('profiles').upsert({
       id: data.user.id,
-      email: data.user.email,
-      role,
+      user_type: role,
+      full_name: fullName,
     }, { onConflict: 'id' });
     if (profileError) console.warn('Unable to save the new profile:', profileError);
 
