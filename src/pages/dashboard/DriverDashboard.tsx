@@ -298,7 +298,7 @@ export function DriverDashboard() {
       console.error('Failed to subscribe to ride requests:', err);
       return undefined;
     }
-  }, [authLoading, user, isOnline, acceptedRide?.id]);
+  }, [authLoading, user?.id, isOnline, acceptedRide?.id]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -890,7 +890,7 @@ export function DriverDashboard() {
                   <div className="flex items-start gap-3"><MapPin size={22} className="mt-0.5 shrink-0 text-red-600" /><p className="text-sm text-gray-700 dark:text-gray-200"><span className="font-bold">Dropoff</span> • {displayDropoffLabel}</p></div>
                 </div>
               </div>
-              <div className="flex w-24 shrink-0 flex-col items-center gap-1 text-center"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-orange-600"><UserRound size={20} /></div><p className="text-[11px] font-semibold leading-tight text-gray-600 dark:text-gray-300">Passenger • {passengerName}</p></div>
+              <div className="flex w-24 shrink-0 flex-col items-center gap-1 text-center"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-orange-600"><UserRound size={20} /></div><span className="text-[11px] font-semibold leading-tight text-gray-600 dark:text-gray-300">{profile?.full_name || 'Driver'}</span><span className="text-[11px] font-semibold leading-tight text-gray-600 dark:text-gray-300">{isOnline ? 'Online' : 'Offline'}</span></div>
             </div>
           </section>
 

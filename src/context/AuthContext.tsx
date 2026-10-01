@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import type { AppRole } from '../types';
 
 type Lang = 'en' | 'st' | 'nso';
 type AuthContextType = {
@@ -10,6 +11,7 @@ type AuthContextType = {
   profile: any;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, role: AppRole) => Promise<any>;
   logout: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -23,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   login: async () => {},
+  signUp: async () => null,
   logout: async () => {},
   signOut: async () => {},
   refreshProfile: async () => {},
@@ -47,16 +50,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .maybeSingle();
 
     if (error) throw error;
-    setProfile(data ? { ...data, uid: data.uid ?? data.id, name: data.name ?? data.full_name } : null);
+    setProfile(data ? {
+      ...data,
+      email: data.email ?? currentUser.email ?? null,
+      uid: data.uid ?? data.id,
+      name: data.name ?? data.full_name,
+    } : null);
   };
 
   const refreshProfile = async () => {
-    await fetchProfile(user);
+    const currentUser = user ?? (await supabase.auth.getUser()).data.user;
+    if (currentUser) setUser(currentUser);
+    await fetchProfile(currentUser);
   };
 
   const login = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+  };
+
+  const signUp = async (email: string, password: string, role: AppRole) => {
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) throw error;
+    if (!data.user) throw new Error('Account creation did not return a user.');
+
+    const { error: profileError } = await supabase.from('profiles').upsert({
+      id: data.user.id,
+      email: data.user.email,
+      role,
+    }, { onConflict: 'id' });
+    if (profileError) console.warn('Unable to save the new profile:', profileError);
+
+    return data.user;
   };
 
   const logout = async () => {
@@ -106,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       login,
+      signUp,
       logout,
       signOut: logout,
       refreshProfile,

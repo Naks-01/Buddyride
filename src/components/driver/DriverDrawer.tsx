@@ -29,7 +29,7 @@ type MenuAction = 'rides' | 'earnings' | 'profile' | 'safety' | 'logout';
 
 export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, todayEarnings, isOnline, onGoOffline }: DriverDrawerProps) {
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const [showEarnings, setShowEarnings] = useState(false);
 
   const rating = Number(driverProfile?.avgRating ?? 4.94);
@@ -101,7 +101,7 @@ export function DriverDrawer({ open, onClose, profile, driverProfile, driverId, 
           </div>
           <div className="min-w-0">
             <p className="truncate text-[22px] font-bold text-gray-900">{profile?.full_name ?? 'Driver'}</p>
-            <p className="truncate text-sm text-gray-500">{profile?.email ?? 'No email on file'}</p>
+            <p className="truncate text-sm text-gray-500">{profile?.email || user?.email || 'No email on file'}</p>
             <div className="mt-1 flex items-center gap-2 text-xs">
               <span className="flex items-center gap-1 font-semibold text-[#2ECC71]">
                 <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-gray-400'}`} /> {isOnline ? 'Online' : 'Offline'}

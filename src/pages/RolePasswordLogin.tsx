@@ -27,7 +27,7 @@ export default function RolePasswordLogin() {
   const [searchParams] = useSearchParams();
   const role = (searchParams.get('role') || 'passenger') as AppRole;
   const navigate = useNavigate();
-  const { refreshProfile } = useAuth();
+  const { refreshProfile, signUp } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignup, setIsSignup] = useState(false);
@@ -54,12 +54,8 @@ export default function RolePasswordLogin() {
 
     try {
       if (isSignup) {
-        const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password: normalizedPassword });
-        if (error) throw error;
-        const user = data.user;
-        if (!user) throw new Error('Account creation did not return a user.');
+        await signUp(normalizedEmail, normalizedPassword, role);
         if (role === 'driver') {
-          await persistUserProfile(user, role);
           await refreshProfile();
           localStorage.setItem(`${role}LoggedIn`, 'true');
           navigate('/driver/dashboard', { replace: true });
