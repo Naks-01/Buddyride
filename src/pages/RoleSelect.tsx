@@ -5,7 +5,7 @@ import { Logo } from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
 import { t } from '../lib/i18n';
 import type { AppRole } from '../types';
-import { supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { ADMIN_EMAIL } from '../config/admin';
 
 const publicRoles: Array<{ role: AppRole; icon: string; description: string; card: string }> = [
@@ -20,6 +20,7 @@ export function RoleSelect() {
   const showAdmin = userEmail === ADMIN_EMAIL;
 
   useEffect(() => {
+    if (!isSupabaseConfigured) return;
     void supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email?.toLowerCase() ?? null));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserEmail(session?.user?.email?.toLowerCase() ?? null);

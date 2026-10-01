@@ -164,7 +164,7 @@ export function PassengerDashboard() {
   const reverseGeocode = async (location: { lat: number; lng: number }) => {
     const fallback = searchPolokwanePlaces(`${location.lat.toFixed(3)} ${location.lng.toFixed(3)}`)[0];
     try {
-      const nominatimUrl = process.env.NEXT_PUBLIC_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
+      const nominatimUrl = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
       const response = await fetch(
         `${nominatimUrl}/reverse?format=json&lat=${location.lat}&lon=${location.lng}`
       );

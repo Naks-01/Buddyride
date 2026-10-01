@@ -21,8 +21,8 @@ export const RIDE_STATUS = {
   CANCELLED: 'cancelled',
 };
 
-const NOMINATIM_URL = process.env.NEXT_PUBLIC_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
-const OSRM_URL = process.env.NEXT_PUBLIC_OSRM_URL || 'https://router.project-osrm.org';
+const NOMINATIM_URL = import.meta.env.VITE_NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
+const OSRM_URL = import.meta.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
 
 // FREE SEARCH - OpenStreetMap Nominatim, restricted to South Africa.
 export async function searchAddress(q) {

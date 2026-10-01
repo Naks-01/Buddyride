@@ -1,8 +1,10 @@
-import { supabase } from './supabase';
+import { isSupabaseConfigured, supabase } from './supabase';
 
 let currentUser: any = null;
-supabase.auth.getUser().then(({ data }) => { currentUser = data.user; });
-supabase.auth.onAuthStateChange((_event, session) => { currentUser = session?.user ?? null; });
+if (isSupabaseConfigured) {
+  void supabase.auth.getUser().then(({ data }) => { currentUser = data.user; });
+  supabase.auth.onAuthStateChange((_event, session) => { currentUser = session?.user ?? null; });
+}
 
 export const auth = {
   get currentUser() {

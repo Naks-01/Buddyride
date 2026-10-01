@@ -1,7 +1,6 @@
 import mapboxgl from 'mapbox-gl';
 
-// @ts-ignore
-const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+const token = import.meta.env.VITE_MAPBOX_TOKEN;
 export const MAPBOX_TOKEN = token ? token : '';
 
 export function initMapbox() {

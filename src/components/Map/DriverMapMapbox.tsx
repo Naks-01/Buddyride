@@ -15,7 +15,7 @@ type Props = {
 
 const DEFAULT_CENTER: [number, number] = [29.458, -23.904]; // Polokwane
 
-export default function DriverMapMapbox({ driver, pickup, dropoff, routePath = [], followTrigger }: Props) {
+export default function DriverMapMapbox({ driver, pickup, followTrigger }: Props) {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const [isFullMap, setIsFullMap] = useState(false);
