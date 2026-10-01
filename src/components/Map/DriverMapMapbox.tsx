@@ -15,10 +15,11 @@ type Props = {
 
 const DEFAULT_CENTER: [number, number] = [29.458, -23.904]; // Polokwane
 
-export default function DriverMapMapbox({ driver, pickup, followTrigger }: Props) {
+export default function DriverMapMapbox({ driver, pickup, routePath, followTrigger }: Props) {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const [isFullMap, setIsFullMap] = useState(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   const center = driver? [driver.lng, driver.lat] as [number, number] : pickup? [pickup.lng, pickup.lat] as [number, number] : DEFAULT_CENTER;
 
@@ -36,7 +37,10 @@ export default function DriverMapMapbox({ driver, pickup, followTrigger }: Props
     });
 
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right');
-    map.on('load', () => map.resize());
+    map.on('load', () => {
+      map.resize();
+      setMapLoaded(true);
+    });
     mapRef.current = map;
 
     return () => {
@@ -50,6 +54,34 @@ export default function DriverMapMapbox({ driver, pickup, followTrigger }: Props
       mapRef.current.flyTo({ center, zoom: 15, essential: true });
     }
   }, [followTrigger]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+
+    const route = {
+      type: 'Feature' as const,
+      properties: {},
+      geometry: {
+        type: 'LineString' as const,
+        coordinates: (routePath ?? []).map(([lat, lng]) => [lng, lat]),
+      },
+    };
+    const source = map.getSource('driver-route') as mapboxgl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(route);
+      return;
+    }
+
+    map.addSource('driver-route', { type: 'geojson', data: route });
+    map.addLayer({
+      id: 'driver-route-line',
+      type: 'line',
+      source: 'driver-route',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#1A73E8', 'line-width': 6, 'line-opacity': 1 },
+    });
+  }, [mapLoaded, routePath]);
 
   useEffect(() => {
     if (mapRef.current) {

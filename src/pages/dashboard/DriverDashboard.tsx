@@ -306,21 +306,40 @@ export function DriverDashboard() {
     window.setTimeout(() => setToast(''), 3200);
   };
 
-  const openRideNavigation = (ride: RideRequest) => {
-    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
-    if (!pickup) {
-      setError('Pickup location is missing coordinates.');
+  const getNavigationProvider = (): 'buddy' | 'gmaps' | 'waze' => {
+    const saved = localStorage.getItem('nav');
+    return saved === 'gmaps' || saved === 'waze' ? saved : 'buddy';
+  };
+
+  const launchNavigation = (destination: Coordinates, automatic = true) => {
+    if (automatic && localStorage.getItem('navAutoStart') === 'false') return;
+    const provider = getNavigationProvider();
+    setIsAccepted(true);
+    if (provider === 'buddy') {
+      setFollowTrigger((prev) => prev + 1);
       return;
     }
-    const destination = `${pickup.lat},${pickup.lng}`;
-    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
-    const nativeNavigationUrl = `google.navigation:q=${destination}`;
-    window.open(mapsUrl, '_blank', 'noopener,noreferrer');
-    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-      window.setTimeout(() => {
-        window.location.href = nativeNavigationUrl;
-      }, 150);
+
+    const coordinates = `${destination.lat},${destination.lng}`;
+    if (provider === 'gmaps') {
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${coordinates}&travelmode=driving`, '_blank', 'noopener,noreferrer');
+      if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        window.setTimeout(() => {
+          window.location.href = `google.navigation:q=${coordinates}`;
+        }, 150);
+      }
+    } else {
+      window.open(`https://waze.com/ul?ll=${destination.lat}%2C${destination.lng}&navigate=yes&zoom=17`, '_blank', 'noopener,noreferrer');
     }
+  };
+
+  const openRideNavigation = (ride: RideRequest) => {
+    const destination = getCurrentNavTarget(ride);
+    if (!destination) {
+      setError(ride.status === 'trip_started' ? 'Destination is missing coordinates.' : 'Pickup location is missing coordinates.');
+      return;
+    }
+    launchNavigation(destination, false);
   };
 
   const acceptRide = async (ride: RideRequest) => {
@@ -351,9 +370,7 @@ export function DriverDashboard() {
       }
       const nextAcceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(nextAcceptedRide);
-      setIsAccepted(true);
       showToast('Ride Accepted! Navigating to pickup...');
-      window.setTimeout(() => openRideNavigation(ride), 800);
       window.setTimeout(() => {
         setAcceptedRide((prev) => {
           if (!prev || prev.id !== ride.id || prev.status !== 'driver_assigned') return prev;
@@ -674,7 +691,7 @@ export function DriverDashboard() {
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.stopArrivalTime]);
 
   const navigateTo = async (_destination: Coordinates, _origin?: Coordinates) => {
-    setFollowTrigger((prev) => prev + 1);
+    launchNavigation(_destination);
   };
 
   const getDriverLocation = (): Promise<Coordinates | undefined> =>
@@ -767,6 +784,7 @@ export function DriverDashboard() {
   }, [acceptedRide?.passengerId]);
 
   const navigateToPickup = async (ride: RideRequest) => {
+    if (localStorage.getItem('navAutoStart') === 'false') return;
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
     if (!pickup) {
       setError('Pickup location is missing coordinates.');
