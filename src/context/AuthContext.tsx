@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { AppRole } from '../types';
+import { ADMIN_EMAIL } from '../config/admin';
 
 type Lang = 'en' | 'st' | 'nso';
 type AuthContextType = {
@@ -10,7 +11,7 @@ type AuthContextType = {
   setUser: (user: any) => void;
   profile: any;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, role: AppRole) => Promise<any>;
   signUp: (email: string, password: string, role: AppRole) => Promise<any>;
   logout: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -64,12 +65,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchProfile(currentUser);
   };
 
-  const login = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const login = async (email: string, password: string, role: AppRole) => {
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+    if (!data.user) throw new Error('Sign-in did not return a user.');
+    if (role === 'admin' && data.user.email?.toLowerCase() !== ADMIN_EMAIL) {
+      await supabase.auth.signOut();
+      throw new Error('Access denied. This account is not an administrator.');
+    }
+
+    const { error: profileError } = await supabase.from('profiles').upsert({
+      id: data.user.id,
+      email: data.user.email,
+      role,
+    }, { onConflict: 'id' });
+    if (profileError) throw profileError;
+
+    setUser(data.user);
+    await fetchProfile(data.user);
+    return data.user;
   };
 
   const signUp = async (email: string, password: string, role: AppRole) => {
+    if (role === 'admin') throw new Error('Admin accounts cannot be created here.');
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) throw error;
     if (!data.user) throw new Error('Account creation did not return a user.');

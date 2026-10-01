@@ -123,10 +123,25 @@ function normalize(value: unknown) {
   return value;
 }
 
+const RIDE_STATUS_ALIASES: Record<string, string> = {
+  searching: 'pending',
+  accepted: 'driver_assigned',
+  arriving: 'driver_en_route',
+  arrived: 'driver_arrived',
+  on_trip: 'trip_started',
+};
+
+export function normalizeRideStatus(status: unknown) {
+  return typeof status === 'string' ? RIDE_STATUS_ALIASES[status] ?? status : status;
+}
+
 function normalizeRideRow(row: Row): Row {
-  if (!row || !('passenger_id' in row)) return row;
+  if (!row) return row;
+  const status = normalizeRideStatus(row.status);
+  if (!('passenger_id' in row) && !('passengerId' in row)) return { ...row, status };
   return {
     ...row,
+    status,
     pickup: row.pickup ?? {
       address: row.pickup_address,
       lat: row.pickup_lat,
@@ -140,6 +155,17 @@ function normalizeRideRow(row: Row): Row {
     pickupLatLng: row.pickupLatLng ?? { lat: row.pickup_lat, lng: row.pickup_lng },
     dropoffLatLng: row.dropoffLatLng ?? { lat: row.dropoff_lat, lng: row.dropoff_lng },
     driverId: row.driverId ?? row.driver_id,
+    driverName: row.driverName ?? row.driver_name,
+    driverPhone: row.driverPhone ?? row.driver_phone,
+    driverPhotoUrl: row.driverPhotoUrl ?? row.driver_photo_url,
+    driverCar: row.driverCar ?? row.driver_car,
+    driverPlate: row.driverPlate ?? row.driver_plate,
+    carPlate: row.carPlate ?? row.car_plate,
+    driverRating: row.driverRating ?? row.driver_rating,
+    driverLat: row.driverLat ?? row.driver_lat,
+    driverLng: row.driverLng ?? row.driver_lng,
+    driverSpeed: row.driverSpeed ?? row.driver_speed,
+    driverUpdatedAt: row.driverUpdatedAt ?? row.driver_updated_at,
     passengerId: row.passengerId ?? row.passenger_id,
     arrivedAt: row.arrivedAt ?? row.arrived_at,
     cancelledAt: row.cancelledAt ?? row.cancelled_at,
@@ -151,7 +177,18 @@ function normalizeRideRow(row: Row): Row {
     bookingFee: row.bookingFee ?? row.booking_fee,
     totalFare: row.totalFare ?? row.total_fare,
     passengerCount: row.passengerCount ?? row.passenger_count,
+    extrasFee: row.extrasFee ?? row.extras_fee,
+    packageDescription: row.packageDescription ?? row.package_description,
+    recipientName: row.recipientName ?? row.recipient_name,
+    recipientPhone: row.recipientPhone ?? row.recipient_phone,
+    packageSize: row.packageSize ?? row.package_size,
     createdAt: row.createdAt ?? row.created_at,
+    startedAt: row.startedAt ?? row.started_at,
+    completedAt: row.completedAt ?? row.completed_at,
+    pickupWaitSeconds: row.pickupWaitSeconds ?? row.pickup_wait_seconds,
+    pickupWaitFare: row.pickupWaitFare ?? row.pickup_wait_fare,
+    waitingSeconds: row.waitingSeconds ?? row.waiting_seconds,
+    waitingFare: row.waitingFare ?? row.waiting_fare,
   };
 }
 

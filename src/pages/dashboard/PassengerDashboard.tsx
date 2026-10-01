@@ -435,7 +435,7 @@ export function PassengerDashboard() {
         .from('rides')
         .select('id')
         .eq('passenger_id', passengerId)
-        .eq('status', 'pending')
+        .in('status', ['searching', 'pending'])
         .limit(1)
         .maybeSingle();
       if (pendingRideError) throw pendingRideError;
@@ -445,23 +445,28 @@ export function PassengerDashboard() {
       }
       const pickupPoint = { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' };
       const dropoffPoint = { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' };
+      const rideFare = mode === 'send' ? total - BOOKING_FEE : total - BOOKING_FEE - extrasFee;
       const rideRef = await createRide(
         pickupPoint,
         dropoffPoint,
         passengerId,
-        mode === 'send'
-          ? {
-              type: 'send',
-              distance_km: distanceKm,
-              price: total,
-              fare: total - BOOKING_FEE,
-            }
-          : {
-              type: 'ride',
-              distance_km: distanceKm,
-              price: total,
-              fare: total - BOOKING_FEE - extrasFee,
-            }
+        {
+          type: mode === 'send' ? 'send' : 'ride',
+          distance_km: distanceKm,
+          price: total,
+          totalFare: total,
+          fare: rideFare,
+          category: rideCategory,
+          passengerCount,
+          extras: selectedExtras,
+          extrasFee,
+          stops: stops.map((stop) => ({ address: stop.address, lat: stop.lat, lng: stop.lng })),
+          paymentMethod,
+          packageDescription: mode === 'send' ? packageDescription : null,
+          recipientName: mode === 'send' ? recipientName : null,
+          recipientPhone: mode === 'send' ? recipientPhone : null,
+          packageSize: mode === 'send' ? packageSize : null,
+        },
       );
 
       setRideId(rideRef.id);
@@ -773,6 +778,9 @@ export function PassengerDashboard() {
 
   const cancelRide = async () => {
     if (!rideId || !isActiveTrip) return;
+    const enteredReason = window.prompt('Why are you cancelling this ride?', 'Changed my plans');
+    if (enteredReason === null) return;
+    const reason = enteredReason.trim() || 'Cancelled by passenger';
     const elapsedSec = rideCreatedAt == null ? CANCELLATION.FREE_CANCEL_SEC : (Date.now() - rideCreatedAt) / 1000;
     const arrived = rideStatus === 'driver_arrived';
     const driverDistanceKm = driverLocation && tripPickupLocation
@@ -793,7 +801,7 @@ export function PassengerDashboard() {
         paymentMethod: 'cash',
         cancellationBalanceDue: cancellationFee,
         cancelledBy: 'passenger',
-        cancelReason: 'Cancelled by passenger',
+        cancelReason: reason,
       });
       setMessage(cancellationFee ? `Ride cancelled. Fee: ${formatR(cancellationFee)}` : 'Ride cancelled for free.');
     } catch (err) {
@@ -816,7 +824,21 @@ export function PassengerDashboard() {
     setDriverId(null);
     setDriverPhotoUrl(null);
     setCarPlate(null);
+    setFare(null);
+    setTotalFare(null);
+    setBaseFare(null);
+    setRated(false);
+    setRatingValue(null);
+    setShowRating(false);
+    setMessage('');
+    lastSoundStatusRef.current = null;
+    lastDriverPosRef.current = null;
     resetPins();
+  };
+
+  const startNewRide = () => {
+    if (rideStatus !== 'completed') return;
+    clearCancelledRide();
   };
 
   const shareTrip = () => {
@@ -1361,6 +1383,9 @@ export function PassengerDashboard() {
                 {rated ? 'Thanks for rating!' : 'Rate Driver'}
               </button>
               {rideId && <TripReceipt rideId={rideId} fare={displayedFare} driverId={driverId} paymentMethod={paymentMethod} />}
+              <button type="button" onClick={startNewRide} className="mt-3 w-full rounded-lg border border-orange-500 py-2 font-semibold text-orange-700 hover:bg-orange-100">
+                Request another ride
+              </button>
             </div>
           )}
           {message && (

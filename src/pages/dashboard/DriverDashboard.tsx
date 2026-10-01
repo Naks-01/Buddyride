@@ -29,6 +29,7 @@ import ThemeToggle from '../../components/ThemeToggle';
 const DriverMapLeaflet = lazy(() => import('../../components/Map/DriverMapLeaflet'));
 import DriverMapMapbox from '../../components/Map/DriverMapMapbox';
 import {
+  RIDE_STATUS,
   acceptRide as acceptRideService,
   cancelRide as cancelRideService,
   completeRide as completeRideService,
@@ -346,7 +347,7 @@ export function DriverDashboard() {
         });
       } catch (acceptError) {
         console.error('Failed to accept ride with driver details:', JSON.stringify(acceptError));
-        await updateRideFields(ride.id, { status: 'driver_assigned' });
+        await updateRideFields(ride.id, { status: RIDE_STATUS.DRIVER_ASSIGNED, driver_id: uid });
       }
       const nextAcceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(nextAcceptedRide);
@@ -356,7 +357,7 @@ export function DriverDashboard() {
       window.setTimeout(() => {
         setAcceptedRide((prev) => {
           if (!prev || prev.id !== ride.id || prev.status !== 'driver_assigned') return prev;
-          void updateRideFields(ride.id, { status: 'driver_en_route', driverStatus: 'coming' }).catch((err: unknown) => {
+          void updateRideFields(ride.id, { status: RIDE_STATUS.EN_ROUTE, driverStatus: 'coming' }).catch((err: unknown) => {
             console.error('Failed to update ride status:', err);
           });
           return { ...prev, status: 'driver_en_route' };
@@ -503,6 +504,8 @@ export function DriverDashboard() {
         ...(distanceKm != null && { arrivalDistanceM: distanceKm * 1000 }),
       });
     } catch (err) {
+      arrivedHoldUntilRef.current = 0;
+      setAcceptedRide((prev) => (prev?.id === ride.id ? { ...prev, status: ride.status } : prev));
       console.error(err);
       setError('Failed to update ride status.');
     } finally {
@@ -510,11 +513,17 @@ export function DriverDashboard() {
     }
   };
   const driverCancelRide = async (ride: RideRequest) => {
+    const arrivedAt = toMillis(ride.arrivedAt);
+    const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
+    const enteredReason = window.prompt(
+      waitedLongEnough ? 'Reason for cancelling this ride?' : 'Why are you cancelling this ride?',
+      waitedLongEnough ? 'Passenger no-show' : 'Driver cancelled the ride',
+    );
+    if (enteredReason === null) return;
+    const reason = enteredReason.trim() || (waitedLongEnough ? 'Passenger no-show' : 'Driver cancelled the ride');
     let cancelled = false;
     setUpdatingStatus(true);
     try {
-      const arrivedAt = toMillis(ride.arrivedAt);
-      const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
       if (waitedLongEnough) {
         await cancelRideService(ride.id, {
           cancellationFee: CANCELLATION.NO_SHOW_FEE,
@@ -522,15 +531,14 @@ export function DriverDashboard() {
           cancellationDriverPayout: CANCELLATION.NO_SHOW_FEE * DRIVER_RATE,
           cancellationReason: 'passenger_no_show',
           cancelledBy: 'driver',
-          cancelReason: 'Passenger no-show',
+          cancelReason: reason,
         });
       } else {
         await cancelRideService(ride.id, {
-          status: 'cancelled_by_driver',
           cancellationFee: 0,
           cancellationReason: 'driver_cancelled',
           cancelledBy: 'driver',
-          cancelReason: 'Driver cancelled the ride',
+          cancelReason: reason,
           driverPenalty: true,
         });
       }
@@ -544,6 +552,7 @@ export function DriverDashboard() {
     if (cancelled) {
       setAcceptedRide(null);
       setIsAccepted(false);
+      setIsOnline(true);
     }
   };
 
@@ -591,23 +600,31 @@ export function DriverDashboard() {
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.arrivedAt]);
 
   const startTrip = async (ride: RideRequest) => {
-    setAcceptedRide((prev) => (prev ? { ...prev, status: 'trip_started', currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0 } : prev));
     setUpdatingStatus(true);
     try {
       await startTripService(ride.id, { currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0, waitingFare: 0, driverStatus: 'on_trip' });
+      setAcceptedRide((prev) => (prev ? { ...prev, status: 'trip_started', currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0 } : prev));
+      await navigateToDestination(ride);
     } catch (err) {
       console.error(err);
       setError('Failed to update ride status.');
     } finally {
       setUpdatingStatus(false);
     }
-    await navigateToDestination(ride);
   };
-  const completeTrip = (ride: RideRequest) => {
-    setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed' } : prev));
-    const fare = Number(ride.fare ?? ride.totalFare ?? ride.price ?? 0);
-    setTodayEarnings((prev) => prev + fare);
-    void completeRideService(ride.id);
+  const completeTrip = async (ride: RideRequest) => {
+    setUpdatingStatus(true);
+    const fare = Number(ride.totalFare ?? ride.price ?? ride.fare ?? 0);
+    try {
+      await completeRideService(ride.id, { fare, price: fare, total_fare: fare });
+      setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed', fare, price: fare, totalFare: fare } : prev));
+      setTodayEarnings((prev) => prev + fare);
+    } catch (err) {
+      console.error('Failed to complete ride:', err);
+      setError('Failed to complete trip. Please try again.');
+    } finally {
+      setUpdatingStatus(false);
+    }
   };
 
   const arriveAtStop = async (ride: RideRequest) => {
@@ -909,7 +926,7 @@ export function DriverDashboard() {
             <div className="flex flex-col gap-3">
               {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>}
               {acceptedRide.status === 'driver_arrived' && <button type="button" onClick={() => void startTrip(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Start Trip</button>}
-              {isTripPhase && <button type="button" onClick={() => completeTrip(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Complete Trip</button>}
+              {isTripPhase && <button type="button" onClick={() => void completeTrip(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Complete Trip</button>}
               {acceptedRide.status !== 'completed' && <button type="button" onClick={() => void driverCancelRide(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl border border-gray-300 bg-white font-semibold text-gray-600 disabled:opacity-60">Cancel Ride</button>}
               {acceptedRide.status === 'completed' && <button type="button" onClick={finishRide} className="h-12 rounded-xl bg-gray-100 font-bold text-gray-700">Done</button>}
             </div>
@@ -1204,7 +1221,7 @@ export function DriverDashboard() {
                   return (
                     <button
                       type="button"
-                      onClick={() => completeTrip(acceptedRide)}
+                      onClick={() => void completeTrip(acceptedRide)}
                       disabled={updatingStatus}
                       className="rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white disabled:opacity-60"
                     >

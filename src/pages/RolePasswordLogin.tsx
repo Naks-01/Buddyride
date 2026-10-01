@@ -1,33 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
-import { doc, setDoc } from '../lib/supabaseDb';
-import { db } from '../lib/supabaseDb';
 import { useAuth } from '../context/AuthContext';
-import { ADMIN_EMAIL } from '../config/admin';
 import type { AppRole } from '../types';
 
 function roleLabel(role: AppRole) {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-async function persistUserProfile(user: { id: string; email?: string | null }, role: AppRole) {
-  try {
-    await setDoc(doc(db, 'profiles', user.id), {
-      uid: user.id,
-      email: user.email,
-      role,
-    }, { merge: true });
-  } catch (profileError) {
-    console.error('Supabase profile sync failed after authentication:', profileError);
-  }
-}
-
 export default function RolePasswordLogin() {
   const [searchParams] = useSearchParams();
   const role = (searchParams.get('role') || 'passenger') as AppRole;
   const navigate = useNavigate();
-  const { refreshProfile, signUp } = useAuth();
+  const { login, refreshProfile, signUp } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignup, setIsSignup] = useState(false);
@@ -66,15 +50,7 @@ export default function RolePasswordLogin() {
         return;
       }
 
-      const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password: normalizedPassword });
-      if (error) throw error;
-      const user = data.user;
-      if (!user) throw new Error('Sign-in did not return a user.');
-      if (role === 'admin' && user.email?.toLowerCase() !== ADMIN_EMAIL) {
-        await supabase.auth.signOut();
-        throw new Error('Access denied. This account is not an administrator.');
-      }
-      await persistUserProfile(user, role);
+      await login(normalizedEmail, normalizedPassword, role);
       await refreshProfile();
       localStorage.setItem(`${role}LoggedIn`, 'true');
       navigate(`/${role}/dashboard`, { replace: true });
