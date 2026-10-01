@@ -4,7 +4,7 @@ import type { DocumentData } from '../../lib/supabaseDb';
 import { LockKeyhole } from 'lucide-react';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
-import { createRide, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
+import { getFreeRoute, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
 import { supabase } from '../../lib/supabase';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
@@ -14,7 +14,6 @@ import { searchLimpopo, ICON_BY_TYPE, type SearchPlace } from '../../lib/placeSe
 import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE, RIDE_EXTRAS } from '../../config/pricing';
 import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
-import { calculateCategoryBasePrice } from '../../lib/pricing';
 import { UserIcon } from '../../components/Icons';
 import { RatingModal } from '../../components/RatingModal';
 import { Spinner } from '../../components/Spinner';
@@ -48,7 +47,6 @@ const STATUS_BANNER: Record<string, string> = {
   trip_started: 'On trip to destination',
 };
 const DEFAULT_CENTER = { lat: -23.9045, lng: 29.4689 };
-const STOP_FEE = 10;
 
 type Stop = { id: string; address: string; lat: number | null; lng: number | null };
 
@@ -125,7 +123,6 @@ export function PassengerDashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const [distance, setDistance] = useState<string>('');
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
-  const [durationMin, setDurationMin] = useState<number | null>(null);
   const [plannedRoutePath, setPlannedRoutePath] = useState<[number, number][] | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [priceError, setPriceError] = useState('');
@@ -210,38 +207,24 @@ export function PassengerDashboard() {
     if (geocodeTimerRef.current) window.clearTimeout(geocodeTimerRef.current);
   }, []);
 
-  // Straight-line estimate used internally (map centering / initial distanceKm-durationMin).
-  const calculateFareFallback = () => {
-    const origin = stops[0];
-    const dest = stops[stops.length - 1];
-    if (origin.lat == null || origin.lng == null || dest.lat == null || dest.lng == null) return;
-
-    const km = calcDistance(origin.lat, origin.lng, dest.lat, dest.lng);
-    const minutes = (km / 30) * 60; // assume ~30km/h average city speed
-    setDistanceKm(km);
-    setDurationMin(minutes);
-  };
-
-  // V1: hardcoded straight-line distance/route, no OSRM. Distance * 1.3 (rough road-distance
-  // correction) + ~30km/h average speed for the fare estimate; the map always draws a plain
-  // straight blue line between origin and destination.
+  // Fetch the passenger's road route and price it from the routed distance.
   const calculateFare = async () => {
     if (stops.some((stop) => stop.lat == null || stop.lng == null)) return;
     const origin = stops[0];
     const dest = stops[stops.length - 1];
-    calculateFareFallback();
     setPriceLoading(true);
     setPriceError('');
     const straightKm = calcDistance(origin.lat!, origin.lng!, dest.lat!, dest.lng!);
-    const km = straightKm * 1.3;
-    const minutes = (km / 30) * 60;
+    const fallbackKm = straightKm * 1.3;
+    const route = await getFreeRoute(
+      { lat: origin.lat!, lng: origin.lng! },
+      { lat: dest.lat!, lng: dest.lng! },
+    );
+    const km = route ? route.distance / 1000 : fallbackKm;
+    setPlannedRoutePath(route?.polyline ?? [[origin.lat!, origin.lng!], [dest.lat!, dest.lng!]]);
     setDistance(`${km.toFixed(1)} km`);
     setDistanceKm(km);
-    setDurationMin(minutes);
-    setPlannedRoutePath([[origin.lat!, origin.lng!], [dest.lat!, dest.lng!]]);
-    const distanceFare = Math.round((km * 5 + BOOKING_FEE) * 100) / 100;
-    const calculatedFare = calculateCategoryBasePrice(km, minutes) + (stops.length - 2) * STOP_FEE;
-    setEstimatedFare(Math.max(calculatedFare, distanceFare));
+    setEstimatedFare(Math.round(km * 18) + 3);
     setPriceLoading(false);
   };
 
@@ -443,33 +426,24 @@ export function PassengerDashboard() {
         setMessage('You already have a ride request waiting for a driver.');
         return;
       }
-      const pickupPoint = { address: pickup.address, lat: pickup.lat!, lng: pickup.lng!, source: 'manual_pin' };
-      const dropoffPoint = { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng!, source: 'manual_pin' };
-      const rideFare = mode === 'send' ? total - BOOKING_FEE : total - BOOKING_FEE - extrasFee;
-      const rideRef = await createRide(
-        pickupPoint,
-        dropoffPoint,
-        passengerId,
-        {
-          type: mode === 'send' ? 'send' : 'ride',
-          distance_km: distanceKm,
+      const { data: createdRide, error: createRideError } = await supabase
+        .from('rides')
+        .insert({
+          pickup_address: pickup.address,
+          dropoff_address: dropoff.address,
+          pickup_lat: pickup.lat,
+          pickup_lng: pickup.lng,
+          dropoff_lat: dropoff.lat,
+          dropoff_lng: dropoff.lng,
           price: total,
-          totalFare: total,
-          fare: rideFare,
-          category: rideCategory,
-          passengerCount,
-          extras: selectedExtras,
-          extrasFee,
-          stops: stops.map((stop) => ({ address: stop.address, lat: stop.lat, lng: stop.lng })),
-          paymentMethod,
-          packageDescription: mode === 'send' ? packageDescription : null,
-          recipientName: mode === 'send' ? recipientName : null,
-          recipientPhone: mode === 'send' ? recipientPhone : null,
-          packageSize: mode === 'send' ? packageSize : null,
-        },
-      );
+          status: 'pending',
+          passenger_id: passengerId,
+        })
+        .select('id')
+        .single();
+      if (createRideError) throw createRideError;
 
-      setRideId(rideRef.id);
+      setRideId(createdRide.id);
       setTripType(mode);
       setRideCreatedAt(Date.now());
       setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
@@ -513,7 +487,6 @@ export function PassengerDashboard() {
     } else {
       setDistance('');
       setDistanceKm(null);
-      setDurationMin(null);
       setEstimatedFare(0);
       setPriceError('');
       setPriceLoading(false);
@@ -1275,7 +1248,7 @@ export function PassengerDashboard() {
                   <div className="flex flex-col gap-2 mb-3">
                     {RIDE_CATEGORIES.filter((cat) => !('isDelivery' in cat && cat.isDelivery)).map((cat) => {
                       const selected = rideCategory === cat.id;
-                      const basePrice = calculateCategoryBasePrice(distanceKm ?? 0, durationMin ?? 0);
+                      const basePrice = Math.round((distanceKm ?? 0) * 18) + 3;
                       const price = basePrice * cat.multiplier;
                       const tooSmall = passengerCount > cat.maxPassengers;
                       return (
