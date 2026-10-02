@@ -128,6 +128,7 @@ export function DriverDashboard() {
   const [routeInstruction, setRouteInstruction] = useState('');
   const arrivedHoldUntilRef = useRef(0);
   const [drivingMode, setDrivingMode] = useState(false);
+  const [sheetVisible, setSheetVisible] = useState(true);
   const [followTrigger, setFollowTrigger] = useState(0);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
@@ -139,6 +140,9 @@ export function DriverDashboard() {
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [passengerName, setPassengerName] = useState('Passenger');
   const sheetTouchStartY = useRef<number | null>(null);
+  const mapTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const navigationHistoryRef = useRef(false);
+  const dismissedNavigationRideRef = useRef<string | null>(null);
 
   const requestLocation = () => {
     if (!navigator.geolocation) {
@@ -335,6 +339,9 @@ export function DriverDashboard() {
         await updateRideFields(ride.id, { status: RIDE_STATUS.DRIVER_ASSIGNED, driver_id: uid });
       }
       const nextAcceptedRide = { ...ride, status: 'driver_assigned' };
+      dismissedNavigationRideRef.current = null;
+      setSheetVisible(true);
+      setSheetExpanded(false);
       setAcceptedRide(nextAcceptedRide);
       setDrivingMode(true);
       showToast('Ride Accepted! Navigating to pickup...');
@@ -405,10 +412,38 @@ export function DriverDashboard() {
   }, [acceptedRide?.id]);
 
   useEffect(() => {
-    if (['driver_assigned', 'accepted', 'arrived', 'driver_arrived', 'driver_en_route'].includes(acceptedRide?.status ?? '')) {
-      setDrivingMode(true);
+    if (!acceptedRide) {
+      dismissedNavigationRideRef.current = null;
+      return;
     }
-  }, [acceptedRide?.status]);
+    if (['driver_assigned', 'accepted', 'arrived', 'driver_arrived', 'driver_en_route'].includes(acceptedRide.status ?? '')
+      && dismissedNavigationRideRef.current !== acceptedRide.id) {
+      setDrivingMode(true);
+      setSheetVisible(true);
+    }
+  }, [acceptedRide?.id, acceptedRide?.status]);
+
+  useEffect(() => {
+    if (!drivingMode) return;
+    window.history.pushState({ driverFullscreenRide: true }, '');
+    navigationHistoryRef.current = true;
+    const handleBack = () => {
+      if (!navigationHistoryRef.current) return;
+      navigationHistoryRef.current = false;
+      dismissedNavigationRideRef.current = acceptedRide?.id ?? null;
+      setDrivingMode(false);
+      setSheetVisible(true);
+      setSheetExpanded(false);
+    };
+    window.addEventListener('popstate', handleBack);
+    return () => {
+      window.removeEventListener('popstate', handleBack);
+      if (navigationHistoryRef.current) {
+        navigationHistoryRef.current = false;
+        window.history.back();
+      }
+    };
+  }, [drivingMode, acceptedRide?.id]);
 
   useEffect(() => {
     driverLocationRef.current = driverLocation;
@@ -858,8 +893,41 @@ export function DriverDashboard() {
     sheetTouchStartY.current = null;
     if (startY == null) return;
     const deltaY = (e.changedTouches[0]?.clientY ?? startY) - startY;
-    if (deltaY < -30) setSheetExpanded(true);
-    else if (deltaY > 30) setSheetExpanded(false);
+    if (deltaY < -30) {
+      setSheetVisible(true);
+      setSheetExpanded(true);
+    } else if (deltaY > 30) {
+      setSheetExpanded(false);
+      setSheetVisible(false);
+    }
+  };
+  const exitDrivingMode = () => {
+    dismissedNavigationRideRef.current = acceptedRide?.id ?? null;
+    setDrivingMode(false);
+    setSheetVisible(true);
+    setSheetExpanded(false);
+    if (navigationHistoryRef.current) {
+      navigationHistoryRef.current = false;
+      window.history.back();
+    }
+  };
+  const handleMapTouchStart = (e: TouchEvent) => {
+    const touch = e.touches[0];
+    mapTouchStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  };
+  const handleMapTouchEnd = (e: TouchEvent) => {
+    const start = mapTouchStartRef.current;
+    mapTouchStartRef.current = null;
+    const touch = e.changedTouches[0];
+    if (!start || !touch) return;
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaY) < 80 || Math.abs(deltaY) < Math.abs(deltaX) * 1.4) return;
+    if (deltaY > 0) exitDrivingMode();
+    else if (!sheetVisible) {
+      setSheetVisible(true);
+      setSheetExpanded(true);
+    }
   };
 
   const displayRide = acceptedRide ?? rides[0] ?? null;
@@ -895,7 +963,7 @@ export function DriverDashboard() {
         {!drivingMode && <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />}
 
         <main className={`relative mx-auto flex w-full flex-col gap-4 overflow-hidden ${drivingMode ? 'fixed inset-0 z-20 h-[100dvh] max-w-none p-0' : 'h-[calc(100vh-4rem)] max-w-xl px-4 py-4'}`}>
-          <section className={`transition-all duration-500 ease-in-out ${mapContainerClass} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
+          <section onTouchStart={drivingMode ? handleMapTouchStart : undefined} onTouchEnd={drivingMode ? handleMapTouchEnd : undefined} className={`transition-all duration-500 ease-in-out ${mapContainerClass} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
               <DriverMapMapbox
                 driver={driverLocation}
@@ -943,11 +1011,31 @@ export function DriverDashboard() {
         </main>
 
         {acceptedRide && drivingMode && (
-          <section className="fixed bottom-0 left-0 right-0 z-30 rounded-t-3xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-gray-900 shadow-[0_-8px_30px_rgba(0,0,0,0.2)] translate-y-0 transition-transform duration-300">
+          <header className="fixed left-0 right-0 top-0 z-30 flex h-12 items-center justify-between bg-white/90 px-3 text-gray-900 shadow-sm backdrop-blur-sm">
+            <button type="button" onClick={exitDrivingMode} aria-label="Show driver menu" className="flex h-10 w-10 items-center justify-center text-2xl">←</button>
+            <div className="min-w-0 truncate text-center text-sm font-bold">
+              R{displayFare.toFixed(2)} • Driving to {isTripPhase ? 'dropoff' : 'pickup'}
+            </div>
+            <a href={acceptedRide.passengerPhone ? `tel:${acceptedRide.passengerPhone}` : undefined} aria-label="Call passenger" className={`flex h-10 w-10 items-center justify-center ${acceptedRide.passengerPhone ? 'text-gray-900' : 'pointer-events-none text-gray-300'}`}>
+              <Phone size={20} />
+            </a>
+          </header>
+        )}
+
+        {acceptedRide && drivingMode && (
+          <section onTouchStart={handleSheetTouchStart} onTouchEnd={handleSheetTouchEnd} className={`fixed bottom-0 left-0 right-0 z-20 rounded-t-3xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-gray-900 shadow-[0_-8px_30px_rgba(0,0,0,0.2)] transition-transform duration-300 ${sheetVisible ? 'translate-y-0' : 'translate-y-full'}`}>
+            <div className="mx-auto mb-2 h-1.5 w-12 rounded-full bg-gray-300" />
             <p className="truncate text-base font-bold">{isTripPhase ? displayDropoffLabel : displayPickupLabel}</p>
             <p className="mt-1 text-sm font-semibold text-gray-600">
               {routeDistanceKm ?? '—'} km • {routeEtaMin ?? '—'} min {isTripPhase ? 'to dropoff' : 'to pickup'}
             </p>
+            {sheetExpanded && (
+              <div className="mt-3 max-h-[45vh] space-y-3 overflow-y-auto border-t border-gray-200 pt-3">
+                <p className="text-sm font-semibold">Passenger: {passengerName}</p>
+                <RideDetails ride={acceptedRide} />
+                <PassengerBadge passengerId={acceptedRide.passengerId} revealed />
+              </div>
+            )}
             {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && (
               <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus} className="mt-3 h-12 w-full rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">
                 Arrived at Pickup
