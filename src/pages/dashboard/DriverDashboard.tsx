@@ -90,7 +90,6 @@ type RideRequest = {
 };
 
 type Coordinates = { lat: number; lng: number };
-  setDrivingMode(true);
 
 function toMillis(value: unknown): number | null {
   if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') {
