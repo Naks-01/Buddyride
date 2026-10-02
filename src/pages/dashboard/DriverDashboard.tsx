@@ -125,13 +125,7 @@ export function DriverDashboard() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [toast, setToast] = useState('');
-  const [checkingArrival, setCheckingArrival] = useState(false);
-  const [arrivalReady, setArrivalReady] = useState(false);
-  const [driverAccuracy, setDriverAccuracy] = useState<number | null>(null);
   const [routeInstruction, setRouteInstruction] = useState('');
-  const arrivalReadySinceRef = useRef<number | null>(null);
-  const arrivalReadyRideIdRef = useRef<string | null>(null);
-  const lastArrivalCheckAtRef = useRef(0);
   const arrivedHoldUntilRef = useRef(0);
   const [drivingMode, setDrivingMode] = useState(false);
   const [followTrigger, setFollowTrigger] = useState(0);
@@ -155,11 +149,9 @@ export function DriverDashboard() {
       (pos) => {
         console.log('Location granted', pos.coords);
         setDriverLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setDriverAccuracy(pos.coords.accuracy);
         setLocationError(null);
         navigator.geolocation.watchPosition((p) => {
           setDriverLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
-          setDriverAccuracy(p.coords.accuracy);
         });
       },
       (err) => {
@@ -423,11 +415,6 @@ export function DriverDashboard() {
   }, [driverLocation]);
 
   useEffect(() => {
-    if (arrivalReadyRideIdRef.current !== (acceptedRide?.id ?? null)) {
-      arrivalReadyRideIdRef.current = acceptedRide?.id ?? null;
-      arrivalReadySinceRef.current = null;
-      setArrivalReady(false);
-    }
     const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
     const currentStop = acceptedRide?.stops?.[acceptedRide.currentStopIndex ?? 1];
     const destination = acceptedRide?.status === 'trip_started'
@@ -502,39 +489,12 @@ export function DriverDashboard() {
   };
 
   const markArrivedAtPickup = async (ride: RideRequest) => {
-    const now = Date.now();
-    if (now - lastArrivalCheckAtRef.current < 2000) return;
-    lastArrivalCheckAtRef.current = now;
     setError('');
-    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
-    setCheckingArrival(true);
-    const location = await getDriverLocation();
-    setCheckingArrival(false);
-
-    if (!location) {
-      setError('Enable location access to confirm you are at the pickup point.');
-      return;
-    }
-    if (location.accuracy >= 20) {
-      setError('GPS accuracy must be better than 20m to confirm arrival.');
-      return;
-    }
-    const distanceKm = pickup ? calcDistance(location.lat, location.lng, pickup.lat, pickup.lng) : null;
-    const distanceToPickup = distanceKm == null ? null : distanceKm * 1000;
-    if (distanceToPickup == null || distanceToPickup >= 50 || !arrivalReady) {
-      setError(`You must be within 50m of pickup with accurate GPS for 2 seconds${distanceToPickup == null ? '.' : ` (currently ${distanceToPickup.toFixed(0)}m away).`}`);
-      return;
-    }
-
-    // Update local state immediately so the Start Trip button appears without waiting on the snapshot round-trip.
     arrivedHoldUntilRef.current = Date.now() + 5000;
     setAcceptedRide((prev) => (prev ? { ...prev, status: 'driver_arrived', arrivedAt: Date.now() } : prev));
     setUpdatingStatus(true);
     try {
-      await markArrived(ride.id, ride.passengerId, {
-        driverLocation: location,
-        ...(distanceKm != null && { arrivalDistanceM: distanceKm * 1000 }),
-      });
+      await markArrived(ride.id, ride.passengerId);
     } catch (err) {
       arrivedHoldUntilRef.current = 0;
       setAcceptedRide((prev) => (prev?.id === ride.id ? { ...prev, status: ride.status } : prev));
@@ -544,22 +504,6 @@ export function DriverDashboard() {
       setUpdatingStatus(false);
     }
   };
-
-  useEffect(() => {
-    const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
-    const distanceM = pickup && driverLocation
-      ? calcDistance(driverLocation.lat, driverLocation.lng, pickup.lat, pickup.lng) * 1000
-      : Infinity;
-    if (!acceptedRide || (acceptedRide.status !== 'driver_assigned' && acceptedRide.status !== 'driver_en_route') || distanceM >= 50 || driverAccuracy == null || driverAccuracy >= 20) {
-      arrivalReadySinceRef.current = null;
-      setArrivalReady(false);
-      return;
-    }
-    if (arrivalReadySinceRef.current == null) arrivalReadySinceRef.current = Date.now();
-    const remaining = Math.max(0, 2000 - (Date.now() - arrivalReadySinceRef.current));
-    const timer = window.setTimeout(() => setArrivalReady(true), remaining);
-    return () => window.clearTimeout(timer);
-  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.pickupLatLng?.lat, acceptedRide?.pickupLatLng?.lng, driverLocation?.lat, driverLocation?.lng, driverAccuracy]);
 
   useEffect(() => {
     const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
@@ -770,7 +714,6 @@ export function DriverDashboard() {
       }
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setDriverAccuracy(position.coords.accuracy);
           setDriverLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
           resolve({ lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy });
         },
@@ -795,7 +738,6 @@ export function DriverDashboard() {
     const tick = () => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setDriverAccuracy(position.coords.accuracy);
           setDriverLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
           if (position.coords.accuracy > 50) return; // too imprecise to trust - skip this tick
           void updateDoc(doc(db, 'rides', rideId), {
@@ -991,7 +933,7 @@ export function DriverDashboard() {
           {acceptedRide && !drivingMode && <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between"><p className="font-bold text-[#171717]">{acceptedRide.status === 'completed' ? 'Ride completed' : `Status: ${acceptedRide.status?.split('_').join(' ')}`}</p><button type="button" onClick={() => setFollowTrigger((prev) => prev + 1)} aria-label="Recenter route" className="rounded-lg p-2 text-[#FF5500]"><NavigationIcon size={20} /></button></div>
             <div className="flex flex-col gap-3">
-              {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>}
+              {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Arrived at Pickup</button>}
               {acceptedRide.status === 'driver_arrived' && <button type="button" onClick={() => void startTrip(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Start Trip</button>}
               {isTripPhase && <button type="button" onClick={() => void completeTrip(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Complete Trip</button>}
               {acceptedRide.status !== 'completed' && <button type="button" onClick={() => void driverCancelRide(acceptedRide)} disabled={updatingStatus} className="h-12 rounded-xl border border-gray-300 bg-white font-semibold text-gray-600 disabled:opacity-60">Cancel Ride</button>}
@@ -1007,8 +949,8 @@ export function DriverDashboard() {
               {routeDistanceKm ?? '—'} km • {routeEtaMin ?? '—'} min {isTripPhase ? 'to dropoff' : 'to pickup'}
             </p>
             {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && (
-              <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={!arrivalReady || updatingStatus || checkingArrival} className="mt-3 h-12 w-full rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">
-                {checkingArrival ? 'Checking location...' : arrivalReady ? 'Arrived at Pickup' : 'Driving to pickup'}
+              <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus} className="mt-3 h-12 w-full rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">
+                Arrived at Pickup
               </button>
             )}
             {acceptedRide.status === 'driver_arrived' && (
@@ -1251,10 +1193,10 @@ export function DriverDashboard() {
                 <button
                   type="button"
                   onClick={() => void markArrivedAtPickup(acceptedRide)}
-                  disabled={updatingStatus || checkingArrival}
+                  disabled={updatingStatus}
                   className="rounded-lg bg-[#FF6B00] py-2 text-xs font-bold text-white disabled:opacity-60"
                 >
-                  {checkingArrival ? '...' : 'ARRIVED'}
+                  ARRIVED
                 </button>
               )}
               {acceptedRide.status === 'driver_arrived' && (

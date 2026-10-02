@@ -88,6 +88,8 @@ export function PassengerDashboard() {
   const [dropoffAddress, setDropoffAddress] = useState('');
   const [dropoffLocation, setDropoffLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [rideStatus, setRideStatus] = useState<string | null>(null);
+  const [driverStatusText, setDriverStatusText] = useState('');
+  const [bannerColor, setBannerColor] = useState<'orange' | 'green'>('orange');
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [tripPickupLocation, setTripPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [tripDropoffLocation, setTripDropoffLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -525,6 +527,8 @@ export function PassengerDashboard() {
         lastSoundStatusRef.current = nextStatus;
         if (nextStatus === 'driver_assigned') playSound('accepted');
         else if (nextStatus === 'driver_arrived') {
+          setDriverStatusText('Driver is outside - Your driver has arrived');
+          setBannerColor('orange');
           playSoundTimes('arrived', 3);
           if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
           void (async () => {
@@ -549,6 +553,8 @@ export function PassengerDashboard() {
       if (nextStatus === 'driver_assigned') {
         const acceptedDriverName = typeof data.driverName === 'string' ? data.driverName : 'Driver';
         setDriverName(acceptedDriverName);
+        setDriverStatusText('Driver on the way! Driver is heading to you');
+        setBannerColor('orange');
         setMessage(
           data.type === 'send'
             ? `Driver on the way! ${acceptedDriverName} is coming to collect your parcel.`
@@ -556,6 +562,9 @@ export function PassengerDashboard() {
         );
       } else if (nextStatus === 'driver_arrived') {
         setMessage('');
+      } else if (nextStatus === 'trip_started') {
+        setDriverStatusText('Trip in progress - Driver is taking you to your destination');
+        setBannerColor('green');
       }
 
       const pickupLatLng = data.pickupLatLng ?? data.pickup ?? null;
@@ -954,16 +963,16 @@ export function PassengerDashboard() {
             <>
               <p
                 className={`text-center text-sm mb-3 rounded-lg border py-2 px-3 ${
-                  rideStatus === 'trip_started'
+                  bannerColor === 'green'
                     ? 'bg-green-50 text-green-800 border-green-200 font-semibold'
                     : 'bg-orange-50 text-orange-700 border-orange-200'
                 }`}
               >
-                {tripType === 'send' && (rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'trip_started')
-                  ? 'Driver is delivering your parcel'
-                  : rideStatus === 'trip_started'
-                    ? 'Trip in progress - Driver is taking you to your destination'
-                    : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'}
+                {driverStatusText || (
+                  tripType === 'send' && (rideStatus === 'driver_assigned' || rideStatus === 'driver_en_route' || rideStatus === 'trip_started')
+                    ? 'Driver is delivering your parcel'
+                    : STATUS_BANNER[rideStatus!] ?? 'Ride in progress'
+                )}
               </p>
               {isShareableTrip && (
                 <div className="mb-3 flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
@@ -989,15 +998,15 @@ export function PassengerDashboard() {
                 <span>Fare: {formatR(displayedFare + pickupWaitFare + waitingFare)}{usingBackupPoolFare ? ' (pool estimate)' : ''}</span>
               </div>
               {rideStatus === 'driver_arrived' && (
-                <div className="mb-3 rounded-xl border-2 border-green-500 bg-green-100 px-4 py-3 text-center animate-pulse">
-                  <p className="text-lg font-extrabold text-green-800">🚗 Driver is outside!</p>
-                  <p className="text-sm font-semibold text-green-800">
+                <div className="mb-3 rounded-xl border-2 border-orange-500 bg-orange-100 px-4 py-3 text-center animate-pulse">
+                  <p className="text-lg font-extrabold text-orange-800">Driver is outside - Your driver has arrived</p>
+                  <p className="text-sm font-semibold text-orange-800">
                     He is waiting at pickup - Free wait: {pickupWaitSeconds <= 180
                       ? `${Math.floor((180 - pickupWaitSeconds) / 60)}:${String((180 - pickupWaitSeconds) % 60).padStart(2, '0')}`
                       : `0:00 (Extra ${formatR(pickupWaitFare)})`}
                   </p>
                   {driverPhone && (
-                    <a href={`tel:${driverPhone}`} className="mt-1 inline-block text-sm font-bold text-green-900 underline">
+                    <a href={`tel:${driverPhone}`} className="mt-1 inline-block text-sm font-bold text-orange-900 underline">
                       Call driver: {driverPhone}
                     </a>
                   )}
