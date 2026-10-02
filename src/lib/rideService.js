@@ -263,12 +263,17 @@ export async function completeRide(rideId, extra = {}) {
 // CANCELLED - ride cancelled by either party.
 export async function cancelRide(rideId, extra = {}) {
   const { status: _ignoredStatus, cancelledBy, cancelled_by, cancelReason, cancellationReason, ...metadata } = extra;
+  const cancellingParty = cancelledBy ?? cancelled_by;
   const payload = {
     ...Object.fromEntries(
       Object.entries(metadata).map(([key, value]) => [key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`), value]),
     ),
-    status: RIDE_STATUS.CANCELLED,
-    cancelled_by: cancelledBy ?? cancelled_by ?? null,
+    status: cancellingParty === 'driver'
+      ? 'cancelled_by_driver'
+      : cancellingParty === 'passenger'
+        ? 'cancelled_by_passenger'
+        : RIDE_STATUS.CANCELLED,
+    cancelled_by: cancellingParty ?? null,
     cancel_reason: cancelReason ?? cancellationReason ?? null,
     cancelled_at: serverTimestamp(),
   };

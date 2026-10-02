@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DocumentData } from '../../lib/supabaseDb';
 import { LockKeyhole } from 'lucide-react';
-import { LocalNotifications } from '@capacitor/local-notifications';
 import { useAuth } from '../../context/AuthContext';
 import { getFreeRoute, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
 import { supabase } from '../../lib/supabase';
@@ -11,7 +10,7 @@ import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces } from '../../lib/polokwane';
 import { searchLimpopo, ICON_BY_TYPE, type SearchPlace } from '../../lib/placeSearch';
-import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE, RIDE_EXTRAS } from '../../config/pricing';
+import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE } from '../../config/pricing';
 import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
 import { UserIcon } from '../../components/Icons';
@@ -148,13 +147,10 @@ export function PassengerDashboard() {
   const [recipientPhone, setRecipientPhone] = useState('');
   const [packageSize, setPackageSize] = useState<'small' | 'medium' | 'large'>('small');
   const [rideCategory, setRideCategory] = useState<RideCategoryId>('go');
-  const [passengerCount, setPassengerCount] = useState(1);
-  const [selectedExtras, setSelectedExtras] = useState<Array<keyof typeof RIDE_EXTRAS>>([]);
-  const extrasFee = selectedExtras.reduce((total, extra) => total + RIDE_EXTRAS[extra].fee, 0);
   const categoryMultiplier = RIDE_CATEGORIES.find((c) => c.id === rideCategory)?.multiplier ?? 1;
   const total = estimatedFare * categoryMultiplier;
   const roundedTotal = Math.round(total * 100) / 100;
-  const ridePrice = total - BOOKING_FEE - extrasFee;
+  const ridePrice = total - BOOKING_FEE;
   const displayedFare = fare ?? totalFare ?? baseFare ?? (roundedTotal > 0 ? roundedTotal : BACKUP_POOL_RIDES[0].fare);
   const usingBackupPoolFare = fare == null && totalFare == null && baseFare == null && roundedTotal <= 0;
 
@@ -231,18 +227,6 @@ export function PassengerDashboard() {
   const selectCategory = (catId: RideCategoryId) => {
     const cat = RIDE_CATEGORIES.find((c) => c.id === catId);
     if (!cat) return;
-    if (passengerCount > cat.maxPassengers) {
-      const nextUp = RIDE_CATEGORIES.find((c) => !('isDelivery' in c && c.isDelivery) && c.maxPassengers >= passengerCount);
-      setMessage(
-        catId === 'go'
-          ? 'Buddy Go max 2 riders, choose Buddy Ride'
-          : catId === 'sedan'
-            ? 'Buddy Ride max 3 riders, choose Buddy XL'
-            : `${cat.name} max ${cat.maxPassengers} riders`
-      );
-      if (nextUp) setRideCategory(nextUp.id);
-      return;
-    }
     setMessage('');
     setRideCategory(catId);
   };
@@ -254,7 +238,6 @@ export function PassengerDashboard() {
       setRideCategory('send');
     } else if (rideCategory === 'send') {
       setRideCategory('go');
-      setPassengerCount(1);
     }
   };
 
@@ -494,14 +477,6 @@ export function PassengerDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stops]);
 
-  // Force an up-size if the selected category can no longer fit the chosen passenger count.
-  useEffect(() => {
-    const current = RIDE_CATEGORIES.find((c) => c.id === rideCategory);
-    if (!current || mode !== 'ride' || passengerCount <= current.maxPassengers) return;
-    const nextUp = RIDE_CATEGORIES.find((c) => !('isDelivery' in c && c.isDelivery) && c.maxPassengers >= passengerCount);
-    if (nextUp) setRideCategory(nextUp.id);
-  }, [passengerCount, rideCategory, mode]);
-
   // Follow the requested ride's status and the driver's live location once accepted.
   const lastSoundStatusRef = useRef<string | null>(null);
   useEffect(() => {
@@ -512,6 +487,27 @@ export function PassengerDashboard() {
 
       const nextStatus = typeof data.status === 'string' ? data.status : null;
       setRideStatus(nextStatus);
+      if (nextStatus?.startsWith('cancelled')) {
+        if (lastSoundStatusRef.current !== nextStatus) {
+          lastSoundStatusRef.current = nextStatus;
+          playSound('cancel');
+          window.alert(nextStatus === 'cancelled_by_driver' ? 'Driver cancelled' : 'Passenger cancelled');
+        }
+        setRideId(null);
+        setRideStatus(null);
+        setRideCreatedAt(null);
+        setCancelSecondsRemaining(0);
+        setCancelledBy(null);
+        setCancelReason(null);
+        setDriverLocation(null);
+        setDriverName(null);
+        setDriverPhone(null);
+        setDriverId(null);
+        setDriverPhotoUrl(null);
+        setCarPlate(null);
+        resetPins();
+        return;
+      }
 
       // Driver's live position - written by the driver app every 5s (Bolt-style) straight onto
       // this same ride doc, so one onSnapshot listener covers both status and location.
@@ -541,42 +537,7 @@ export function PassengerDashboard() {
               console.error('Failed to show arrival notification:', notificationError);
             }
           })();
-        } else if (nextStatus === 'cancelled') {
-          playSound('cancel');
-          setCancelledBy(typeof data.cancelledBy === 'string' ? data.cancelledBy : null);
-          setCancelReason(typeof data.cancelReason === 'string' ? data.cancelReason : null);
-        }
-        else if (nextStatus === 'completed') playSound('completed');
-        else if (nextStatus === 'cancelled_by_driver') {
-          playSound('cancel');
-          setMessage('Driver cancelled the ride. Searching for a new driver...');
-          void LocalNotifications.checkPermissions().then(async (perm) => {
-            if (perm.display !== 'granted') {
-              perm = await LocalNotifications.requestPermissions();
-            }
-            if (perm.display === 'granted') {
-              void LocalNotifications.schedule({
-                notifications: [
-                  {
-                    id: Date.now() % 2147483647,
-                    title: 'Driver cancelled',
-                    body: 'Your driver cancelled the ride. You can request another one.',
-                  },
-                ],
-              }).catch((err: unknown) => console.error('Failed to schedule local notification:', err));
-            }
-          }).catch((err: unknown) => console.error('Failed to check notification permissions:', err));
-          setRideId(null);
-          setRideStatus(null);
-          setRideCreatedAt(null);
-          setCancelSecondsRemaining(0);
-          setDriverLocation(null);
-          setDriverName(null);
-          setDriverPhone(null);
-          setDriverId(null);
-          setDriverPhotoUrl(null);
-          setCarPlate(null);
-        }
+        } else if (nextStatus === 'completed') playSound('completed');
       }
 
       if (data.type === 'send' || data.type === 'ride') {
@@ -895,6 +856,12 @@ export function PassengerDashboard() {
     <div className="relative h-[100dvh] w-full overflow-hidden bg-gray-50">
       {rideId && isShareableTrip && profile?.id && (
         <RideChat rideId={rideId} currentUserId={profile.id} currentUserRole="passenger" rideStatus={rideStatus} />
+      )}
+      {rideStatus === 'driver_arrived' && (
+        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-green-700 px-6 text-center text-white">
+          <h1 className="text-4xl font-black">Driver is outside</h1>
+          <p className="mt-4 text-xl font-semibold">Your driver has arrived at pickup</p>
+        </div>
       )}
       {rideStatus === 'cancelled' && (
         <div
@@ -1242,7 +1209,7 @@ export function PassengerDashboard() {
           )}
 
           {!rideId && !priceLoading && !priceError && distance && estimatedFare > 0 && (
-            <div className="bg-orange-100 p-3 rounded-lg mt-3">
+            <div className="bg-orange-100 rounded-lg mt-3 p-3 pb-0">
               {mode === 'ride' && (
                 <>
                   <div className="flex flex-col gap-2 mb-3">
@@ -1250,13 +1217,12 @@ export function PassengerDashboard() {
                       const selected = rideCategory === cat.id;
                       const basePrice = Math.round((distanceKm ?? 0) * 18) + 3;
                       const price = basePrice * cat.multiplier;
-                      const tooSmall = passengerCount > cat.maxPassengers;
                       return (
                         <button
                           key={cat.id}
                           type="button"
                           onClick={() => selectCategory(cat.id)}
-                          className={`w-full snap-start rounded-xl p-3 border-2 flex items-center gap-3 text-left ${selected ? 'border-black bg-black text-white' : 'border-gray-200 bg-white'} ${tooSmall ? 'opacity-60' : ''}`}
+                          className={`w-full snap-start rounded-xl p-3 border-2 flex items-center gap-3 text-left ${selected ? 'border-black bg-black text-white' : 'border-gray-200 bg-white'}`}
                         >
                           <div className="text-3xl">{cat.emoji}</div>
                           <div className="min-w-0 flex-1">
@@ -1278,20 +1244,8 @@ export function PassengerDashboard() {
                       );
                     })}
                   </div>
-                  <div className="mb-3">
-                    <select value={passengerCount} onChange={(event) => setPassengerCount(Number(event.target.value))} className="rounded border px-2 text-sm">
-                      {Array.from({ length: 6 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} pax</option>)}
-                    </select>
-                  </div>
-                  <p className="mb-2 font-semibold text-gray-700">Add extras</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {(Object.entries(RIDE_EXTRAS) as Array<[keyof typeof RIDE_EXTRAS, (typeof RIDE_EXTRAS)[keyof typeof RIDE_EXTRAS]]>).map(([key, extra]) => (
-                      <label key={key} className="flex items-center gap-2 rounded-lg bg-white p-2 text-sm"><input type="checkbox" checked={selectedExtras.includes(key)} onChange={() => setSelectedExtras((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /> <span>{extra.icon} {extra.label} +{formatR(extra.fee)}</span></label>
-                    ))}
-                  </div>
                   <p>Distance: {distance}</p>
-                  <p>Ride {formatR(ridePrice)} + Booking {formatR(BOOKING_FEE)}{extrasFee > 0 ? ` + Extras ${formatR(extrasFee)}` : ''} = {formatR(roundedTotal)}</p>
-                  {rideCategory === 'xl' && passengerCount === 6 && selectedExtras.includes('luggage') && <p className="mt-2 font-semibold text-green-700">Perfect for airport trip</p>}
+                  <p>Ride {formatR(ridePrice)} + Booking {formatR(BOOKING_FEE)} = {formatR(roundedTotal)}</p>
                 </>
               )}
               {mode === 'send' && (
@@ -1370,7 +1324,7 @@ export function PassengerDashboard() {
             <button
               onClick={handleRequestClick}
               disabled={requesting}
-              className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-3"
+              className="w-full flex items-center justify-center gap-2 bg-orange-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl mt-0"
             >
               {mode === 'send' ? <span>📦</span> : <CarIcon size={20} />}{' '}
               {requesting

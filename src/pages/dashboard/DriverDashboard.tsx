@@ -90,6 +90,7 @@ type RideRequest = {
 };
 
 type Coordinates = { lat: number; lng: number };
+  setDrivingMode(true);
 
 function toMillis(value: unknown): number | null {
   if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') {
@@ -114,24 +115,31 @@ export function DriverDashboard() {
   const [driverProfile, setDriverProfile] = useState<Record<string, unknown> | null>(null);
   const [rides, setRides] = useState<RideRequest[]>([]);
   const [acceptedRide, setAcceptedRide] = useState<RideRequest | null>(null);
-  const [isAccepted, setIsAccepted] = useState(false);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [waitSecondsRemaining, setWaitSecondsRemaining] = useState(0);
   const [stopWaitingSeconds, setStopWaitingSeconds] = useState(0);
   const tipToastRef = useRef<string | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
+  const handledCancellationRef = useRef<string | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [toast, setToast] = useState('');
   const [checkingArrival, setCheckingArrival] = useState(false);
+  const [arrivalReady, setArrivalReady] = useState(false);
+  const [driverAccuracy, setDriverAccuracy] = useState<number | null>(null);
+  const [routeInstruction, setRouteInstruction] = useState('');
+  const arrivalReadySinceRef = useRef<number | null>(null);
+  const arrivalReadyRideIdRef = useRef<string | null>(null);
   const lastArrivalCheckAtRef = useRef(0);
   const arrivedHoldUntilRef = useRef(0);
+  const [drivingMode, setDrivingMode] = useState(false);
   const [followTrigger, setFollowTrigger] = useState(0);
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
   const [routePath, setRoutePath] = useState<[number, number][]>([]);
+  const lastMapboxRouteAtRef = useRef(0);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [sheetExpanded, setSheetExpanded] = useState(false);
@@ -147,9 +155,11 @@ export function DriverDashboard() {
       (pos) => {
         console.log('Location granted', pos.coords);
         setDriverLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setDriverAccuracy(pos.coords.accuracy);
         setLocationError(null);
         navigator.geolocation.watchPosition((p) => {
           setDriverLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
+          setDriverAccuracy(p.coords.accuracy);
         });
       },
       (err) => {
@@ -306,42 +316,6 @@ export function DriverDashboard() {
     window.setTimeout(() => setToast(''), 3200);
   };
 
-  const getNavigationProvider = (): 'buddy' | 'gmaps' | 'waze' => {
-    const saved = localStorage.getItem('nav');
-    return saved === 'gmaps' || saved === 'waze' ? saved : 'buddy';
-  };
-
-  const launchNavigation = (destination: Coordinates, automatic = true) => {
-    if (automatic && localStorage.getItem('navAutoStart') === 'false') return;
-    const provider = getNavigationProvider();
-    setIsAccepted(true);
-    if (provider === 'buddy') {
-      setFollowTrigger((prev) => prev + 1);
-      return;
-    }
-
-    const coordinates = `${destination.lat},${destination.lng}`;
-    if (provider === 'gmaps') {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${coordinates}&travelmode=driving`, '_blank', 'noopener,noreferrer');
-      if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-        window.setTimeout(() => {
-          window.location.href = `google.navigation:q=${coordinates}`;
-        }, 150);
-      }
-    } else {
-      window.open(`https://waze.com/ul?ll=${destination.lat}%2C${destination.lng}&navigate=yes&zoom=17`, '_blank', 'noopener,noreferrer');
-    }
-  };
-
-  const openRideNavigation = (ride: RideRequest) => {
-    const destination = getCurrentNavTarget(ride);
-    if (!destination) {
-      setError(ride.status === 'trip_started' ? 'Destination is missing coordinates.' : 'Pickup location is missing coordinates.');
-      return;
-    }
-    launchNavigation(destination, false);
-  };
-
   const acceptRide = async (ride: RideRequest) => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
@@ -380,7 +354,7 @@ export function DriverDashboard() {
           return { ...prev, status: 'driver_en_route' };
         });
       }, 3000);
-      await navigateToPickup(nextAcceptedRide);
+      setFollowTrigger((prev) => prev + 1);
     } catch (err) {
       console.error('Failed to accept ride:', JSON.stringify(err));
       setError('Failed to accept ride.');
@@ -399,6 +373,18 @@ export function DriverDashboard() {
         (snapshot: any) => {
           const data = snapshot.data() as Record<string, unknown> | undefined;
           if (!data) return;
+          const status = typeof data.status === 'string' ? data.status : '';
+          if (status.startsWith('cancelled')) {
+            const cancellationKey = `${acceptedRide.id}:${status}`;
+            if (handledCancellationRef.current !== cancellationKey) {
+              handledCancellationRef.current = cancellationKey;
+              window.alert(status === 'cancelled_by_driver' ? 'Driver cancelled' : 'Passenger cancelled');
+              setAcceptedRide(null);
+              setDrivingMode(false);
+              setIsOnline(true);
+            }
+            return;
+          }
           const tipAmount = Number(data.tipAmount ?? 0);
           if (tipAmount > 0 && tipToastRef.current !== `${acceptedRide.id}:${tipAmount}`) {
             tipToastRef.current = `${acceptedRide.id}:${tipAmount}`;
@@ -425,6 +411,11 @@ export function DriverDashboard() {
   }, [acceptedRide?.id]);
 
   useEffect(() => {
+    if (arrivalReadyRideIdRef.current !== (acceptedRide?.id ?? null)) {
+      arrivalReadyRideIdRef.current = acceptedRide?.id ?? null;
+      arrivalReadySinceRef.current = null;
+      setArrivalReady(false);
+    }
     const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
     const currentStop = acceptedRide?.stops?.[acceptedRide.currentStopIndex ?? 1];
     const destination = acceptedRide?.status === 'trip_started'
@@ -432,13 +423,15 @@ export function DriverDashboard() {
         ? { lat: currentStop.lat, lng: currentStop.lng }
         : acceptedRide ? getLocationCoordinates(acceptedRide.dropoff, acceptedRide.dropoffLatLng) : null
       : pickup;
-    const origin = acceptedRide?.status === 'trip_started' ? pickup : driverLocation;
+    const origin = driverLocation;
     if (!acceptedRide || !origin || !destination) {
       setRoutePath([]);
       setRouteDistanceM(null);
       setRouteDurationSec(null);
       return;
     }
+    if (Date.now() - lastMapboxRouteAtRef.current < 5000) return;
+    lastMapboxRouteAtRef.current = Date.now();
 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 6000);
@@ -450,16 +443,22 @@ export function DriverDashboard() {
           setRoutePath([]);
           return;
         }
-        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&access_token=${encodeURIComponent(token)}`;
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=true&access_token=${encodeURIComponent(token)}`;
         const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) throw new Error(`Mapbox Directions request failed with ${response.status}`);
-        const data = await response.json() as { routes?: Array<{ distance?: number; duration?: number; geometry?: { coordinates?: Array<[number, number]> } }> };
+        const data = await response.json() as { routes?: Array<{ distance?: number; duration?: number; geometry?: { coordinates?: Array<[number, number]> }; legs?: Array<{ steps?: Array<{ maneuver?: { instruction?: string; location?: [number, number] } }> }> }> };
         const route = data.routes?.[0];
         const coordinates = route?.geometry?.coordinates ?? [];
         if (!route || !coordinates.length) throw new Error('OSRM returned no route geometry');
         setRoutePath(coordinates.map(([lng, lat]) => [lat, lng] as [number, number]));
         setRouteDistanceM(typeof route.distance === 'number' ? route.distance : null);
         setRouteDurationSec(typeof route.duration === 'number' ? route.duration : null);
+        const steps = route.legs?.[0]?.steps ?? [];
+        const nextStep = steps.find((step) => {
+          const maneuver = step.maneuver?.location;
+          return maneuver && calcDistance(driverLocation!.lat, driverLocation!.lng, maneuver[1], maneuver[0]) > 0.04;
+        });
+        setRouteInstruction(nextStep?.maneuver?.instruction ?? steps[0]?.maneuver?.instruction ?? 'Continue to your destination');
       } catch (routeError) {
         if ((routeError as Error).name === 'AbortError') return;
         console.error('Failed to load road route:', routeError);
@@ -492,7 +491,7 @@ export function DriverDashboard() {
 
   const markArrivedAtPickup = async (ride: RideRequest) => {
     const now = Date.now();
-    if (now - lastArrivalCheckAtRef.current < 3000) return;
+    if (now - lastArrivalCheckAtRef.current < 2000) return;
     lastArrivalCheckAtRef.current = now;
     setError('');
     const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
@@ -504,10 +503,14 @@ export function DriverDashboard() {
       setError('Enable location access to confirm you are at the pickup point.');
       return;
     }
+    if (location.accuracy >= 20) {
+      setError('GPS accuracy must be better than 20m to confirm arrival.');
+      return;
+    }
     const distanceKm = pickup ? calcDistance(location.lat, location.lng, pickup.lat, pickup.lng) : null;
     const distanceToPickup = distanceKm == null ? null : distanceKm * 1000;
-    if (distanceToPickup != null && distanceToPickup >= 100) {
-      setError(`You must be within 100m of the pickup point to confirm arrival (currently ${distanceToPickup.toFixed(0)}m away).`);
+    if (distanceToPickup == null || distanceToPickup >= 50 || !arrivalReady) {
+      setError(`You must be within 50m of pickup with accurate GPS for 2 seconds${distanceToPickup == null ? '.' : ` (currently ${distanceToPickup.toFixed(0)}m away).`}`);
       return;
     }
 
@@ -529,6 +532,22 @@ export function DriverDashboard() {
       setUpdatingStatus(false);
     }
   };
+
+  useEffect(() => {
+    const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
+    const distanceM = pickup && driverLocation
+      ? calcDistance(driverLocation.lat, driverLocation.lng, pickup.lat, pickup.lng) * 1000
+      : Infinity;
+    if (!acceptedRide || (acceptedRide.status !== 'driver_assigned' && acceptedRide.status !== 'driver_en_route') || distanceM >= 50 || driverAccuracy == null || driverAccuracy >= 20) {
+      arrivalReadySinceRef.current = null;
+      setArrivalReady(false);
+      return;
+    }
+    if (arrivalReadySinceRef.current == null) arrivalReadySinceRef.current = Date.now();
+    const remaining = Math.max(0, 2000 - (Date.now() - arrivalReadySinceRef.current));
+    const timer = window.setTimeout(() => setArrivalReady(true), remaining);
+    return () => window.clearTimeout(timer);
+  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.pickup, acceptedRide?.pickupLatLng, driverLocation?.lat, driverLocation?.lng, driverAccuracy]);
   const driverCancelRide = async (ride: RideRequest) => {
     const arrivedAt = toMillis(ride.arrivedAt);
     const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
@@ -568,7 +587,7 @@ export function DriverDashboard() {
     }
     if (cancelled) {
       setAcceptedRide(null);
-      setIsAccepted(false);
+      setDrivingMode(false);
       setIsOnline(true);
     }
   };
@@ -621,7 +640,7 @@ export function DriverDashboard() {
     try {
       await startTripService(ride.id, { currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0, waitingFare: 0, driverStatus: 'on_trip' });
       setAcceptedRide((prev) => (prev ? { ...prev, status: 'trip_started', currentStopIndex: 1, stopArrivalTime: null, waitingSeconds: 0 } : prev));
-      await navigateToDestination(ride);
+      setDrivingMode(true);
     } catch (err) {
       console.error(err);
       setError('Failed to update ride status.');
@@ -635,6 +654,7 @@ export function DriverDashboard() {
     try {
       await completeRideService(ride.id, { fare, price: fare, total_fare: fare });
       setAcceptedRide((prev) => (prev ? { ...prev, status: 'completed', fare, price: fare, totalFare: fare } : prev));
+      setDrivingMode(false);
       setTodayEarnings((prev) => prev + fare);
     } catch (err) {
       console.error('Failed to complete ride:', err);
@@ -660,7 +680,6 @@ export function DriverDashboard() {
       totalFare: Number(ride.baseFare ?? ride.totalFare ?? ride.price ?? 0) + waitFare(stopWaitingSeconds),
     });
     setStopWaitingSeconds(0);
-    await navigateToDestination({ ...ride, currentStopIndex: currentStopIndex + 1, stopArrivalTime: null });
   };
 
   useEffect(() => {
@@ -690,18 +709,18 @@ export function DriverDashboard() {
     return () => window.clearInterval(timer);
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.stopArrivalTime]);
 
-  const navigateTo = async (_destination: Coordinates, _origin?: Coordinates) => {
-    launchNavigation(_destination);
-  };
-
-  const getDriverLocation = (): Promise<Coordinates | undefined> =>
+  const getDriverLocation = (): Promise<(Coordinates & { accuracy: number }) | undefined> =>
     new Promise((resolve) => {
       if (!navigator.geolocation) {
         resolve(undefined);
         return;
       }
       navigator.geolocation.getCurrentPosition(
-        (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
+        (position) => {
+          setDriverAccuracy(position.coords.accuracy);
+          setDriverLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+          resolve({ lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy });
+        },
         (err) => {
           if (err.code === err.PERMISSION_DENIED) {
             setError('Please enable location access to continue.');
@@ -723,6 +742,8 @@ export function DriverDashboard() {
     const tick = () => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          setDriverAccuracy(position.coords.accuracy);
+          setDriverLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
           if (position.coords.accuracy > 50) return; // too imprecise to trust - skip this tick
           void updateDoc(doc(db, 'rides', rideId), {
             driverLat: position.coords.latitude,
@@ -783,31 +804,6 @@ export function DriverDashboard() {
     };
   }, [acceptedRide?.passengerId]);
 
-  const navigateToPickup = async (ride: RideRequest) => {
-    if (localStorage.getItem('navAutoStart') === 'false') return;
-    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
-    if (!pickup) {
-      setError('Pickup location is missing coordinates.');
-      return;
-    }
-    window.speechSynthesis?.speak(new SpeechSynthesisUtterance('Navigating to pickup location'));
-    await navigateTo(pickup, await getDriverLocation());
-  };
-
-  const navigateToDestination = async (ride: RideRequest) => {
-    const currentStopIndex = ride.currentStopIndex ?? 1;
-    const currentStop = ride.stops?.[currentStopIndex];
-    const pickup = getLocationCoordinates(ride.pickup, ride.pickupLatLng);
-    const destination = currentStop && currentStop.lat != null && currentStop.lng != null
-      ? { lat: currentStop.lat, lng: currentStop.lng }
-      : getLocationCoordinates(ride.dropoff, ride.dropoffLatLng);
-    if (!destination) {
-      setError('Destination is missing coordinates.');
-      return;
-    }
-    await navigateTo(destination, pickup ?? undefined);
-  };
-
   // Whichever point the driver should currently be heading to: pickup pre-trip, dropoff/current stop once trip_started.
   const getCurrentNavTarget = (ride: RideRequest): Coordinates | null => {
     if (ride.status === 'trip_started') {
@@ -821,13 +817,13 @@ export function DriverDashboard() {
 
   const finishRide = () => {
     setAcceptedRide(null);
-    setIsAccepted(false);
+    setDrivingMode(false);
   };
 
   // Dismisses the full-screen RIDE CANCELLED overlay (e.g. passenger cancelled while driver was en route).
   const clearCancelledRide = () => {
     setAcceptedRide(null);
-    setIsAccepted(false);
+    setDrivingMode(false);
   };
 
   if (authLoading) {
@@ -846,8 +842,8 @@ export function DriverDashboard() {
   const hasActiveOverlay = Boolean(acceptedRide) || rides.length > 0;
   const isActiveNav = Boolean(acceptedRide && ACTIVE_NAV_STATUSES.has(acceptedRide.status ?? ''));
   const isTripPhase = acceptedRide?.status === 'trip_started';
-  const mapContainerClass = acceptedRide?.status === 'driver_assigned' || acceptedRide?.status === 'driver_en_route' || acceptedRide?.status === 'driver_arrived' || acceptedRide?.status === 'trip_started'
-    ? 'fixed inset-0 h-screen w-screen z-20 rounded-none'
+  const mapContainerClass = drivingMode
+    ? 'fixed inset-0 h-[100dvh] w-screen z-20 rounded-none'
     : isOnline
       ? 'h-[70vh] w-full rounded-2xl'
       : 'h-[60vh] min-h-[450px] w-full rounded-2xl';
@@ -880,7 +876,7 @@ export function DriverDashboard() {
 
   return (
     <>
-      <div className="relative h-screen overflow-hidden bg-[#F6F7F9] text-[#171717]">
+      <div className={`relative h-[100dvh] overflow-hidden bg-[#F6F7F9] text-[#171717] ${drivingMode ? 'driving-mode' : ''}`}>
         {acceptedRide?.status === 'cancelled' && (
           <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-red-600 p-6 text-center text-white">
             <h1 className="mb-5 text-4xl font-black">RIDE CANCELLED</h1>
@@ -890,7 +886,7 @@ export function DriverDashboard() {
           </div>
         )}
 
-        <header className={`relative z-30 flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm transition-all duration-300 ease-in-out dark:bg-zinc-900 ${isAccepted ? '-translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
+        {!drivingMode && <header className="relative z-30 flex h-16 items-center justify-between rounded-b-2xl bg-white px-4 shadow-sm dark:bg-zinc-900">
           <button type="button" onClick={() => setIsDrawerOpen(true)} aria-label="Open driver menu" className="flex h-10 w-10 items-center justify-center rounded-lg text-[#171717] dark:text-white"><Menu size={26} /></button>
           <div className="flex items-center gap-3">
             <span className="text-lg font-bold text-gray-900 dark:text-white">{isOnline ? 'Online' : 'Offline'}</span>
@@ -899,11 +895,11 @@ export function DriverDashboard() {
             </button>
             <ThemeToggle />
           </div>
-        </header>
+        </header>}
 
-        <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />
+        {!drivingMode && <DriverDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} profile={profile} driverProfile={driverProfile} driverId={user.uid} todayEarnings={todayEarnings} isOnline={isOnline} onGoOffline={() => void handleGoOffline()} />}
 
-        <main className="relative mx-auto flex h-[calc(100vh-4rem)] w-full max-w-xl flex-col gap-4 overflow-hidden px-4 py-4">
+        <main className={`relative mx-auto flex w-full flex-col gap-4 overflow-hidden ${drivingMode ? 'fixed inset-0 z-20 h-[100dvh] max-w-none p-0' : 'h-[calc(100vh-4rem)] max-w-xl px-4 py-4'}`}>
           <section className={`transition-all duration-500 ease-in-out ${mapContainerClass} overflow-hidden bg-[#DDE4E8] shadow-sm`}>
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-500">Loading map...</div>}>
               <DriverMapMapbox
@@ -912,11 +908,12 @@ export function DriverDashboard() {
                 dropoff={displayDropoff}
                 followTrigger={followTrigger}
                 routePath={routePath}
+                fullscreen={drivingMode}
               />
             </Suspense>
           </section>
 
-          <section className={`rounded-2xl bg-white p-5 shadow-sm transition-all duration-500 dark:bg-zinc-900 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
+          {!drivingMode && <section className="rounded-2xl bg-white p-5 shadow-sm dark:bg-zinc-900">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-center text-[32px] font-black leading-none text-[#171717] dark:text-white">R{displayFare.toFixed(2)}</p>
@@ -927,19 +924,18 @@ export function DriverDashboard() {
               </div>
               <div className="flex w-24 shrink-0 flex-col items-center gap-1 text-center"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-orange-600"><UserRound size={20} /></div><span className="text-[11px] font-semibold leading-tight text-gray-600 dark:text-gray-300">{profile?.full_name || 'Driver'}</span><span className="text-[11px] font-semibold leading-tight text-gray-600 dark:text-gray-300">{isOnline ? 'Online' : 'Offline'}</span></div>
             </div>
-          </section>
+          </section>}
 
-          {!isAccepted && locationError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><p>Location permission is required.</p><button onClick={requestLocation} className="mt-2 font-bold underline">Enable location</button></div>}
-          {!isAccepted && toast && <div className="rounded-xl bg-[#171717] px-4 py-3 text-center text-sm font-semibold text-white">{toast}</div>}
-          {!displayRide && <p className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gray-500 shadow-sm">{isOnline ? 'Waiting for ride request' : 'Turn on Go Online to receive rides.'}</p>}
+          {!drivingMode && locationError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><p>Location permission is required.</p><button onClick={requestLocation} className="mt-2 font-bold underline">Enable location</button></div>}
+          {!drivingMode && toast && <div className="rounded-xl bg-[#171717] px-4 py-3 text-center text-sm font-semibold text-white">{toast}</div>}
+          {!drivingMode && !displayRide && <p className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gray-500 shadow-sm">{isOnline ? 'Waiting for ride request' : 'Turn on Go Online to receive rides.'}</p>}
 
-          {displayRide && !acceptedRide && <div className={`flex flex-col gap-3 transition-all duration-500 ${isAccepted ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
+          {!drivingMode && displayRide && !acceptedRide && <div className="flex flex-col gap-3">
             <button type="button" onClick={() => void acceptRide(displayRide)} disabled={accepting === displayRide.id} className="h-14 w-full rounded-xl bg-[#FF5500] text-base font-bold text-white shadow-sm disabled:opacity-60">{accepting === displayRide.id ? 'Accepting...' : 'Accept Ride'}</button>
-            <button type="button" onClick={() => openRideNavigation(displayRide)} className="h-14 w-full rounded-xl border-2 border-[#FF5500] bg-white text-base font-bold text-[#FF5500]">Open in Maps</button>
             <button type="button" onClick={() => void declineRide(displayRide)} className="self-center px-3 py-3 text-sm text-[#666] underline">Decline</button>
           </div>}
 
-          {acceptedRide && !isAccepted && <section className="rounded-2xl bg-white p-5 shadow-sm">
+          {acceptedRide && !drivingMode && <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between"><p className="font-bold text-[#171717]">{acceptedRide.status === 'completed' ? 'Ride completed' : `Status: ${acceptedRide.status?.split('_').join(' ')}`}</p><button type="button" onClick={() => setFollowTrigger((prev) => prev + 1)} aria-label="Recenter route" className="rounded-lg p-2 text-[#FF5500]"><NavigationIcon size={20} /></button></div>
             <div className="flex flex-col gap-3">
               {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>}
@@ -951,34 +947,24 @@ export function DriverDashboard() {
           </section>}
         </main>
 
-        {acceptedRide && isAccepted && (
-          <div className="fixed inset-x-0 top-0 z-30 flex items-center gap-3 px-4 py-4 text-white drop-shadow-lg">
-            <button type="button" onClick={() => setIsAccepted(false)} aria-label="Minimize navigation" className="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-xl">←</button>
-            <div className="rounded-full bg-black/55 px-4 py-2 text-sm font-semibold backdrop-blur-sm">
-              Driving to pickup {routeDistanceKm ? `• ${routeDistanceKm} km` : ''} {routeEtaMin ? `• ${routeEtaMin} min` : ''}
+        {acceptedRide && drivingMode && (
+          <div className="fixed inset-x-0 top-0 z-40 flex flex-col gap-2 bg-black/75 px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))] text-white backdrop-blur-sm">
+            <div className="text-sm font-bold">
+              {isTripPhase ? 'Driving to dropoff' : 'Driving to pickup'}
+              {routeDistanceKm ? ` • ${routeDistanceKm} km` : ''}
+              {routeEtaMin ? ` • ${routeEtaMin} min` : ''}
+            </div>
+            {routeInstruction && <div className="text-xs text-white/85">{routeInstruction}</div>}
+            <div className="flex flex-wrap gap-2">
+              {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && arrivalReady && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="rounded-lg bg-[#FF5500] px-3 py-2 text-sm font-bold disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>}
+              {acceptedRide.status === 'driver_arrived' && <button type="button" onClick={() => void startTrip(acceptedRide)} disabled={updatingStatus} className="rounded-lg bg-[#FF5500] px-3 py-2 text-sm font-bold disabled:opacity-60">Start Trip</button>}
+              {isTripPhase && <button type="button" onClick={() => void completeTrip(acceptedRide)} disabled={updatingStatus} className="rounded-lg bg-[#FF5500] px-3 py-2 text-sm font-bold disabled:opacity-60">Complete Trip</button>}
+              {acceptedRide.status !== 'completed' && <button type="button" onClick={() => void driverCancelRide(acceptedRide)} disabled={updatingStatus} className="rounded-lg border border-white/50 px-3 py-2 text-sm font-semibold">Cancel Ride</button>}
             </div>
           </div>
         )}
 
-        {acceptedRide && isAccepted && (
-          <section className="fixed inset-x-0 bottom-0 z-30 rounded-t-3xl bg-white p-5 shadow-[0_-8px_30px_rgba(0,0,0,0.2)] transition-transform duration-500 ease-out">
-            <button type="button" onClick={() => setIsAccepted(false)} aria-label="Minimize map" className="absolute right-4 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600">
-              <span className="text-xl leading-none">×</span>
-            </button>
-            <div className="pr-10">
-              <div className="flex items-center gap-2 text-lg font-bold text-gray-900"><span className="h-3 w-3 animate-pulse rounded-full bg-green-500" />Driving to pickup</div>
-              <p className="mt-2 text-sm text-gray-600">{displayPickupLabel}</p>
-              <p className="mt-1 text-sm font-semibold text-gray-800">Customer: {passengerName}</p>
-            </div>
-            <div className="mt-5 flex flex-col gap-3">
-              <button type="button" onClick={() => openRideNavigation(acceptedRide)} className="h-12 rounded-xl bg-[#FF5500] font-bold text-white">Open Navigation</button>
-              <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="h-12 rounded-xl border-2 border-green-500 bg-white font-bold text-green-600 disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>
-            </div>
-            <button type="button" onClick={() => void driverCancelRide(acceptedRide)} className="mt-4 w-full py-2 text-center text-sm text-gray-600 underline">Cancel Ride</button>
-          </section>
-        )}
-
-        {acceptedRide && <RideChat rideId={acceptedRide.id} currentUserId={user.uid} currentUserRole="driver" rideStatus={acceptedRide.status} />}
+        {acceptedRide && !drivingMode && <RideChat rideId={acceptedRide.id} currentUserId={user.uid} currentUserRole="driver" rideStatus={acceptedRide.status} />}
       </div>
       {acceptedRide && false && ((acceptedRide: RideRequest) => {
         return (
@@ -1141,12 +1127,6 @@ export function DriverDashboard() {
                 <PassengerBadge passengerId={ride.passengerId} revealed={false} />
                 <p className="mb-3 text-sm text-gray-500">Passenger: {ride.passengerId ?? 'test123'}</p>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <button
-                    onClick={() => navigateToPickup(ride)}
-                    className="w-full rounded-lg border border-orange-500 py-2 font-bold text-orange-600 hover:bg-orange-50"
-                  >
-                    Open in Maps
-                  </button>
                   <button
                     onClick={() => void acceptRide(ride)}
                     disabled={accepting === ride.id}

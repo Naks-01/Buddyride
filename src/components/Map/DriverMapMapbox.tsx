@@ -11,14 +11,14 @@ type Props = {
   dropoff?: Coordinates | null;
   routePath?: [number, number][];
   followTrigger?: number;
+  fullscreen?: boolean;
 };
 
 const DEFAULT_CENTER: [number, number] = [29.458, -23.904]; // Polokwane
 
-export default function DriverMapMapbox({ driver, pickup, routePath, followTrigger }: Props) {
+export default function DriverMapMapbox({ driver, pickup, routePath, followTrigger, fullscreen }: Props) {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const [isFullMap, setIsFullMap] = useState(false);
   const [mapLoaded, setMapLoaded] = useState(false);
 
   const center = driver? [driver.lng, driver.lat] as [number, number] : pickup? [pickup.lng, pickup.lat] as [number, number] : DEFAULT_CENTER;
@@ -36,7 +36,6 @@ export default function DriverMapMapbox({ driver, pickup, routePath, followTrigg
       zoom: 13,
     });
 
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right');
     map.on('load', () => {
       map.resize();
       setMapLoaded(true);
@@ -53,7 +52,14 @@ export default function DriverMapMapbox({ driver, pickup, routePath, followTrigg
     if (mapRef.current) {
       mapRef.current.flyTo({ center, zoom: 15, essential: true });
     }
-  }, [followTrigger]);
+  }, [followTrigger, center[0], center[1]]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const frame = window.requestAnimationFrame(() => map.resize());
+    return () => window.cancelAnimationFrame(frame);
+  }, [fullscreen]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -83,30 +89,17 @@ export default function DriverMapMapbox({ driver, pickup, routePath, followTrigg
     });
   }, [mapLoaded, routePath]);
 
-  useEffect(() => {
-    if (mapRef.current) {
-      window.setTimeout(() => mapRef.current?.resize(), 400);
-    }
-  }, [isFullMap]);
-
   if (!MAPBOX_TOKEN) {
     return (
-      <div className="flex w-full h-[60vh] min-h-[450px] items-center justify-center bg-slate-100 p-6 text-center text-sm text-red-700">
+      <div className="flex h-full w-full items-center justify-center bg-slate-100 p-6 text-center text-sm text-red-700">
         Mapbox token missing in.env.local
       </div>
     );
   }
 
   return (
-    <div className={isFullMap? 'fixed inset-0 z-50 bg-white' : 'relative h-full w-full'}>
-      <div ref={mapContainerRef} className="w-full" style={{ height: isFullMap? '100%' : '60vh', minHeight: '450px' }} />
-      <button
-        type="button"
-        onClick={() => setIsFullMap((v) =>!v)}
-        className="absolute left-3 top-3 z-10 rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-800 shadow-md"
-      >
-        {isFullMap? 'Exit full map' : 'Full map'}
-      </button>
+    <div className="relative h-full w-full">
+      <div ref={mapContainerRef} className="h-full w-full" />
     </div>
   );
 }
