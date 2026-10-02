@@ -138,6 +138,7 @@ export function DriverDashboard() {
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
   const [routePath, setRoutePath] = useState<[number, number][]>([]);
+  const lastMapboxRouteAtRef = useRef(0);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
   const driverLocationRef = useRef<Coordinates | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
