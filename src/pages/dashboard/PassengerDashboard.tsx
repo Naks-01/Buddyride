@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { DocumentData } from '../../lib/supabaseDb';
+import { normalizeRideStatus, type DocumentData } from '../../lib/supabaseDb';
 import { LockKeyhole } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getFreeRoute, subscribeToRide } from '../../lib/rideService';
@@ -637,6 +637,53 @@ export function PassengerDashboard() {
       }
     });
     return () => unsubscribe();
+  }, [rideId]);
+
+  useEffect(() => {
+    if (!rideId) return;
+    let lastRealtimeEventAt = 0;
+    let stopped = false;
+    const applyStatus = (rawStatus: unknown) => {
+      const status = normalizeRideStatus(rawStatus);
+      if (status === 'driver_assigned') {
+        setDriverStatusText('Driver assigned - your driver is coming');
+        setBannerColor('orange');
+      } else if (status === 'driver_arrived') {
+        setDriverStatusText('Driver is outside - Your driver has arrived');
+        setBannerColor('orange');
+      }
+    };
+
+    const channel = supabase
+      .channel('rides')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'rides',
+        filter: `id=eq.${rideId}`,
+      }, (payload) => {
+        lastRealtimeEventAt = Date.now();
+        applyStatus(payload.new.status);
+      })
+      .subscribe();
+
+    const pollRideStatus = async () => {
+      if (stopped || Date.now() - lastRealtimeEventAt < 3000) return;
+      const { data, error } = await supabase
+        .from('rides')
+        .select('status')
+        .eq('id', rideId)
+        .maybeSingle();
+      if (!stopped && !error && data) applyStatus(data.status);
+    };
+
+    void pollRideStatus();
+    const pollInterval = window.setInterval(() => void pollRideStatus(), 3000);
+    return () => {
+      stopped = true;
+      window.clearInterval(pollInterval);
+      void supabase.removeChannel(channel);
+    };
   }, [rideId]);
 
   // Live-count the 3 min free pickup wait, then R1/min extra, while the driver waits at pickup.
