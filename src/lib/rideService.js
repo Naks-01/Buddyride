@@ -16,7 +16,7 @@ export const RIDE_STATUS = {
   REQUESTED: 'searching',
   DRIVER_ASSIGNED: 'accepted',
   EN_ROUTE: 'arriving',
-  ARRIVED: 'arrived',
+  ARRIVED: 'arrived_at_pickup',
   ON_TRIP: 'on_trip',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',
@@ -217,6 +217,7 @@ export async function markArrived(rideId, passengerId, extra = {}) {
   const payload = {
     status: RIDE_STATUS.ARRIVED,
     arrived_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
   };
 
   const { error } = await supabase.from('rides').update(payload).eq('id', rideId);

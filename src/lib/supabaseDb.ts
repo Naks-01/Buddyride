@@ -128,6 +128,7 @@ const RIDE_STATUS_ALIASES: Record<string, string> = {
   accepted: 'driver_assigned',
   arriving: 'driver_en_route',
   arrived: 'driver_arrived',
+  arrived_at_pickup: 'driver_arrived',
   on_trip: 'trip_started',
 };
 

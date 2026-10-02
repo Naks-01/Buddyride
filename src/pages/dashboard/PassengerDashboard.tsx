@@ -10,7 +10,7 @@ import { Logo } from '../../components/Logo';
 import { TripReceipt } from '../../components/TripReceipt';
 import { searchPolokwanePlaces } from '../../lib/polokwane';
 import { searchLimpopo, ICON_BY_TYPE, type SearchPlace } from '../../lib/placeSearch';
-import { BOOKING_FEE, CANCELLATION, COMMISSION_RATE, DRIVER_RATE } from '../../config/pricing';
+import { BOOKING_FEE, CANCELLATION } from '../../config/pricing';
 import { RIDE_CATEGORIES, type RideCategoryId } from '../../config/categories';
 import { calcDistance } from '../../lib/maps';
 import { UserIcon } from '../../components/Icons';
@@ -83,6 +83,7 @@ export function PassengerDashboard() {
   const [rideId, setRideId] = useState<string | null>(null);
   const [rideCreatedAt, setRideCreatedAt] = useState<number | null>(null);
   const [cancelSecondsRemaining, setCancelSecondsRemaining] = useState(120);
+  const [showCancelTimer, setShowCancelTimer] = useState(true);
   const [pickupAddress, setPickupAddress] = useState('');
   const [pickupLocation, setPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [dropoffAddress, setDropoffAddress] = useState('');
@@ -432,6 +433,7 @@ export function PassengerDashboard() {
       setTripType(mode);
       setRideCreatedAt(Date.now());
       setCancelSecondsRemaining(CANCELLATION.FREE_CANCEL_SEC);
+      setShowCancelTimer(true);
       setRideStatus('pending');
       setDriverLocation(null);
       setTripPickupLocation({ lat: pickup.lat!, lng: pickup.lng! });
@@ -527,10 +529,12 @@ export function PassengerDashboard() {
         lastSoundStatusRef.current = nextStatus;
         if (nextStatus === 'driver_assigned') playSound('accepted');
         else if (nextStatus === 'driver_arrived') {
-          setDriverStatusText('Driver is outside - Your driver has arrived');
+          setDriverStatusText('\uD83D\uDE97 Driver is OUTSIDE - Please go out');
           setBannerColor('orange');
+          setShowCancelTimer(false);
+          setCancelSecondsRemaining(0);
           playSoundTimes('arrived', 3);
-          if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+          if (navigator.vibrate) navigator.vibrate([400, 200, 400]);
           void (async () => {
             try {
               if ('Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
@@ -649,8 +653,11 @@ export function PassengerDashboard() {
         setDriverStatusText('Driver assigned - your driver is coming');
         setBannerColor('orange');
       } else if (status === 'driver_arrived') {
-        setDriverStatusText('Driver is outside - Your driver has arrived');
+        setRideStatus('driver_arrived');
+        setDriverStatusText('\uD83D\uDE97 Driver is OUTSIDE - Please go out');
         setBannerColor('orange');
+        setShowCancelTimer(false);
+        setCancelSecondsRemaining(0);
       }
     };
 
@@ -663,7 +670,7 @@ export function PassengerDashboard() {
         filter: `id=eq.${rideId}`,
       }, (payload) => {
         lastRealtimeEventAt = Date.now();
-        applyStatus(payload.new.status);
+        applyStatus((payload.new as { status?: unknown }).status);
       })
       .subscribe();
 
@@ -761,12 +768,12 @@ export function PassengerDashboard() {
     return () => window.clearInterval(intervalId);
   }, [rideStatus]);
   useEffect(() => {
-    if (!isActiveTrip || rideCreatedAt == null) return;
+    if (!isActiveTrip || !showCancelTimer || rideCreatedAt == null) return;
     const updateCountdown = () => setCancelSecondsRemaining(Math.max(0, Math.ceil(CANCELLATION.FREE_CANCEL_SEC - (Date.now() - rideCreatedAt) / 1000)));
     updateCountdown();
     const timer = window.setInterval(updateCountdown, 1000);
     return () => window.clearInterval(timer);
-  }, [isActiveTrip, rideCreatedAt]);
+  }, [isActiveTrip, rideCreatedAt, showCancelTimer]);
 
   const cancelRide = async () => {
     if (!rideId || !isActiveTrip) return;
@@ -791,6 +798,7 @@ export function PassengerDashboard() {
     setRideStatus(null);
     setRideCreatedAt(null);
     setCancelSecondsRemaining(0);
+    setShowCancelTimer(false);
     setCancelledBy(null);
     setCancelReason(null);
     setDriverLocation(null);
@@ -900,8 +908,8 @@ export function PassengerDashboard() {
       )}
       {rideStatus === 'driver_arrived' && (
         <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-green-700 px-6 text-center text-white">
-          <h1 className="text-4xl font-black">Driver is outside</h1>
-          <p className="mt-4 text-xl font-semibold">Your driver has arrived at pickup</p>
+          <h1 className="text-4xl font-black">🚗 Driver is OUTSIDE</h1>
+          <p className="mt-4 text-xl font-semibold">Please go out</p>
         </div>
       )}
       {rideStatus === 'cancelled' && (
@@ -1084,9 +1092,9 @@ export function PassengerDashboard() {
                 onClick={() => void cancelRide()}
                 className="mt-2 w-full rounded-lg border border-red-500 py-2 font-semibold text-red-600 hover:bg-red-50"
               >
-                {cancelSecondsRemaining > 0
+                {showCancelTimer && cancelSecondsRemaining > 0
                   ? `Cancel within ${Math.floor(cancelSecondsRemaining / 60)}:${String(cancelSecondsRemaining % 60).padStart(2, '0')} for free, after R${CANCELLATION.LATE_CANCEL_FEE}`
-                  : `Cancel Ride - R${CANCELLATION.LATE_CANCEL_FEE} fee`}
+                  : showCancelTimer ? `Cancel Ride - R${CANCELLATION.LATE_CANCEL_FEE} fee` : 'Cancel Ride'}
               </button>
             </>
           )}
