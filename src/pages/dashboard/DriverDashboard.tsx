@@ -344,6 +344,7 @@ export function DriverDashboard() {
       }
       const nextAcceptedRide = { ...ride, status: 'driver_assigned' };
       setAcceptedRide(nextAcceptedRide);
+      setDrivingMode(true);
       showToast('Ride Accepted! Navigating to pickup...');
       window.setTimeout(() => {
         setAcceptedRide((prev) => {
@@ -410,6 +411,12 @@ export function DriverDashboard() {
     }
     return () => unsubscribe();
   }, [acceptedRide?.id]);
+
+  useEffect(() => {
+    if (['driver_assigned', 'accepted', 'arrived', 'driver_arrived', 'driver_en_route'].includes(acceptedRide?.status ?? '')) {
+      setDrivingMode(true);
+    }
+  }, [acceptedRide?.status]);
 
   useEffect(() => {
     driverLocationRef.current = driverLocation;
@@ -889,7 +896,7 @@ export function DriverDashboard() {
   const isActiveNav = Boolean(acceptedRide && ACTIVE_NAV_STATUSES.has(acceptedRide.status ?? ''));
   const isTripPhase = acceptedRide?.status === 'trip_started';
   const mapContainerClass = drivingMode
-    ? 'fixed inset-0 h-[100dvh] w-screen z-20 rounded-none'
+    ? 'fixed inset-0 w-screen h-screen z-10 rounded-none'
     : isOnline
       ? 'h-[70vh] w-full rounded-2xl'
       : 'h-[60vh] min-h-[450px] w-full rounded-2xl';
@@ -994,18 +1001,23 @@ export function DriverDashboard() {
         </main>
 
         {acceptedRide && drivingMode && (
-          <div className="fixed inset-x-0 top-0 z-40 flex flex-col gap-2 bg-black/75 px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))] text-white backdrop-blur-sm">
-            <div className="text-sm font-bold">
-              {routeDistanceKm ?? '—'} km • {routeEtaMin ?? '—'} min to {isTripPhase ? 'dropoff' : 'pickup'}
-            </div>
-            {routeInstruction && <div className="text-xs text-white/85">{routeInstruction}</div>}
-            <div className="flex flex-wrap gap-2">
-              {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && arrivalReady && <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={updatingStatus || checkingArrival} className="rounded-lg bg-[#FF5500] px-3 py-2 text-sm font-bold disabled:opacity-60">{checkingArrival ? 'Checking location...' : 'Arrived at Pickup'}</button>}
-              {acceptedRide.status === 'driver_arrived' && <button type="button" onClick={() => void startTrip(acceptedRide)} disabled={updatingStatus} className="rounded-lg bg-[#FF5500] px-3 py-2 text-sm font-bold disabled:opacity-60">Start Trip</button>}
-              {isTripPhase && <button type="button" onClick={() => void completeTrip(acceptedRide)} disabled={updatingStatus} className="rounded-lg bg-[#FF5500] px-3 py-2 text-sm font-bold disabled:opacity-60">Complete Trip</button>}
-              {acceptedRide.status !== 'completed' && <button type="button" onClick={() => void driverCancelRide(acceptedRide)} disabled={updatingStatus} className="rounded-lg border border-white/50 px-3 py-2 text-sm font-semibold">Cancel Ride</button>}
-            </div>
-          </div>
+          <section className="fixed bottom-0 left-0 right-0 z-30 rounded-t-3xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-gray-900 shadow-[0_-8px_30px_rgba(0,0,0,0.2)] translate-y-0 transition-transform duration-300">
+            <p className="truncate text-base font-bold">{isTripPhase ? displayDropoffLabel : displayPickupLabel}</p>
+            <p className="mt-1 text-sm font-semibold text-gray-600">
+              {routeDistanceKm ?? '—'} km • {routeEtaMin ?? '—'} min {isTripPhase ? 'to dropoff' : 'to pickup'}
+            </p>
+            {(acceptedRide.status === 'driver_assigned' || acceptedRide.status === 'driver_en_route') && (
+              <button type="button" onClick={() => void markArrivedAtPickup(acceptedRide)} disabled={!arrivalReady || updatingStatus || checkingArrival} className="mt-3 h-12 w-full rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">
+                {checkingArrival ? 'Checking location...' : arrivalReady ? 'Arrived at Pickup' : 'Driving to pickup'}
+              </button>
+            )}
+            {acceptedRide.status === 'driver_arrived' && (
+              <button type="button" onClick={() => void startTrip(acceptedRide)} disabled={updatingStatus} className="mt-3 h-12 w-full rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Start Trip</button>
+            )}
+            {isTripPhase && (
+              <button type="button" onClick={() => void completeTrip(acceptedRide)} disabled={updatingStatus} className="mt-3 h-12 w-full rounded-xl bg-[#FF5500] font-bold text-white disabled:opacity-60">Complete Trip</button>
+            )}
+          </section>
         )}
 
         {acceptedRide && !drivingMode && <RideChat rideId={acceptedRide.id} currentUserId={user.uid} currentUserRole="driver" rideStatus={acceptedRide.status} />}
