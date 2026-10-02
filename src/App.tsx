@@ -1,29 +1,30 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Component, useEffect, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { auth } from './lib/supabaseDb';
 import { RoleSelect } from './pages/RoleSelect';
 import RolePasswordLogin from './pages/RolePasswordLogin';
-import { PassengerDashboard } from './pages/dashboard/PassengerDashboard';
-import { DriverDashboard } from './pages/dashboard/DriverDashboard';
-import { AdminDashboard } from './pages/dashboard/AdminDashboard';
-import { RideStatus } from './pages/RideStatus';
-import { Profile } from './pages/Profile';
-import { PassengerRides } from './pages/PassengerRides';
-import SafetyDashboard from './pages/admin/SafetyDashboard';
-import AdminMobileDashboard from './pages/admin/AdminMobileDashboard';
-import { DriverRides } from './pages/driver/DriverRides';
-import { DriverPerformance } from './pages/driver/DriverPerformance';
-import { DriverVehicle } from './pages/driver/DriverVehicle';
-import { DriverDocuments } from './pages/driver/DriverDocuments';
-import { DriverHelp } from './pages/driver/DriverHelp';
-import { DriverSettings } from './pages/driver/DriverSettings';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SplashScreen } from './components/SplashScreen';
 import type { AppRole } from './types';
 import { ADMIN_EMAIL } from './config/admin';
+
+const PassengerDashboard = lazy(() => import('./pages/dashboard/PassengerDashboard').then((module) => ({ default: module.PassengerDashboard })));
+const DriverDashboard = lazy(() => import('./pages/dashboard/DriverDashboard').then((module) => ({ default: module.DriverDashboard })));
+const AdminDashboard = lazy(() => import('./pages/dashboard/AdminDashboard').then((module) => ({ default: module.AdminDashboard })));
+const RideStatus = lazy(() => import('./pages/RideStatus').then((module) => ({ default: module.RideStatus })));
+const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
+const PassengerRides = lazy(() => import('./pages/PassengerRides').then((module) => ({ default: module.PassengerRides })));
+const SafetyDashboard = lazy(() => import('./pages/admin/SafetyDashboard'));
+const AdminMobileDashboard = lazy(() => import('./pages/admin/AdminMobileDashboard'));
+const DriverRides = lazy(() => import('./pages/driver/DriverRides').then((module) => ({ default: module.DriverRides })));
+const DriverPerformance = lazy(() => import('./pages/driver/DriverPerformance').then((module) => ({ default: module.DriverPerformance })));
+const DriverVehicle = lazy(() => import('./pages/driver/DriverVehicle').then((module) => ({ default: module.DriverVehicle })));
+const DriverDocuments = lazy(() => import('./pages/driver/DriverDocuments').then((module) => ({ default: module.DriverDocuments })));
+const DriverHelp = lazy(() => import('./pages/driver/DriverHelp').then((module) => ({ default: module.DriverHelp })));
+const DriverSettings = lazy(() => import('./pages/driver/DriverSettings').then((module) => ({ default: module.DriverSettings })));
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -128,6 +129,7 @@ export default function App() {
       <SplashScreen />
       <BackButtonHandler />
       <BrowserRouter basename="/" future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Suspense fallback={<LoadingScreen />}>
         <Routes>
           <Route path="/" element={<HomeOrRedirect />} />
           <Route path="/login" element={<LoginRouter />} />
@@ -152,6 +154,7 @@ export default function App() {
           <Route path="/profile" element={<RequireRole role="passenger"><Profile /></RequireRole>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </>
   );

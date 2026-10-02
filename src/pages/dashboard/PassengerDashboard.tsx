@@ -491,7 +491,7 @@ export function PassengerDashboard() {
         if (lastSoundStatusRef.current !== nextStatus) {
           lastSoundStatusRef.current = nextStatus;
           playSound('cancel');
-          window.alert(nextStatus === 'cancelled_by_driver' ? 'Driver cancelled' : 'Passenger cancelled');
+          window.alert(nextStatus === 'cancelled_by_driver' ? 'Driver cancelled trip' : 'Passenger cancelled trip');
         }
         setRideId(null);
         setRideStatus(null);

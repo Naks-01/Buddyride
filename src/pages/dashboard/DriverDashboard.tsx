@@ -139,8 +139,8 @@ export function DriverDashboard() {
   const [routeDistanceM, setRouteDistanceM] = useState<number | null>(null);
   const [routeDurationSec, setRouteDurationSec] = useState<number | null>(null);
   const [routePath, setRoutePath] = useState<[number, number][]>([]);
-  const lastMapboxRouteAtRef = useRef(0);
   const [driverLocation, setDriverLocation] = useState<Coordinates | null>(null);
+  const driverLocationRef = useRef<Coordinates | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [passengerName, setPassengerName] = useState('Passenger');
@@ -378,7 +378,7 @@ export function DriverDashboard() {
             const cancellationKey = `${acceptedRide.id}:${status}`;
             if (handledCancellationRef.current !== cancellationKey) {
               handledCancellationRef.current = cancellationKey;
-              window.alert(status === 'cancelled_by_driver' ? 'Driver cancelled' : 'Passenger cancelled');
+              window.alert(status === 'cancelled_by_driver' ? 'Driver cancelled trip' : 'Passenger cancelled trip');
               setAcceptedRide(null);
               setDrivingMode(false);
               setIsOnline(true);
@@ -409,6 +409,10 @@ export function DriverDashboard() {
     }
     return () => unsubscribe();
   }, [acceptedRide?.id]);
+
+  useEffect(() => {
+    driverLocationRef.current = driverLocation;
+  }, [driverLocation]);
 
   useEffect(() => {
     if (arrivalReadyRideIdRef.current !== (acceptedRide?.id ?? null)) {
@@ -547,7 +551,71 @@ export function DriverDashboard() {
     const remaining = Math.max(0, 2000 - (Date.now() - arrivalReadySinceRef.current));
     const timer = window.setTimeout(() => setArrivalReady(true), remaining);
     return () => window.clearTimeout(timer);
-  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.pickup, acceptedRide?.pickupLatLng, driverLocation?.lat, driverLocation?.lng, driverAccuracy]);
+  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.pickupLatLng?.lat, acceptedRide?.pickupLatLng?.lng, driverLocation?.lat, driverLocation?.lng, driverAccuracy]);
+
+  useEffect(() => {
+    const pickup = acceptedRide ? getLocationCoordinates(acceptedRide.pickup, acceptedRide.pickupLatLng) : null;
+    const currentStop = acceptedRide?.stops?.[acceptedRide.currentStopIndex ?? 1];
+    const destination = acceptedRide?.status === 'trip_started'
+      ? currentStop && currentStop.lat != null && currentStop.lng != null
+        ? { lat: currentStop.lat, lng: currentStop.lng }
+        : acceptedRide ? getLocationCoordinates(acceptedRide.dropoff, acceptedRide.dropoffLatLng) : null
+      : pickup;
+    if (!acceptedRide || !destination) {
+      setRoutePath([]);
+      setRouteDistanceM(null);
+      setRouteDurationSec(null);
+      return;
+    }
+
+    let activeController: AbortController | null = null;
+    let timeoutId: number | undefined;
+    const loadRoadRoute = async () => {
+      const origin = driverLocationRef.current;
+      if (!origin) return;
+      activeController?.abort();
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      const controller = new AbortController();
+      activeController = controller;
+      timeoutId = window.setTimeout(() => controller.abort(), 6000);
+      try {
+        const token = initMapbox().accessToken;
+        if (!token) {
+          console.error('Mapbox token missing');
+          setRoutePath([]);
+          return;
+        }
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=true&access_token=${encodeURIComponent(token)}`;
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error(`Mapbox Directions request failed with ${response.status}`);
+        const data = await response.json() as { routes?: Array<{ distance?: number; duration?: number; geometry?: { coordinates?: Array<[number, number]> }; legs?: Array<{ steps?: Array<{ maneuver?: { instruction?: string; location?: [number, number] } }> }> }> };
+        const route = data.routes?.[0];
+        const coordinates = route?.geometry?.coordinates ?? [];
+        if (!route || !coordinates.length) throw new Error('Mapbox returned no route geometry');
+        setRoutePath(coordinates.map(([lng, lat]) => [lat, lng] as [number, number]));
+        setRouteDistanceM(typeof route.distance === 'number' ? route.distance : null);
+        setRouteDurationSec(typeof route.duration === 'number' ? route.duration : null);
+        const steps = route.legs?.[0]?.steps ?? [];
+        const nextStep = steps.find((step) => {
+          const maneuver = step.maneuver?.location;
+          return maneuver && calcDistance(origin.lat, origin.lng, maneuver[1], maneuver[0]) > 0.04;
+        });
+        setRouteInstruction(nextStep?.maneuver?.instruction ?? steps[0]?.maneuver?.instruction ?? 'Continue to your destination');
+      } catch (routeError) {
+        if ((routeError as Error).name === 'AbortError') return;
+        console.error('Failed to load road route:', routeError);
+        setRoutePath([[origin.lat, origin.lng], [destination.lat, destination.lng]]);
+      }
+    };
+
+    void loadRoadRoute();
+    const intervalId = window.setInterval(() => void loadRoadRoute(), 5000);
+    return () => {
+      window.clearInterval(intervalId);
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      activeController?.abort();
+    };
+  }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.currentStopIndex, acceptedRide?.pickupLatLng?.lat, acceptedRide?.pickupLatLng?.lng, acceptedRide?.dropoffLatLng?.lat, acceptedRide?.dropoffLatLng?.lng, acceptedRide?.stops?.[acceptedRide?.currentStopIndex ?? 1]?.lat, acceptedRide?.stops?.[acceptedRide?.currentStopIndex ?? 1]?.lng]);
   const driverCancelRide = async (ride: RideRequest) => {
     const arrivedAt = toMillis(ride.arrivedAt);
     const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
@@ -950,9 +1018,7 @@ export function DriverDashboard() {
         {acceptedRide && drivingMode && (
           <div className="fixed inset-x-0 top-0 z-40 flex flex-col gap-2 bg-black/75 px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))] text-white backdrop-blur-sm">
             <div className="text-sm font-bold">
-              {isTripPhase ? 'Driving to dropoff' : 'Driving to pickup'}
-              {routeDistanceKm ? ` • ${routeDistanceKm} km` : ''}
-              {routeEtaMin ? ` • ${routeEtaMin} min` : ''}
+              {routeDistanceKm ?? '—'} km • {routeEtaMin ?? '—'} min to {isTripPhase ? 'dropoff' : 'pickup'}
             </div>
             {routeInstruction && <div className="text-xs text-white/85">{routeInstruction}</div>}
             <div className="flex flex-wrap gap-2">

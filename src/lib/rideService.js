@@ -219,7 +219,8 @@ export async function markArrived(rideId, passengerId, extra = {}) {
     arrived_at: serverTimestamp(),
   };
 
-  await updateDoc(doc(db, 'rides', rideId), payload);
+  const { error } = await supabase.from('rides').update(payload).eq('id', rideId);
+  if (error) throw error;
   void updateDoc(doc(db, 'ride_requests', rideId), payload).catch(() => {});
 
   try {
@@ -278,7 +279,8 @@ export async function cancelRide(rideId, extra = {}) {
     cancelled_at: serverTimestamp(),
   };
 
-  await updateDoc(doc(db, 'rides', rideId), payload);
+  const { error } = await supabase.from('rides').update(payload).eq('id', rideId);
+  if (error) throw error;
   void updateDoc(doc(db, 'ride_requests', rideId), payload).catch(() => {});
 }
 
