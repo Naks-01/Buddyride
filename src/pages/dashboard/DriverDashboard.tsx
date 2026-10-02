@@ -16,6 +16,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { auth, db } from '../../lib/supabaseDb';
+import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { BOOKING_FEE, DRIVER_RATE } from '../../config/pricing';
 import { CANCELLATION, COMMISSION_RATE } from '../../config/pricing';
@@ -31,7 +32,6 @@ import DriverMapMapbox from '../../components/Map/DriverMapMapbox';
 import {
   RIDE_STATUS,
   acceptRide as acceptRideService,
-  cancelRide as cancelRideService,
   completeRide as completeRideService,
   markArrived,
   startTrip as startTripService,
@@ -374,11 +374,12 @@ export function DriverDashboard() {
           const data = snapshot.data() as Record<string, unknown> | undefined;
           if (!data) return;
           const status = typeof data.status === 'string' ? data.status : '';
-          if (status.startsWith('cancelled')) {
-            const cancellationKey = `${acceptedRide.id}:${status}`;
+          if (status === 'cancelled' || status.startsWith('cancelled')) {
+            const cancelledBy = data.cancelledBy ?? data.cancelled_by;
+            const cancellationKey = `${acceptedRide.id}:${status}:${cancelledBy}`;
             if (handledCancellationRef.current !== cancellationKey) {
               handledCancellationRef.current = cancellationKey;
-              window.alert(status === 'cancelled_by_driver' ? 'Driver cancelled trip' : 'Passenger cancelled trip');
+              if (cancelledBy === 'passenger') window.alert('Passenger cancelled');
               setAcceptedRide(null);
               setDrivingMode(false);
               setIsOnline(true);
@@ -617,46 +618,23 @@ export function DriverDashboard() {
     };
   }, [acceptedRide?.id, acceptedRide?.status, acceptedRide?.currentStopIndex, acceptedRide?.pickupLatLng?.lat, acceptedRide?.pickupLatLng?.lng, acceptedRide?.dropoffLatLng?.lat, acceptedRide?.dropoffLatLng?.lng, acceptedRide?.stops?.[acceptedRide?.currentStopIndex ?? 1]?.lat, acceptedRide?.stops?.[acceptedRide?.currentStopIndex ?? 1]?.lng]);
   const driverCancelRide = async (ride: RideRequest) => {
-    const arrivedAt = toMillis(ride.arrivedAt);
-    const waitedLongEnough = arrivedAt != null && Date.now() - arrivedAt >= CANCELLATION.DRIVER_WAIT_MIN * 60 * 1000;
-    const enteredReason = window.prompt(
-      waitedLongEnough ? 'Reason for cancelling this ride?' : 'Why are you cancelling this ride?',
-      waitedLongEnough ? 'Passenger no-show' : 'Driver cancelled the ride',
-    );
-    if (enteredReason === null) return;
-    const reason = enteredReason.trim() || (waitedLongEnough ? 'Passenger no-show' : 'Driver cancelled the ride');
-    let cancelled = false;
     setUpdatingStatus(true);
     try {
-      if (waitedLongEnough) {
-        await cancelRideService(ride.id, {
-          cancellationFee: CANCELLATION.NO_SHOW_FEE,
-          cancellationPlatformCut: CANCELLATION.NO_SHOW_FEE * COMMISSION_RATE,
-          cancellationDriverPayout: CANCELLATION.NO_SHOW_FEE * DRIVER_RATE,
-          cancellationReason: 'passenger_no_show',
-          cancelledBy: 'driver',
-          cancelReason: reason,
-        });
-      } else {
-        await cancelRideService(ride.id, {
-          cancellationFee: 0,
-          cancellationReason: 'driver_cancelled',
-          cancelledBy: 'driver',
-          cancelReason: reason,
-          driverPenalty: true,
-        });
-      }
-      cancelled = true;
-    } catch (err) {
-      console.error(err);
-      setError('Failed to update ride status.');
-    } finally {
-      setUpdatingStatus(false);
-    }
-    if (cancelled) {
+      const { error } = await supabase.from('rides').update({
+        status: 'cancelled',
+        cancelled_by: 'driver',
+        cancelled_at: new Date().toISOString(),
+      }).eq('id', ride.id);
+      if (error) throw error;
       setAcceptedRide(null);
       setDrivingMode(false);
       setIsOnline(true);
+      showToast('Ride cancelled');
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to cancel');
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 

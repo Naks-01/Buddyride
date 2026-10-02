@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { DocumentData } from '../../lib/supabaseDb';
 import { LockKeyhole } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { getFreeRoute, cancelRide as cancelRideService, subscribeToRide } from '../../lib/rideService';
+import { getFreeRoute, subscribeToRide } from '../../lib/rideService';
 import { supabase } from '../../lib/supabase';
 import { CarIcon, HistoryIcon, LogOutIcon, SettingsIcon } from '../../components/Icons';
 import { Logo } from '../../components/Logo';
@@ -487,11 +487,13 @@ export function PassengerDashboard() {
 
       const nextStatus = typeof data.status === 'string' ? data.status : null;
       setRideStatus(nextStatus);
-      if (nextStatus?.startsWith('cancelled')) {
-        if (lastSoundStatusRef.current !== nextStatus) {
-          lastSoundStatusRef.current = nextStatus;
+      if (nextStatus === 'cancelled' || nextStatus?.startsWith('cancelled')) {
+        const cancelledBy = data.cancelledBy ?? data.cancelled_by;
+        const cancellationKey = `${rideId}:${nextStatus}:${cancelledBy}`;
+        if (lastSoundStatusRef.current !== cancellationKey) {
+          lastSoundStatusRef.current = cancellationKey;
           playSound('cancel');
-          window.alert(nextStatus === 'cancelled_by_driver' ? 'Driver cancelled trip' : 'Passenger cancelled trip');
+          if (cancelledBy === 'driver') window.alert('Driver cancelled the ride');
         }
         setRideId(null);
         setRideStatus(null);
@@ -712,32 +714,15 @@ export function PassengerDashboard() {
 
   const cancelRide = async () => {
     if (!rideId || !isActiveTrip) return;
-    const enteredReason = window.prompt('Why are you cancelling this ride?', 'Changed my plans');
-    if (enteredReason === null) return;
-    const reason = enteredReason.trim() || 'Cancelled by passenger';
-    const elapsedSec = rideCreatedAt == null ? CANCELLATION.FREE_CANCEL_SEC : (Date.now() - rideCreatedAt) / 1000;
-    const arrived = rideStatus === 'driver_arrived';
-    const driverDistanceKm = driverLocation && tripPickupLocation
-      ? calcDistance(driverLocation.lat, driverLocation.lng, tripPickupLocation.lat, tripPickupLocation.lng)
-      : null;
-    const driverIsDriving = Boolean(driverName || driverPhone);
-    const driverIsCloseEnough = driverDistanceKm != null && driverDistanceKm <= 1;
-    const cancellationFee = arrived
-      ? CANCELLATION.NO_SHOW_FEE
-      : elapsedSec >= CANCELLATION.FREE_CANCEL_SEC && driverIsDriving && driverIsCloseEnough
-        ? CANCELLATION.LATE_CANCEL_FEE
-        : 0;
     try {
-      await cancelRideService(rideId, {
-        cancellationFee,
-        cancellationPlatformCut: cancellationFee * COMMISSION_RATE,
-        cancellationDriverPayout: cancellationFee * DRIVER_RATE,
-        paymentMethod: 'cash',
-        cancellationBalanceDue: cancellationFee,
-        cancelledBy: 'passenger',
-        cancelReason: reason,
-      });
-      setMessage(cancellationFee ? `Ride cancelled. Fee: ${formatR(cancellationFee)}` : 'Ride cancelled for free.');
+      const { error } = await supabase.from('rides').update({
+        status: 'cancelled',
+        cancelled_by: 'passenger',
+        cancelled_at: new Date().toISOString(),
+      }).eq('id', rideId);
+      if (error) throw error;
+      clearCancelledRide();
+      navigate('/passenger');
     } catch (err) {
       console.error(err);
       setMessage('Unable to cancel ride. Please try again.');
