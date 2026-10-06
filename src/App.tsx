@@ -1,0 +1,167 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import { useAuth } from './context/AuthContext';
+import { RoleSelect } from './pages/RoleSelect';
+import RolePasswordLogin from './pages/RolePasswordLogin';
+import { LoadingScreen } from './components/LoadingScreen';
+import { SplashScreen } from './components/SplashScreen';
+import type { AppRole } from './types';
+import { ADMIN_EMAIL } from './config/admin';
+
+const PassengerDashboard = lazy(() => import('./pages/dashboard/PassengerDashboard').then((module) => ({ default: module.PassengerDashboard })));
+const DriverDashboard = lazy(() => import('./pages/dashboard/DriverDashboard').then((module) => ({ default: module.DriverDashboard })));
+const AdminDashboard = lazy(() => import('./pages/dashboard/AdminDashboard').then((module) => ({ default: module.AdminDashboard })));
+const RideStatus = lazy(() => import('./pages/RideStatus').then((module) => ({ default: module.RideStatus })));
+const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
+const PassengerRides = lazy(() => import('./pages/PassengerRides').then((module) => ({ default: module.PassengerRides })));
+const SafetyDashboard = lazy(() => import('./pages/admin/SafetyDashboard'));
+const AdminMobileDashboard = lazy(() => import('./pages/admin/AdminMobileDashboard'));
+const DriverRides = lazy(() => import('./pages/driver/DriverRides').then((module) => ({ default: module.DriverRides })));
+const DriverPerformance = lazy(() => import('./pages/driver/DriverPerformance').then((module) => ({ default: module.DriverPerformance })));
+const DriverVehicle = lazy(() => import('./pages/driver/DriverVehicle').then((module) => ({ default: module.DriverVehicle })));
+const DriverDocuments = lazy(() => import('./pages/driver/DriverDocuments').then((module) => ({ default: module.DriverDocuments })));
+const DriverHelp = lazy(() => import('./pages/driver/DriverHelp').then((module) => ({ default: module.DriverHelp })));
+const DriverSettings = lazy(() => import('./pages/driver/DriverSettings').then((module) => ({ default: module.DriverSettings })));
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return <div className="min-h-screen bg-black p-8 text-white">Driver dashboard error: {this.state.error.message}</div>;
+    }
+    return this.props.children;
+  }
+}
+
+export type { AppRole };
+
+function dashboardPath(role: AppRole): string {
+  return `/dashboard/${role}`;
+}
+
+function RequireRole({ role, children }: { role: AppRole; children: React.ReactNode }) {
+  const { user, profile, loading } = useAuth();
+  if (typeof window === 'undefined') return null;
+  if (loading) return <LoadingScreen />;
+  if (!user || !profile || profile.role !== role || localStorage.getItem(`${role}LoggedIn`) !== 'true') {
+    return <Navigate to={`/login?role=${role}`} replace />;
+  }
+  return <>{children}</>;
+}
+
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (typeof window === 'undefined') return null;
+  if (loading) return <LoadingScreen />;
+  if (!user) return <Navigate to="/login?role=admin" replace />;
+  if (user.email?.toLowerCase() !== ADMIN_EMAIL) {
+    console.warn('Blocked non-admin:', user.email);
+    return <Navigate to="/" replace />;
+  }
+  if (localStorage.getItem('adminLoggedIn') !== 'true') return <Navigate to="/login?role=admin" replace />;
+  return <>{children}</>;
+}
+
+function HomeOrRedirect() {
+  const { user, profile, loading } = useAuth();
+  if (typeof window === 'undefined') return null;
+  if (loading) return <LoadingScreen />;
+  if (!user) {
+    for (const role of ['passenger', 'driver', 'admin'] as AppRole[]) {
+      localStorage.removeItem(`${role}LoggedIn`);
+    }
+    return <RoleSelect />;
+  }
+  if (profile?.role) return <Navigate to={dashboardPath(profile.role)} replace />;
+  if (user.email?.toLowerCase() === ADMIN_EMAIL && localStorage.getItem('adminLoggedIn') === 'true') {
+    return <Navigate to="/dashboard/admin" replace />;
+  }
+  return <RoleSelect />;
+}
+
+function LoginRouter() {
+  return <RolePasswordLogin />;
+}
+
+function ProtectedDriverDashboard() {
+  return <RequireRole role="driver"><ErrorBoundary><DriverDashboard /></ErrorBoundary></RequireRole>;
+}
+
+function BackButtonHandler() {
+  const [showExitToast, setShowExitToast] = useState(false);
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let lastBackPress = 0;
+    let toastTimer: number | undefined;
+    const listenerPromise = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack) {
+        window.history.back();
+        return;
+      }
+      const now = Date.now();
+      if (now - lastBackPress < 2000) {
+        CapacitorApp.exitApp();
+        return;
+      }
+      lastBackPress = now;
+      setShowExitToast(true);
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => setShowExitToast(false), 2000);
+    });
+    return () => {
+      window.clearTimeout(toastTimer);
+      void listenerPromise.then((listener) => listener.remove());
+    };
+  }, []);
+
+  if (!showExitToast) return null;
+  return (
+    <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[9999] bg-black/80 text-white text-sm px-4 py-2 rounded-full shadow-lg">
+      Press back again to exit
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <>
+      <SplashScreen />
+      <BackButtonHandler />
+      <BrowserRouter basename="/" future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Suspense fallback={<LoadingScreen />}>
+        <Routes>
+          <Route path="/" element={<HomeOrRedirect />} />
+          <Route path="/login" element={<LoginRouter />} />
+          <Route path="/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
+          <Route path="/passenger/dashboard" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
+          <Route path="/dashboard/passenger" element={<RequireRole role="passenger"><PassengerDashboard /></RequireRole>} />
+          <Route path="/driver" element={<ProtectedDriverDashboard />} />
+          <Route path="/driver/dashboard" element={<ProtectedDriverDashboard />} />
+          <Route path="/dashboard/driver" element={<ProtectedDriverDashboard />} />
+          <Route path="/driver/rides" element={<RequireRole role="driver"><DriverRides /></RequireRole>} />
+          <Route path="/driver/performance" element={<RequireRole role="driver"><DriverPerformance /></RequireRole>} />
+          <Route path="/driver/vehicle" element={<RequireRole role="driver"><DriverVehicle /></RequireRole>} />
+          <Route path="/driver/documents" element={<RequireRole role="driver"><DriverDocuments /></RequireRole>} />
+          <Route path="/driver/help" element={<RequireRole role="driver"><DriverHelp /></RequireRole>} />
+          <Route path="/driver/settings" element={<RequireRole role="driver"><DriverSettings /></RequireRole>} />
+          <Route path="/admin" element={<RequireAdmin><AdminMobileDashboard /></RequireAdmin>} />
+          <Route path="/admin/dashboard" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
+          <Route path="/admin/safety" element={<RequireAdmin><SafetyDashboard /></RequireAdmin>} />
+          <Route path="/dashboard/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
+          <Route path="/ride-status/:id" element={<RequireRole role="passenger"><RideStatus /></RequireRole>} />
+          <Route path="/passenger/rides" element={<RequireRole role="passenger"><PassengerRides /></RequireRole>} />
+          <Route path="/profile" element={<RequireRole role="passenger"><Profile /></RequireRole>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+        </Suspense>
+      </BrowserRouter>
+    </>
+  );
+}

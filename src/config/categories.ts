@@ -1,0 +1,61 @@
+// Vehicle categories - Uber/Bolt style. Displayed price is `basePrice * multiplier`
+// where basePrice comes from the OSRM-derived distance/duration formula (see lib/pricing.ts).
+export const RIDE_CATEGORIES = [
+  {
+    id: 'go',
+    name: 'Buddy Go',
+    emoji: '🚗',
+    icon: 'hatchback',
+    subtitle: 'Affordable everyday rides • 2 riders',
+    maxPassengers: 2,
+    multiplier: 1.0,
+    boot: 'Small - 1 small bag',
+    examples: ['Renault Kwid', 'Toyota Etios Hatch', 'Kia Picanto'],
+    etaAwayMin: 3,
+    description: 'Affordable, everyday rides',
+    popular: true,
+  },
+  {
+    id: 'sedan',
+    name: 'Buddy Ride',
+    emoji: '🚙',
+    icon: 'sedan',
+    subtitle: 'Comfortable rides • 3 riders',
+    maxPassengers: 3,
+    multiplier: 1.25,
+    boot: 'Medium - 2 bags',
+    examples: ['Toyota Corolla', 'VW Polo Sedan', 'Suzuki Dzire'],
+    etaAwayMin: 4,
+    description: 'Comfortable rides',
+  },
+  {
+    id: 'xl',
+    name: 'Buddy XL',
+    emoji: '🚐',
+    icon: 'minivan',
+    subtitle: 'Spacious • Up to 6 riders',
+    maxPassengers: 6,
+    multiplier: 1.8,
+    boot: 'Large - 4 bags + extra luggage',
+    examples: ['Toyota Avanza', 'Suzuki Ertiga', 'Toyota Rumion'],
+    etaAwayMin: 6,
+    description: 'Groups + luggage',
+  },
+  {
+    id: 'send',
+    name: 'Send',
+    emoji: '📦',
+    icon: 'parcel',
+    subtitle: 'Parcels & documents',
+    maxPassengers: 0,
+    multiplier: 1.4,
+    boot: '—',
+    examples: [] as string[],
+    etaAwayMin: 5,
+    description: 'Parcels & docs',
+    isDelivery: true,
+  },
+] as const;
+
+export type RideCategory = (typeof RIDE_CATEGORIES)[number];
+export type RideCategoryId = RideCategory['id'];
