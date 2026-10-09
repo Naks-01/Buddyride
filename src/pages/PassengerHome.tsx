@@ -5,18 +5,18 @@ import { geocode, getRoute, reverseGeocode } from '../lib/mapbox'
 import { calculateFare } from '../lib/fare'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
-// POLOKWANE CENTER - NOT JOHANNESBURG
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
 export function PassengerHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [pickup, setPickup] = useState('')
   const [dropoff, setDropoff] = useState('')
-  const [route, setRoute] = useState<GeoJSON.LineString>()
+  const [route, setRoute] = useState<any>()
   const [distance, setDistance] = useState(0)
   const [fare, setFare] = useState(calculateFare(0))
   const [ride, setRide] = useState<Ride | null>(null)
   const [busy, setBusy] = useState(false)
+  const [locating, setLocating] = useState(false)
   const [message, setMessage] = useState('')
   const [categories, setCategories] = useState<any[]>([])
   const [selectedCat, setSelectedCat] = useState('buddy_go')
@@ -33,7 +33,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     navigator.geolocation?.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-      // Only use GPS if inside Polokwane area, otherwise stay in Polokwane
       const isPolokwane = p[0] > 29.0 && p[0] < 30.0 && p[1] > -24.5 && p[1] < -23.5
       const finalPos = isPolokwane? p : POLOKWANE_CENTER
       setLocation(finalPos)
@@ -44,20 +43,37 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         setPickup('7 Marmer Street, Polokwane')
       }
     }, () => {
-      // If GPS denied, use Polokwane default
       setPickup('7 Marmer Street, Polokwane')
     })
   }, [])
 
   useEffect(() => {
     const channel = supabase.channel(`passenger-${profile.id}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `passenger_id=eq.${profile.id}` }, payload => {
+   .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `passenger_id=eq.${profile.id}` }, payload => {
         setRide(payload.new as Ride)
         setSheetCollapsed(false)
       })
-    .subscribe()
+   .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [profile.id])
+
+  async function useCurrentLocation() {
+    setLocating(true)
+    setMessage('')
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
+      })
+      const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
+      setLocation(p)
+      const addr = await reverseGeocode(p[0], p[1])
+      setPickup(addr)
+    } catch (e) {
+      setMessage('Could not get location. Please turn on GPS and allow location permission.')
+    } finally {
+      setLocating(false)
+    }
+  }
 
   async function preview() {
     setBusy(true); setMessage('')
@@ -66,14 +82,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const a = await geocode(pickup)
       const b = await geocode(dropoff)
       if (!a) throw new Error(`Could not find pickup: ${pickup}`)
-      if (!b) throw new Error(`Could not find destination: ${dropoff}. Try "Mall of the North Polokwane"`)
+      if (!b) throw new Error(`Could not find destination: ${dropoff}`)
       const r = await getRoute(a, b)
-      setLocation(a); setRoute(r.geometry); setDistance(r.distanceKm);
+      setLocation(a); setRoute(r.geometry); setDistance(r.distanceKm)
       setFare(calculateFare(r.distanceKm, r.durationMin))
       setSheetCollapsed(false)
-    } catch (e) {
-      setMessage(e instanceof Error? e.message : 'Could not calculate route.')
-    } finally { setBusy(false) }
+    } catch (e) { setMessage(e instanceof Error? e.message : 'Could not calculate route.') }
+    finally { setBusy(false) }
   }
 
   async function requestRide() {
@@ -81,8 +96,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     try {
       const a = await geocode(pickup); const b = await geocode(dropoff)
       if (!a ||!b) throw new Error('Choose valid addresses.')
-      const r = await getRoute(a, b);
-      const f = calculateFare(r.distanceKm, r.durationMin)
+      const r = await getRoute(a, b); const f = calculateFare(r.distanceKm, r.durationMin)
       const sel = categories.find(c => c.id === selectedCat)
       const mult = sel?.base_multiplier || 1
       const finalTotal = f.total * mult
@@ -112,7 +126,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   return <div className="app-shell" style={{ position: 'relative', height: '100dvh', overflow: 'hidden' }}>
     <header className="topbar"><NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} /><strong>BuddyRide1</strong><span>{profile.full_name || profile.email}</span></header>
 
-    <div className="map-wrap" style={{ height: '100%', paddingBottom: sheetCollapsed? '80px' : '380px' }}>
+    <div className="map-wrap" style={{ height: '100%', paddingBottom: sheetCollapsed? '80px' : '420px' }}>
       <MapView center={location} route={route} />
     </div>
 
@@ -133,20 +147,46 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       >
         <div style={{ width: '40px', height: '5px', borderRadius: '10px', background: '#555' }} />
         <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>
-          {sheetCollapsed? '▲ Tap to see ride - fare' : '▼ Tap to hide - see driver on map'}
+          {sheetCollapsed? '▲ Tap to see ride & fare' : '▼ Tap to hide - see driver on map'}
         </div>
       </div>
 
-      <h2>Where are you going?</h2>
-      <input value={pickup} onChange={e => setPickup(e.target.value)} placeholder="Pickup - e.g. 7 Marmer Street" />
-      <input value={dropoff} onChange={e => setDropoff(e.target.value)} placeholder="Destination - e.g. Mall of the North" />
+      <h2 style={{ margin: '8px 0' }}>Where are you going?</h2>
 
-      <div className="grid grid-cols-2 gap-2 my-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', margin: '12px 0' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+        <input
+          value={pickup}
+          onChange={e => setPickup(e.target.value)}
+          placeholder="Pickup - e.g. 7 Marmer Street"
+          style={{ flex: 1, padding: '14px', borderRadius: '12px', border: '1px solid #444', background: '#2a2a2a', color: 'white' }}
+        />
+        <button
+          onClick={useCurrentLocation}
+          disabled={locating}
+          title="Use my current location"
+          style={{
+            width: '50px', height: '50px', borderRadius: '12px',
+            background: '#ff7a00', border: 'none',
+            fontSize: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', flexShrink: 0
+          }}
+        >
+          {locating? '⌛' : '📍'}
+        </button>
+      </div>
+
+      <input
+        value={dropoff}
+        onChange={e => setDropoff(e.target.value)}
+        placeholder="Destination - e.g. Mall of the North"
+        style={{ width: '100%', padding: '14px', borderRadius: '12px', border: '1px solid #444', background: '#2a2a2a', color: 'white', marginBottom: '12px', boxSizing: 'border-box' }}
+      />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', margin: '12px 0' }}>
         {categories.map(cat => (
           <button
             key={cat.id}
             onClick={() => setSelectedCat(cat.id)}
-            className={selectedCat === cat.id? 'primary' : ''}
             style={{ padding: '10px', borderRadius: '12px', border: selectedCat === cat.id? '2px solid #ff7a00' : '1px solid #444', textAlign: 'left', background: selectedCat === cat.id? '#ff7a001a' : '#2a2a2a', color: 'white' }}
           >
             <div>{cat.icon} {cat.name}</div>
@@ -155,11 +195,19 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         ))}
       </div>
 
-      <div className="button-row" style={{ display: 'flex', gap: '8px' }}><button onClick={preview} disabled={busy} style={{ flex: 1 }}>{busy? '...' : 'Estimate'}</button><button className="primary" onClick={requestRide} disabled={busy} style={{ flex: 1.5, background: '#ff7a00' }}>Request {selectedCategory?.name || 'ride'}</button></div>
-      <div className="fare-card" style={{ display: 'flex', justifyContent: 'space-between', margin: '12px 0', padding: '10px', background: '#1e1e1e', borderRadius: '12px' }}><span>{distance.toFixed(1)} km • {selectedCategory?.name}</span><strong>R {(fare.total * (selectedCategory?.base_multiplier || 1)).toFixed(2)}</strong></div>
-      {ride && <div className="ride-status" style={{ padding: '12px', background: '#1e1e1e', borderRadius: '12px' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><b>Ride {ride.id.slice(0, 8)}</b><span className="capitalize" style={{ color: '#ff7a00' }}>{statusText}</span></div><button onClick={cancel} style={{ width: '100%', marginTop: '10px' }}>Cancel ride</button></div>}
-      {message && <div className="error" style={{ color: '#ff4444', marginTop: '8px', padding: '8px', background: '#ff00001a', borderRadius: '8px' }}>{message}</div>}
-      <div style={{ height: '20px' }} />
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button onClick={preview} disabled={busy} style={{ flex: 1, padding: '14px', borderRadius: '12px', border: '1px solid #444', background: '#2a2a2a', color: 'white' }}>{busy? '...' : 'Estimate'}</button>
+        <button onClick={requestRide} disabled={busy} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold' }}>Request {selectedCategory?.name || 'ride'}</button>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', margin: '12px 0', padding: '12px', background: '#1e1e1e', borderRadius: '12px', color: 'white' }}>
+        <span>{distance.toFixed(1)} km • {selectedCategory?.name}</span>
+        <strong>R {(fare.total * (selectedCategory?.base_multiplier || 1)).toFixed(2)}</strong>
+      </div>
+
+      {ride && <div style={{ padding: '12px', background: '#1e1e1e', borderRadius: '12px', color: 'white' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><b>Ride {ride.id.slice(0, 8)}</b><span style={{ color: '#ff7a00' }}>{statusText}</span></div><button onClick={cancel} style={{ width: '100%', marginTop: '10px', padding: '12px', borderRadius: '10px', border: '1px solid #444', background: '#2a2a2a', color: 'white' }}>Cancel ride</button></div>}
+      {message && <div style={{ color: '#ff4444', marginTop: '8px', padding: '10px', background: '#ff00001a', borderRadius: '8px' }}>{message}</div>}
+      <div style={{ height: '24px' }} />
     </section>
   </div>
 }
