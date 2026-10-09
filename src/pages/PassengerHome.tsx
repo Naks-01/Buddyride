@@ -44,8 +44,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     })
     async function loadActiveRide() {
       const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id)
-     .in('status', ['searching','accepted','picked_up','en_route'] as any)
-     .order('created_at', { ascending: false }).limit(1).single()
+    .in('status', ['searching','accepted','picked_up','en_route'] as any)
+    .order('created_at', { ascending: false }).limit(1).single()
       if (data) setRide(data as Ride)
     }
     loadActiveRide()
@@ -54,7 +54,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!ride) return
     const ch = supabase.channel(`passenger-${ride.id}`)
-   .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
+  .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
         setRide(p.new as Ride)
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
@@ -110,13 +110,38 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     setShowDropoffSug(false)
   }
 
+  // --- FIXED: auto-geocode if user didn't click suggestion ---
+  async function ensureCoords() {
+    let pCoords = pickupCoords
+    let dCoords = dropoffCoords
+
+    if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) {
+      try {
+        const res = await geocode(pickup + ' Polokwane') as any
+        if (res?.[0]?.center) pCoords = [res[0].center[0], res[0].center[1]]
+      } catch {}
+    }
+    if (!pCoords) pCoords = location // fallback to current location
+
+    if (!dCoords && dropoff) {
+      try {
+        const res = await geocode(dropoff + ' Polokwane') as any
+        if (res?.[0]?.center) dCoords = [res[0].center[0], res[0].center[1]]
+      } catch {}
+    }
+    return { pCoords, dCoords }
+  }
+
   async function calculateEstimate() {
-    if (!pickupCoords ||!dropoffCoords) {
-      alert('Select pickup and destination from dropdown first')
+    const { pCoords, dCoords } = await ensureCoords()
+    if (!pCoords ||!dCoords) {
+      alert('Could not find destination. Try selecting from dropdown or type e.g. "Puma garage Makgofe"')
       return
     }
+    setPickupCoords(pCoords)
+    setDropoffCoords(dCoords)
     try {
-      const r = await getRoute(pickupCoords, dropoffCoords) as any
+      const r = await getRoute(pCoords, dCoords) as any
       setRoute(r.geometry)
       const km = r.distance / 1000
       setDistance(km)
@@ -143,26 +168,32 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   async function requestRide() {
     setLoading(true)
-    if (!pickupCoords ||!dropoffCoords) {
+    const { pCoords, dCoords } = await ensureCoords()
+
+    if (!dCoords) {
       setLoading(false)
-      alert('Please select addresses from auto-complete list')
+      alert('Please enter destination. If "Puma makgofe" not found, try "Makgofe" or select from list')
       return
     }
+
+    setPickupCoords(pCoords)
+    setDropoffCoords(dCoords)
+
     let finalFare = price || 20
     if (!price) {
       try {
-        const r = await getRoute(pickupCoords, dropoffCoords) as any
+        const r = await getRoute(pCoords!, dCoords) as any
         const km = r.distance / 1000
         finalFare = Math.max(20, Math.round(10 + km * 6))
       } catch { finalFare = 20 }
     }
     const { data, error } = await supabase.from('rides').insert({
       passenger_id: profile.id,
-      pickup_lat: pickupCoords[1],
-      pickup_lng: pickupCoords[0],
-      pickup_address: pickup,
-      dropoff_lat: dropoffCoords[1],
-      dropoff_lng: dropoffCoords[0],
+      pickup_lat: pCoords![1],
+      pickup_lng: pCoords![0],
+      pickup_address: pickup || 'My Location - Polokwane',
+      dropoff_lat: dCoords[1],
+      dropoff_lng: dCoords[0],
       dropoff_address: dropoff,
       status: 'searching',
       fare: finalFare
@@ -280,7 +311,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       )}
     </section>
 
-    {/* Click outside to close suggestions */}
     {(showPickupSug || showDropoffSug) && (
       <div onClick={() => { setShowPickupSug(false); setShowDropoffSug(false) }} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
     )}
