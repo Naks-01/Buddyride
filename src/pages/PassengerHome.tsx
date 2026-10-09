@@ -5,8 +5,11 @@ import { geocode, getRoute, reverseGeocode } from '../lib/mapbox'
 import { calculateFare } from '../lib/fare'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
+// POLOKWANE CENTER - NOT JOHANNESBURG
+const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
+
 export function PassengerHome({ profile }: { profile: Profile }) {
-  const [location, setLocation] = useState<[number, number]>([28.0473, -26.2041])
+  const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [pickup, setPickup] = useState('')
   const [dropoff, setDropoff] = useState('')
   const [route, setRoute] = useState<GeoJSON.LineString>()
@@ -30,30 +33,47 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     navigator.geolocation?.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-      setLocation(p)
-      try { setPickup(await reverseGeocode(p[0], p[1])) } catch {}
+      // Only use GPS if inside Polokwane area, otherwise stay in Polokwane
+      const isPolokwane = p[0] > 29.0 && p[0] < 30.0 && p[1] > -24.5 && p[1] < -23.5
+      const finalPos = isPolokwane? p : POLOKWANE_CENTER
+      setLocation(finalPos)
+      try {
+        const addr = await reverseGeocode(finalPos[0], finalPos[1])
+        setPickup(addr)
+      } catch {
+        setPickup('7 Marmer Street, Polokwane')
+      }
+    }, () => {
+      // If GPS denied, use Polokwane default
+      setPickup('7 Marmer Street, Polokwane')
     })
   }, [])
 
   useEffect(() => {
     const channel = supabase.channel(`passenger-${profile.id}`)
-     .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `passenger_id=eq.${profile.id}` }, payload => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `passenger_id=eq.${profile.id}` }, payload => {
         setRide(payload.new as Ride)
-        setSheetCollapsed(false) // auto open when status changes
+        setSheetCollapsed(false)
       })
-     .subscribe()
+    .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [profile.id])
 
   async function preview() {
     setBusy(true); setMessage('')
     try {
-      const a = await geocode(pickup); const b = await geocode(dropoff)
-      if (!a ||!b) throw new Error('Could not find one of the addresses.')
+      if (!pickup ||!dropoff) throw new Error('Enter pickup and destination')
+      const a = await geocode(pickup)
+      const b = await geocode(dropoff)
+      if (!a) throw new Error(`Could not find pickup: ${pickup}`)
+      if (!b) throw new Error(`Could not find destination: ${dropoff}. Try "Mall of the North Polokwane"`)
       const r = await getRoute(a, b)
-      setLocation(a); setRoute(r.geometry); setDistance(r.distanceKm); setFare(calculateFare(r.distanceKm))
-    } catch (e) { setMessage(e instanceof Error? e.message : 'Could not calculate route.') }
-    finally { setBusy(false) }
+      setLocation(a); setRoute(r.geometry); setDistance(r.distanceKm);
+      setFare(calculateFare(r.distanceKm, r.durationMin))
+      setSheetCollapsed(false)
+    } catch (e) {
+      setMessage(e instanceof Error? e.message : 'Could not calculate route.')
+    } finally { setBusy(false) }
   }
 
   async function requestRide() {
@@ -61,7 +81,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     try {
       const a = await geocode(pickup); const b = await geocode(dropoff)
       if (!a ||!b) throw new Error('Choose valid addresses.')
-      const r = await getRoute(a, b); const f = calculateFare(r.distanceKm)
+      const r = await getRoute(a, b);
+      const f = calculateFare(r.distanceKm, r.durationMin)
       const sel = categories.find(c => c.id === selectedCat)
       const mult = sel?.base_multiplier || 1
       const finalTotal = f.total * mult
@@ -95,7 +116,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <MapView center={location} route={route} />
     </div>
 
-    {/* SLIDE SHEET */}
     <section
       className="sheet"
       style={{
@@ -103,23 +123,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         borderTopLeftRadius: '24px', borderTopRightRadius: '24px',
         transform: sheetCollapsed? 'translateY(calc(100% - 70px))' : 'translateY(0)',
         transition: 'transform 0.35s cubic-bezier(0.32,0.72,0,1)',
-        maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 -8px 30px rgba(0,0,0,0.3)'
+        maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 -8px 30px rgba(0,0,0,0.3)',
+        background: '#121212', padding: '0 16px'
       }}
     >
-      {/* DRAG HANDLE */}
       <div
         onClick={() => setSheetCollapsed(!sheetCollapsed)}
         style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '10px 0 6px' }}
       >
         <div style={{ width: '40px', height: '5px', borderRadius: '10px', background: '#555' }} />
         <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>
-          {sheetCollapsed? '▲ Tap to see details' : '▼ Tap to hide - see driver'}
+          {sheetCollapsed? '▲ Tap to see ride - fare' : '▼ Tap to hide - see driver on map'}
         </div>
       </div>
 
       <h2>Where are you going?</h2>
-      <input value={pickup} onChange={e => setPickup(e.target.value)} placeholder="Pickup location" />
-      <input value={dropoff} onChange={e => setDropoff(e.target.value)} placeholder="Destination" />
+      <input value={pickup} onChange={e => setPickup(e.target.value)} placeholder="Pickup - e.g. 7 Marmer Street" />
+      <input value={dropoff} onChange={e => setDropoff(e.target.value)} placeholder="Destination - e.g. Mall of the North" />
 
       <div className="grid grid-cols-2 gap-2 my-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', margin: '12px 0' }}>
         {categories.map(cat => (
@@ -135,10 +155,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         ))}
       </div>
 
-      <div className="button-row" style={{ display: 'flex', gap: '8px' }}><button onClick={preview} disabled={busy} style={{ flex: 1 }}>Estimate</button><button className="primary" onClick={requestRide} disabled={busy} style={{ flex: 1.5, background: '#ff7a00' }}>Request {selectedCategory?.name || 'ride'}</button></div>
+      <div className="button-row" style={{ display: 'flex', gap: '8px' }}><button onClick={preview} disabled={busy} style={{ flex: 1 }}>{busy? '...' : 'Estimate'}</button><button className="primary" onClick={requestRide} disabled={busy} style={{ flex: 1.5, background: '#ff7a00' }}>Request {selectedCategory?.name || 'ride'}</button></div>
       <div className="fare-card" style={{ display: 'flex', justifyContent: 'space-between', margin: '12px 0', padding: '10px', background: '#1e1e1e', borderRadius: '12px' }}><span>{distance.toFixed(1)} km • {selectedCategory?.name}</span><strong>R {(fare.total * (selectedCategory?.base_multiplier || 1)).toFixed(2)}</strong></div>
       {ride && <div className="ride-status" style={{ padding: '12px', background: '#1e1e1e', borderRadius: '12px' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><b>Ride {ride.id.slice(0, 8)}</b><span className="capitalize" style={{ color: '#ff7a00' }}>{statusText}</span></div><button onClick={cancel} style={{ width: '100%', marginTop: '10px' }}>Cancel ride</button></div>}
-      {message && <div className="error" style={{ color: '#ff4444', marginTop: '8px' }}>{message}</div>}
+      {message && <div className="error" style={{ color: '#ff4444', marginTop: '8px', padding: '8px', background: '#ff00001a', borderRadius: '8px' }}>{message}</div>}
       <div style={{ height: '20px' }} />
     </section>
   </div>
