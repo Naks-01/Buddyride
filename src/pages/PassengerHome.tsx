@@ -60,20 +60,38 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
-  // AUTOCOMPLETE SEARCH
+  // FIXED AUTOCOMPLETE - now handles both Mapbox formats and shows dropdown
   async function searchPlaces(query: string, setter: (v:any[])=>void, setShow: (v:boolean)=>void) {
-    if (!query || query.length < 2 || query.toLowerCase().includes('my location')) {
+    if (!query || query.trim().length < 2) {
+      setter([])
+      setShow(false)
+      return
+    }
+    const lower = query.toLowerCase()
+    if (lower === 'my location' || lower === 'my location - polokwane' || lower === 'my location - polokwane ') {
       setter([])
       setShow(false)
       return
     }
     try {
       const results = await geocode(query + ' Polokwane') as any
-      if (results && results.length > 0) {
-        setter(results.slice(0, 5))
-        setShow(true)
+      let places = results
+      if (results?.features) places = results.features
+      if (Array.isArray(places) && places.length > 0) {
+        const normalized = places.slice(0, 5).map((p:any) => ({
+          center: p.center || p.geometry?.coordinates || [p.center?.[0], p.center?.[1]],
+          place_name: p.place_name || p.text || p.place_name,
+          text: p.text || p.place_name
+        })).filter((p:any) => p.center)
+        setter(normalized)
+        setShow(normalized.length > 0)
+      } else {
+        setter([])
+        setShow(false)
       }
-    } catch {}
+    } catch (e) {
+      console.log('geocode err', e)
+    }
   }
 
   function onPickupChange(val: string) {
@@ -110,23 +128,25 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     setShowDropoffSug(false)
   }
 
-  // --- FIXED: auto-geocode if user didn't click suggestion ---
+  // FIXED: auto-geocode even if user didn't click suggestion (your video case)
   async function ensureCoords() {
     let pCoords = pickupCoords
     let dCoords = dropoffCoords
-
     if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) {
       try {
         const res = await geocode(pickup + ' Polokwane') as any
-        if (res?.[0]?.center) pCoords = [res[0].center[0], res[0].center[1]]
+        const first = res?.[0] || res?.features?.[0]
+        const c = first?.center || first?.geometry?.coordinates
+        if (c) pCoords = [c[0], c[1]]
       } catch {}
     }
-    if (!pCoords) pCoords = location // fallback to current location
-
+    if (!pCoords) pCoords = location
     if (!dCoords && dropoff) {
       try {
         const res = await geocode(dropoff + ' Polokwane') as any
-        if (res?.[0]?.center) dCoords = [res[0].center[0], res[0].center[1]]
+        const first = res?.[0] || res?.features?.[0]
+        const c = first?.center || first?.geometry?.coordinates
+        if (c) dCoords = [c[0], c[1]]
       } catch {}
     }
     return { pCoords, dCoords }
@@ -135,7 +155,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function calculateEstimate() {
     const { pCoords, dCoords } = await ensureCoords()
     if (!pCoords ||!dCoords) {
-      alert('Could not find destination. Try selecting from dropdown or type e.g. "Puma garage Makgofe"')
+      alert('Select destination from dropdown, or type and press Estimate again')
       return
     }
     setPickupCoords(pCoords)
@@ -169,16 +189,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function requestRide() {
     setLoading(true)
     const { pCoords, dCoords } = await ensureCoords()
-
     if (!dCoords) {
       setLoading(false)
-      alert('Please enter destination. If "Puma makgofe" not found, try "Makgofe" or select from list')
+      alert('Please enter destination')
       return
     }
-
     setPickupCoords(pCoords)
     setDropoffCoords(dCoords)
-
     let finalFare = price || 20
     if (!price) {
       try {
@@ -216,7 +233,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     top: '58px',
     left: 0,
     right: 0,
-    zIndex: 100,
+    zIndex: 9999,
     background: dark? '#2a2a2a' : 'white',
     border: `1px solid ${dark? '#444' : '#ddd'}`,
     borderRadius: '12px',
@@ -254,8 +271,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 12px' }} />
           <h2 style={{ margin: '0 0 16px', fontSize: '22px', fontWeight: 'bold' }}>Where are you going?</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-
-            {/* PICKUP WITH AUTOCOMPLETE */}
             <div style={{ position: 'relative' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input value={pickup} onChange={e => onPickupChange(e.target.value)} onFocus={() => pickupSuggestions.length && setShowPickupSug(true)} placeholder="Pickup - e.g. My Location" style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px' }} />
@@ -271,8 +286,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
                 </div>
               )}
             </div>
-
-            {/* DROPOFF WITH AUTOCOMPLETE */}
             <div style={{ position: 'relative' }}>
               <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro" style={{ width: '100%', padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px', boxSizing: 'border-box' }} />
               {showDropoffSug && dropoffSuggestions.length > 0 && (
@@ -285,12 +298,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
                 </div>
               )}
             </div>
-
             <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
               <button onClick={calculateEstimate} style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
               <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{loading? '...' : 'Request ride'}</button>
             </div>
-
             {showEstimate && distance!== null && price!== null && (
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', borderRadius: '12px', background: bg2, marginTop: '4px', border: `1px solid ${border}` }}>
                 <span style={{ opacity: 0.8 }}>{distance.toFixed(1)} km •</span>
@@ -300,7 +311,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           </div>
         </>
       )}
-
       {ride && (
         <>
           <h3 style={{ margin: '0 0 6px' }}>{ride.status === 'searching'? 'Searching driver...' : (ride.status as any) === 'accepted'? 'Driver is coming!' : 'On trip'}</h3>
@@ -310,7 +320,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         </>
       )}
     </section>
-
     {(showPickupSug || showDropoffSug) && (
       <div onClick={() => { setShowPickupSug(false); setShowDropoffSug(false) }} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
     )}
