@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { MapView } from '../components'
 import { NavigationMenu } from '../NavigationMenu'
 import { getRoute, geocode } from '../lib/mapbox'
@@ -12,6 +12,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [dropoff, setDropoff] = useState('')
   const [pickupCoords, setPickupCoords] = useState<[number, number] | null>(null)
   const [dropoffCoords, setDropoffCoords] = useState<[number, number] | null>(null)
+  const [pickupSuggestions, setPickupSuggestions] = useState<any[]>([])
+  const [dropoffSuggestions, setDropoffSuggestions] = useState<any[]>([])
+  const [showPickupSug, setShowPickupSug] = useState(false)
+  const [showDropoffSug, setShowDropoffSug] = useState(false)
   const [route, setRoute] = useState<any>()
   const [ride, setRide] = useState<Ride | null>(null)
   const [loading, setLoading] = useState(false)
@@ -19,6 +23,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [price, setPrice] = useState<number | null>(null)
   const [showEstimate, setShowEstimate] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
+
+  const pickupDebounce = useRef<any>(null)
+  const dropoffDebounce = useRef<any>(null)
 
   const isDark = theme === 'dark'
   const bg = isDark? '#121212' : '#ffffff'
@@ -37,8 +44,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     })
     async function loadActiveRide() {
       const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id)
-      .in('status', ['searching','accepted','picked_up','en_route'] as any)
-      .order('created_at', { ascending: false }).limit(1).single()
+     .in('status', ['searching','accepted','picked_up','en_route'] as any)
+     .order('created_at', { ascending: false }).limit(1).single()
       if (data) setRide(data as Ride)
     }
     loadActiveRide()
@@ -47,15 +54,65 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!ride) return
     const ch = supabase.channel(`passenger-${ride.id}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
+   .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
         setRide(p.new as Ride)
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
+  // AUTOCOMPLETE SEARCH
+  async function searchPlaces(query: string, setter: (v:any[])=>void, setShow: (v:boolean)=>void) {
+    if (!query || query.length < 2 || query.toLowerCase().includes('my location')) {
+      setter([])
+      setShow(false)
+      return
+    }
+    try {
+      const results = await geocode(query + ' Polokwane') as any
+      if (results && results.length > 0) {
+        setter(results.slice(0, 5))
+        setShow(true)
+      }
+    } catch {}
+  }
+
+  function onPickupChange(val: string) {
+    setPickup(val)
+    setShowEstimate(false)
+    setPrice(null)
+    if (pickupDebounce.current) clearTimeout(pickupDebounce.current)
+    pickupDebounce.current = setTimeout(() => {
+      searchPlaces(val, setPickupSuggestions, setShowPickupSug)
+    }, 300)
+  }
+
+  function onDropoffChange(val: string) {
+    setDropoff(val)
+    setShowEstimate(false)
+    setPrice(null)
+    if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current)
+    dropoffDebounce.current = setTimeout(() => {
+      searchPlaces(val, setDropoffSuggestions, setShowDropoffSug)
+    }, 300)
+  }
+
+  function selectPickupSuggestion(item: any) {
+    setPickup(item.place_name || item.text)
+    setPickupCoords([item.center[0], item.center[1]] as [number, number])
+    setPickupSuggestions([])
+    setShowPickupSug(false)
+  }
+
+  function selectDropoffSuggestion(item: any) {
+    setDropoff(item.place_name || item.text)
+    setDropoffCoords([item.center[0], item.center[1]] as [number, number])
+    setDropoffSuggestions([])
+    setShowDropoffSug(false)
+  }
+
   async function calculateEstimate() {
     if (!pickupCoords ||!dropoffCoords) {
-      alert('Select pickup and destination first')
+      alert('Select pickup and destination from dropdown first')
       return
     }
     try {
@@ -63,14 +120,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setRoute(r.geometry)
       const km = r.distance / 1000
       setDistance(km)
-      // R20 minimum: Base R10 + R6 per km, min R20
       const calc = 10 + (km * 6)
       setPrice(Math.max(20, Math.round(calc)))
       setShowEstimate(true)
     } catch {
-      // Fallback if mapbox fails - calculate straight line
-      const km = 3 // estimate
-      setDistance(km)
+      setDistance(3)
       setPrice(20)
       setShowEstimate(true)
     }
@@ -82,47 +136,26 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setLocation(p)
       setPickupCoords(p)
       setPickup('My Location - Polokwane')
+      setPickupSuggestions([])
+      setShowPickupSug(false)
     })
   }
 
-  async function handleSearchPickup() {
-    if (!pickup || pickup === 'My Location') return
-    try {
-      const results = await geocode(pickup + ' Polokwane') as any
-      if (results && results[0] && results[0].center) {
-        const c = results[0].center
-        setPickupCoords([c[0], c[1]] as [number, number])
-        setShowEstimate(false)
-        setPrice(null)
-        setDistance(null)
-      }
-    } catch {}
-  }
-
-  async function handleSearchDropoff() {
-    if (!dropoff) return
-    try {
-      const results = await geocode(dropoff + ' Polokwane') as any
-      if (results && results[0] && results[0].center) {
-        const c = results[0].center
-        setDropoffCoords([c[0], c[1]] as [number, number])
-        setShowEstimate(false)
-        setPrice(null)
-        setDistance(null)
-      }
-    } catch {}
-  }
-
   async function requestRide() {
+    setLoading(true)
     if (!pickupCoords ||!dropoffCoords) {
-      alert('Please enter pickup and dropoff')
+      setLoading(false)
+      alert('Please select addresses from auto-complete list')
       return
     }
-    // Auto-calculate if user didn't click Estimate
+    let finalFare = price || 20
     if (!price) {
-      await calculateEstimate()
+      try {
+        const r = await getRoute(pickupCoords, dropoffCoords) as any
+        const km = r.distance / 1000
+        finalFare = Math.max(20, Math.round(10 + km * 6))
+      } catch { finalFare = 20 }
     }
-    setLoading(true)
     const { data, error } = await supabase.from('rides').insert({
       passenger_id: profile.id,
       pickup_lat: pickupCoords[1],
@@ -132,7 +165,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       dropoff_lng: dropoffCoords[0],
       dropoff_address: dropoff,
       status: 'searching',
-      fare: price || 20
+      fare: finalFare
     } as any).select().single()
     setLoading(false)
     if (error) alert(error.message)
@@ -147,6 +180,28 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     setShowEstimate(false)
   }
 
+  const sugStyle = (dark:boolean) => ({
+    position: 'absolute' as const,
+    top: '58px',
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    background: dark? '#2a2a2a' : 'white',
+    border: `1px solid ${dark? '#444' : '#ddd'}`,
+    borderRadius: '12px',
+    maxHeight: '200px',
+    overflowY: 'auto' as const,
+    boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+  })
+
+  const sugItemStyle = (dark:boolean) => ({
+    padding: '12px 14px',
+    borderBottom: `1px solid ${dark? '#333' : '#eee'}`,
+    cursor: 'pointer',
+    fontSize: '14px',
+    color: dark? 'white' : 'black'
+  })
+
   return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <header style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
@@ -157,39 +212,59 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       </div>
     </header>
 
-    <div style={{ height: '100%', paddingBottom: '300px' }}>
+    <div style={{ height: '100%', paddingBottom: '350px' }}>
       <MapView center={pickupCoords || location} route={route} />
-      <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '320px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>📍</button>
+      <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '360px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>📍</button>
     </div>
 
     <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px', color: text, borderTop: `1px solid ${border}` }}>
       {!ride && (
         <>
           <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 12px' }} />
-          <p style={{ textAlign: 'center', fontSize: '12px', opacity: 0.6, margin: '0 0 12px' }}>▼ Tap to hide - see driver on map</p>
           <h2 style={{ margin: '0 0 16px', fontSize: '22px', fontWeight: 'bold' }}>Where are you going?</h2>
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input value={pickup} onChange={e => { setPickup(e.target.value); setShowEstimate(false) }} onBlur={handleSearchPickup} placeholder="7 Marmer Street, Polokwane" style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px' }} />
-              <button onClick={useMyLocation} style={{ width: '52px', borderRadius: '14px', background: '#ff7a00', border: 'none', fontSize: '20px' }}>📍</button>
+
+            {/* PICKUP WITH AUTOCOMPLETE */}
+            <div style={{ position: 'relative' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input value={pickup} onChange={e => onPickupChange(e.target.value)} onFocus={() => pickupSuggestions.length && setShowPickupSug(true)} placeholder="Pickup - e.g. My Location" style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px' }} />
+                <button onClick={useMyLocation} style={{ width: '52px', borderRadius: '14px', background: '#ff7a00', border: 'none', fontSize: '20px' }}>📍</button>
+              </div>
+              {showPickupSug && pickupSuggestions.length > 0 && (
+                <div style={sugStyle(isDark) as any}>
+                  {pickupSuggestions.map((s,i) => (
+                    <div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>
+                      📍 {s.place_name || s.text}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <input value={dropoff} onChange={e => { setDropoff(e.target.value); setShowEstimate(false); setPrice(null) }} onBlur={handleSearchDropoff} placeholder="Destination - e.g. Mall of the North" style={{ padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px' }} />
+
+            {/* DROPOFF WITH AUTOCOMPLETE */}
+            <div style={{ position: 'relative' }}>
+              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro" style={{ width: '100%', padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px', boxSizing: 'border-box' }} />
+              {showDropoffSug && dropoffSuggestions.length > 0 && (
+                <div style={sugStyle(isDark) as any}>
+                  {dropoffSuggestions.map((s,i) => (
+                    <div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>
+                      📍 {s.place_name || s.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
               <button onClick={calculateEstimate} style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
               <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{loading? '...' : 'Request ride'}</button>
             </div>
 
-            {/* PRICE ONLY SHOWS AFTER ESTIMATE - NOT ALWAYS */}
             {showEstimate && distance!== null && price!== null && (
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', borderRadius: '12px', background: bg2, marginTop: '4px', border: `1px solid ${border}` }}>
                 <span style={{ opacity: 0.8 }}>{distance.toFixed(1)} km •</span>
                 <span style={{ fontWeight: 'bold', fontSize: '16px' }}>R {price.toFixed(2)}</span>
               </div>
-            )}
-            {showEstimate && price === 20 && (
-              <p style={{ fontSize: '11px', opacity: 0.5, textAlign: 'center', margin: '0' }}>Minimum fare R20 applies</p>
             )}
           </div>
         </>
@@ -204,5 +279,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         </>
       )}
     </section>
+
+    {/* Click outside to close suggestions */}
+    {(showPickupSug || showDropoffSug) && (
+      <div onClick={() => { setShowPickupSug(false); setShowDropoffSug(false) }} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
+    )}
   </div>
 }
