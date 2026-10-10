@@ -6,6 +6,12 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
+const CATEGORIES = [
+  { id: 'buddy_go', name: 'Go', icon: '🚗', base: 15, perKm: 7.5, min: 35, seats: 2, mult: 1 },
+  { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 20, perKm: 9, min: 45, seats: 3, mult: 1.2 },
+  { id: 'buddy_xl', name: 'XL', icon: '🚐', base: 28, perKm: 11, min: 60, seats: 6, mult: 1.5 },
+]
+
 export function PassengerHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [pickup, setPickup] = useState('')
@@ -23,6 +29,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [distance, setDistance] = useState<number | null>(null)
   const [price, setPrice] = useState<number | null>(null)
   const [showEstimate, setShowEstimate] = useState(false)
+  const [selectedCat, setSelectedCat] = useState('buddy_go')
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
 
   const pickupDebounce = useRef<any>(null)
@@ -62,6 +69,14 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
+  function calcFareForCategory(catId: string, km: number) {
+    const cat = CATEGORIES.find(c => c.id === catId) || CATEGORIES[0]
+    let fare = cat.base + (km * cat.perKm)
+    if (fare < cat.min) fare = cat.min
+    if (fare > 350) fare = 350
+    return Math.ceil(fare / 5) * 5
+  }
+
   async function searchPlaces(query: string, setter: (v:any[])=>void, setShow: (v:boolean)=>void) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
     if (query.toLowerCase().includes('my location')) { setter([]); setShow(false); return }
@@ -86,7 +101,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) { try { const res = await geocode(pickup + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) pCoords = [c[0], c[1]] } catch {} }
     if (!pCoords) pCoords = location
     if (!dCoords && dropoff) { try { const res = await geocode(dropoff + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) dCoords = [c[0], c[1]] } catch {} }
-    // BUDDY FALLBACK - if still no coords and user typed Makro, use hardcoded Makro Polokwane
     if (!dCoords && dropoff.toLowerCase().includes('makro')) {
       dCoords = [29.4521, -23.9145] as any
     }
@@ -97,31 +111,41 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     const { pCoords, dCoords } = await ensureCoords()
     if (!pCoords ||!dCoords) { alert('Please enter destination - e.g. Makro'); return }
     setPickupCoords(pCoords); setDropoffCoords(dCoords)
-    try { const r = await getRoute(pCoords, dCoords) as any; setRoute(r.geometry); const km = r.distance / 1000; const mins = r.duration / 60; setDistance(km); const hour = new Date().getHours(); const isPeak = hour >= 16 && hour <= 19; const perKm = isPeak? 11 : 8.5; let calc = 20 + (km * perKm) + (mins * 1.5); if (isPeak) calc = calc * 1.3; calc = Math.max(35, Math.round(calc)); setPrice(calc); setShowEstimate(true) } catch { setDistance(3); setPrice(35); setShowEstimate(true) }
+    try {
+      const r = await getRoute(pCoords, dCoords) as any;
+      setRoute(r.geometry);
+      const km = r.distance / 1000;
+      setDistance(km);
+      const fare = calcFareForCategory(selectedCat, km)
+      setPrice(fare);
+      setShowEstimate(true)
+    } catch {
+      setDistance(3);
+      setPrice(calcFareForCategory(selectedCat, 3));
+      setShowEstimate(true)
+    }
   }
 
   async function useMyLocation() {
     navigator.geolocation.getCurrentPosition(async pos => { const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setPickupCoords(p); try { const real = await reverseGeocode(p); setPickup(real) } catch { setPickup('My Location - Polokwane') }; setPickupSuggestions([]); setShowPickupSug(false) })
   }
 
-  // BUDDY DISPATCH - NO Bolt
   async function requestRide() {
     setLoading(true)
     const { pCoords, dCoords } = await ensureCoords()
     if (!dCoords) { setLoading(false); alert('Please enter destination'); return }
     setPickupCoords(pCoords); setDropoffCoords(dCoords)
-    let finalFare = price || 35
+    let finalFare = price || calcFareForCategory(selectedCat, 3)
     let finalKm = distance || 3
     if (!price) {
-      try { const r = await getRoute(pCoords!, dCoords) as any; const km = r.distance / 1000; const mins = r.duration / 60; finalKm = km; const hour = new Date().getHours(); const perKm = (hour >=16 && hour <=19)? 11 : 8.5; let calc = 20 + (km * perKm) + (mins * 1.5); if (hour >=16 && hour <=19) calc = calc * 1.3; finalFare = Math.max(35, Math.round(calc)) } catch { finalFare = 35 }
+      try { const r = await getRoute(pCoords!, dCoords) as any; const km = r.distance / 1000; finalKm = km; finalFare = calcFareForCategory(selectedCat, km) } catch { finalFare = calcFareForCategory(selectedCat, 3) }
     }
     let realPickup = pickup
     if (!pickup || pickup.toLowerCase().includes('my location')) { try { realPickup = await reverseGeocode(pCoords!) } catch { realPickup = 'Polokwane' } }
-    const { data, error } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords![1], pickup_lng: pCoords![0], pickup_address: realPickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash' } as any).select().single()
+    const { data, error } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords![1], pickup_lng: pCoords![0], pickup_address: realPickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
     if (error) { setLoading(false); alert(error.message); return }
     if (data) {
       setRide(data as Ride)
-      // BUDDY DISPATCH - find closest online driver
       try {
         const { data: onlineDrivers } = await supabase.from('profiles').select('id, current_lat, current_lng').eq('role','driver').eq('is_online', true).limit(20)
         if (onlineDrivers && onlineDrivers.length > 0) {
@@ -149,31 +173,45 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         <button onClick={() => void supabase.auth.signOut()} style={{ background: bg2, color: text, border: `1px solid ${border}`, padding: '8px 14px', borderRadius: '20px', fontWeight: 'bold', fontSize: '13px' }}>Logout</button>
       </div>
     </header>
-    <div style={{ height: '100%', paddingBottom: '350px' }}>
+    <div style={{ height: '100%', paddingBottom: '420px' }}>
       <MapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} />
-      <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '360px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>📍</button>
+      <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '430px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>📍</button>
     </div>
     <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px', color: text, borderTop: `1px solid ${border}` }}>
       {!ride && (<>
           <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 12px' }} />
-          <h2 style={{ margin: '0 0 16px', fontSize: '22px', fontWeight: 'bold' }}>Where are you going?</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <h2 style={{ margin: '0 0 12px', fontSize: '20px', fontWeight: 'bold' }}>Where are you going?</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ position: 'relative' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <input value={pickup} onChange={e => onPickupChange(e.target.value)} onFocus={() => pickupSuggestions.length && setShowPickupSug(true)} placeholder="Pickup - e.g. My Location" style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px' }} />
+                <input value={pickup} onChange={e => onPickupChange(e.target.value)} onFocus={() => pickupSuggestions.length && setShowPickupSug(true)} placeholder="Pickup - e.g. My Location" style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '14px' }} />
                 <button onClick={useMyLocation} style={{ width: '52px', borderRadius: '14px', background: '#ff7a00', border: 'none', fontSize: '20px' }}>📍</button>
               </div>
               {showPickupSug && pickupSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{pickupSuggestions.map((s,i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
             <div style={{ position: 'relative' }}>
-              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro" style={{ width: '100%', padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px', boxSizing: 'border-box' }} />
+              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '14px', boxSizing: 'border-box' }} />
               {showDropoffSug && dropoffSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{dropoffSuggestions.map((s,i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
-            <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-              <button onClick={calculateEstimate} style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{loading? 'Finding Buddy...' : 'Request Buddy'}</button>
+            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 0' }}>
+              {CATEGORIES.map(cat => {
+                const fare = distance? calcFareForCategory(cat.id, distance) : null
+                const isSel = selectedCat === cat.id
+                return (
+                  <button key={cat.id} onClick={() => { setSelectedCat(cat.id); if (distance) setPrice(calcFareForCategory(cat.id, distance)) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, textAlign: 'left' }}>
+                    <div style={{ fontSize: '20px' }}>{cat.icon}</div>
+                    <div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>
+                    <div style={{ fontSize: '10px', opacity: 0.6 }}>{cat.seats} seats • {cat.seats} pax</div>
+                    {fare && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px', marginTop: '2px' }}>R {fare}</div>}
+                  </button>
+                )
+              })}
             </div>
-            {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', borderRadius: '12px', background: bg2, marginTop: '4px', border: `1px solid ${border}` }}><span style={{ opacity: 0.8 }}>{distance.toFixed(1)} km • {new Date().getHours()>=16&&new Date().getHours()<=19?'Surge 1.3x': 'Standard'}</span><span style={{ fontWeight: 'bold', fontSize: '16px' }}>R {price.toFixed(0)}</span></div>)}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '2px' }}>
+              <button onClick={calculateEstimate} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
+              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '14px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '15px' }}>{loading? 'Finding Buddy...' : 'Request Buddy'}</button>
+            </div>
+            {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2, marginTop: '2px', border: `1px solid ${border}` }}><span style={{ opacity: 0.8, fontSize: '13px' }}>{distance.toFixed(1)} km • {CATEGORIES.find(c=>c.id===selectedCat)?.name} ({CATEGORIES.find(c=>c.id===selectedCat)?.seats} pax)</span><span style={{ fontWeight: 'bold', fontSize: '15px' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
       {ride && (<>

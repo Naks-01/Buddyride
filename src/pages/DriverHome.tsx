@@ -19,6 +19,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [showNavChooser, setShowNavChooser] = useState(false)
   const [navTarget, setNavTarget] = useState<{lat:number,lng:number} | null>(null)
   const watchId = useRef<number | null>(null)
+  const lastSupabaseUpdate = useRef<number>(0)
+  const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
 
   const isDark = theme === 'dark'
   const bg = isDark? '#121212' : '#ffffff'
@@ -29,7 +31,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
 
-  // SET DEFAULT NAV = MAPBOX (like Bolt)
   useEffect(() => {
     if (!localStorage.getItem('buddy_nav')) localStorage.setItem('buddy_nav', 'mapbox')
     if (!localStorage.getItem('buddy_nav_autostart')) localStorage.setItem('buddy_nav_autostart', 'true')
@@ -42,14 +43,18 @@ export function DriverHome({ profile }: { profile: Profile }) {
       if (data) setIsOnline((data as any).is_online || false)
     }
     loadStatus()
-    navigator.geolocation.getCurrentPosition(p => setLocation([p.coords.longitude, p.coords.latitude]))
+    navigator.geolocation.getCurrentPosition(p => {
+      const pos: [number, number] = [p.coords.longitude, p.coords.latitude]
+      setLocation(pos)
+      lastLocation.current = pos
+    })
   }, [profile.id])
 
   useEffect(() => {
     async function loadRide() {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id)
-   .in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any)
-   .order('created_at', { ascending: false }).limit(1).single()
+  .in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any)
+  .order('created_at', { ascending: false }).limit(1).single()
       if (data) { setRide(data); setIsNavigating(true); setIsOnline(true); setZoom(17) }
     }
     loadRide()
@@ -57,7 +62,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     const ch = supabase.channel(`driver-${profile.id}`)
- .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
+.on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
         const newRide = p.new as Ride
         setRide(newRide)
         if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
@@ -79,14 +84,35 @@ export function DriverHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch2); clearInterval(interval) }
   }, [isOnline, ride, profile.id])
 
+  // ✅ FIXED: THROTTLED GPS - NO MORE VIBRATION
   useEffect(() => {
     if (!isNavigating &&!isOnline) return
+
     watchId.current = navigator.geolocation.watchPosition(pos => {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-        setLocation(p)
-        if (ride) supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
-        if (isOnline) supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
-      }, err => console.log(err), { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+
+        // 1. Only update UI if moved > 5 meters (prevents micro-shake)
+        const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
+        if (dist > 0.00005) { // ~5 meters
+          setLocation(p)
+          lastLocation.current = p
+        }
+
+        // 2. Only update Supabase every 3 seconds (not every 0.5s)
+        const now = Date.now()
+        if (now - lastSupabaseUpdate.current > 3000) {
+          lastSupabaseUpdate.current = now
+          if (ride) {
+            supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
+          }
+          if (isOnline) {
+            supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
+          }
+          // Also update driver_locations for passenger tracking
+          supabase.from('driver_locations').upsert({ driver_id: profile.id, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() } as any).then(()=>{})
+        }
+      }, err => console.log(err),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
     ) as any
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isNavigating, isOnline, ride?.id, profile.id])
@@ -95,11 +121,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
     async function buildRoute() {
       if (!ride ||!location) return
       const target: [number, number] = (ride.status as any) === 'accepted' || (ride.status as any) === 'arrived'
-   ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
+  ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
       try { const r = await getRoute(location, target); setRoute(r.geometry) } catch {}
     }
+    // Throttle route building too - only when ride status changes or big move
     buildRoute()
-  }, [ride, location])
+  }, [ride?.id, ride?.status]) // REMOVED location to stop route rebuild shake
 
   async function toggleOnline() {
     const next =!isOnline
@@ -108,9 +135,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }
 
   async function acceptRide(rideId: string) {
-    await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted' } as any).eq('id', rideId)
+    await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted', started_at: new Date().toISOString() } as any).eq('id', rideId)
     setSearchingRides([])
-    // AUTO START MAPBOX NAVIGATION LIKE BOLT
     setIsNavigating(true)
     setZoom(17)
   }
@@ -121,7 +147,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   async function completeRide() {
     if (!ride) return
-    await supabase.from('rides').update({ status: 'completed' as any }).eq('id', ride.id)
+    await supabase.from('rides').update({ status: 'completed' as any, ended_at: new Date().toISOString() }).eq('id', ride.id)
     const fare = (ride as any).fare || 0
     const commission = fare * 0.20
     const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
@@ -131,11 +157,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setIsNavigating(false); setRide(null)
   }
 
-  // FIXED: Mapbox is automatic, Google/Waze only if changed in Settings
   function openExternalMap(lat: number, lng: number) {
     setNavTarget({ lat, lng })
     const pref = localStorage.getItem('buddy_nav') || localStorage.getItem('nav_pref') || 'mapbox'
-
     if (pref === 'mapbox' || pref === 'buddy') {
       setIsNavigating(true)
       setZoom(17)
@@ -145,7 +169,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank')
       return
     }
-    // google
     window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank')
   }
 
@@ -170,7 +193,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     </header>
 
     <div style={{ height: '100%', paddingBottom: '220px' }}>
-      <MapView center={location} route={route} driverLocation={location} isNavigating={isNavigating} />
+      <MapView center={location} route={route} driverLocation={location} isNavigating={isNavigating} followDriver={isNavigating} />
       <button onClick={() => { setZoom(17); setIsNavigating(true) }} style={{ position: 'absolute', right: '16px', bottom: '240px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>🎯</button>
     </div>
 
@@ -234,7 +257,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       )}
     </section>
 
-    {/* Settings chooser - only opens if user explicitly wants to change */}
     {showNavChooser && (
       <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
         <div style={{ width: '100%', background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '20px' }}>

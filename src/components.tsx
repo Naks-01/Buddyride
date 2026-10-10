@@ -3,27 +3,29 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { assertMapboxConfigured } from './lib/mapbox'
 
-export function MapView({ center, route, markers = [], driverLocation, isNavigating, bearing }: {
+export function MapView({ center, route, markers = [], driverLocation, isNavigating, bearing, followDriver }: {
   center: [number, number]
   route?: GeoJSON.LineString | any
   markers?: Array<{ id: string; lng: number; lat: number; label?: string }>
   driverLocation?: [number, number]
   isNavigating?: boolean
   bearing?: number
+  followDriver?: boolean
 }) {
   const el = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const lastCenterRef = useRef<[number, number]>(center)
+  const hasFitRoute = useRef(false)
 
   useEffect(() => {
     if (!el.current) return
     try { assertMapboxConfigured() } catch { return }
     mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string
 
-    // BOLT: navigation-day when driver is navigating, streets when passenger
     const style = isNavigating || driverLocation
-     ? 'mapbox://styles/mapbox/navigation-day-v1'
+    ? 'mapbox://styles/mapbox/navigation-day-v1'
       : 'mapbox://styles/mapbox/streets-v12'
 
     map.current = new mapboxgl.Map({
@@ -31,32 +33,28 @@ export function MapView({ center, route, markers = [], driverLocation, isNavigat
       style,
       center: driverLocation || center,
       zoom: isNavigating? 17 : 13,
-      pitch: isNavigating? 45 : 0, // Bolt 3D tilt
+      pitch: isNavigating? 45 : 0,
       bearing: bearing || 0,
       antialias: true
     })
     map.current.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right')
+    lastCenterRef.current = center
     return () => map.current?.remove()
-  }, [])
+  }, []) // create once
 
-  // BOLT: Update style, zoom, pitch, bearing when navigating
+  // ✅ FIXED: Only change zoom/pitch when isNavigating toggles, NOT on every location
   useEffect(() => {
     const m = map.current
     if (!m) return
     if (isNavigating) {
-      m.easeTo({
-        center: driverLocation || center,
-        zoom: 17,
-        pitch: 45,
-        bearing: bearing || m.getBearing(),
-        duration: 1000
-      })
+      m.easeTo({ zoom: 17, pitch: 45, duration: 800 })
     } else {
-      m.easeTo({ center: center, zoom: 13, pitch: 0, duration: 1000 })
+      m.easeTo({ zoom: 13, pitch: 0, duration: 800 })
+      hasFitRoute.current = false
     }
-  }, [center, driverLocation, isNavigating, bearing])
+  }, [isNavigating])
 
-  // BOLT: Driver car marker with rotation
+  // ✅ FIXED: Driver marker moves, map ONLY follows if >30m away and followDriver=true
   useEffect(() => {
     const m = map.current
     if (!m ||!driverLocation) return
@@ -76,19 +74,38 @@ export function MapView({ center, route, markers = [], driverLocation, isNavigat
       div.style.fontSize = '22px'
       div.innerHTML = '🚗'
       driverMarkerRef.current = new mapboxgl.Marker({ element: div, rotationAlignment: 'map' })
-       .setLngLat(pos)
-       .addTo(m)
+      .setLngLat(pos)
+      .addTo(m)
     } else {
       driverMarkerRef.current.setLngLat(pos)
     }
-  }, [driverLocation])
 
+    // Follow logic - only if followDriver enabled and far
+    if (followDriver && isNavigating) {
+      const currentCenter = m.getCenter()
+      const dist = Math.hypot(currentCenter.lng - pos[0], currentCenter.lat - pos[1])
+      if (dist > 0.0003) { // ~30m
+        m.easeTo({ center: pos, duration: 1000 })
+      }
+    }
+  }, [driverLocation, isNavigating, followDriver])
+
+  // ✅ FIXED: center updates only when NOT navigating
+  useEffect(() => {
+    const m = map.current
+    if (!m || isNavigating) return
+    const dist = Math.hypot(center[0] - lastCenterRef.current[0], center[1] - lastCenterRef.current[1])
+    if (dist > 0.0001) {
+      m.easeTo({ center, duration: 800 })
+      lastCenterRef.current = center
+    }
+  }, [center, isNavigating])
+
+  // ✅ FIXED: markers and route - no more setCenter or fitBounds when navigating
   useEffect(() => {
     const m = map.current
     if (!m) return
-    if (!isNavigating) m.setCenter(center)
 
-    // clear old markers
     markersRef.current.forEach(x => x.remove())
     markersRef.current = []
     for (const marker of markers) {
@@ -106,7 +123,6 @@ export function MapView({ center, route, markers = [], driverLocation, isNavigat
           (m.getSource('ride-route') as mapboxgl.GeoJSONSource).setData(data)
         } else {
           m.addSource('ride-route', { type: 'geojson', data })
-          // Bolt glow
           m.addLayer({
             id: 'ride-route-glow',
             type: 'line',
@@ -126,20 +142,24 @@ export function MapView({ center, route, markers = [], driverLocation, isNavigat
             }
           })
         }
-        const bounds = new mapboxgl.LngLatBounds()
-        geo.coordinates.forEach((c: any) => bounds.extend(c as any))
-        if (!isNavigating) m.fitBounds(bounds, { padding: 100, duration: 800 })
+        // Fit bounds ONLY once when route first appears and NOT navigating
+        if (!isNavigating &&!hasFitRoute.current) {
+          const bounds = new mapboxgl.LngLatBounds()
+          geo.coordinates.forEach((c: any) => bounds.extend(c as any))
+          m.fitBounds(bounds, { padding: 100, duration: 800 })
+          hasFitRoute.current = true
+        }
       }
       m.isStyleLoaded()? apply() : m.once('load', apply)
     } else {
       if (m.getLayer('ride-route-line')) m.removeLayer('ride-route-line')
       if (m.getLayer('ride-route-glow')) m.removeLayer('ride-route-glow')
       if (m.getSource('ride-route')) m.removeSource('ride-route')
+      hasFitRoute.current = false
     }
-  }, [center, route, markers, isNavigating])
+  }, [route, markers, isNavigating])
 
   return <div ref={el} className="map" style={{ width:'100%', height:'100%' }} />
 }
 
-// Keep your old export name if you had MapView in components.tsx
 export const MapViewComponent = MapView
