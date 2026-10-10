@@ -9,14 +9,15 @@ const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 export function DriverHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [ride, setRide] = useState<Ride | null>(null)
-  const [searchingRides, setSearchingRides] = useState<Ride[]>([]) // FIX: added
+  const [searchingRides, setSearchingRides] = useState<Ride[]>([])
   const [route, setRoute] = useState<any>()
   const [isNavigating, setIsNavigating] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('buddy_theme') as any) || 'dark'
-  })
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
   const [zoom, setZoom] = useState(13)
+  const [now, setNow] = useState(Date.now())
+  const [showNavChooser, setShowNavChooser] = useState(false)
+  const [navTarget, setNavTarget] = useState<{lat:number,lng:number} | null>(null)
   const watchId = useRef<number | null>(null)
 
   const isDark = theme === 'dark'
@@ -25,9 +26,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const text = isDark? 'white' : 'black'
   const border = isDark? '#333' : '#ddd'
 
-  useEffect(() => {
-    localStorage.setItem('buddy_theme', theme)
-  }, [theme])
+  useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
 
   useEffect(() => {
     async function loadStatus() {
@@ -35,81 +35,51 @@ export function DriverHome({ profile }: { profile: Profile }) {
       if (data) setIsOnline((data as any).is_online || false)
     }
     loadStatus()
-    navigator.geolocation.getCurrentPosition(p => {
-      setLocation([p.coords.longitude, p.coords.latitude])
-    })
+    navigator.geolocation.getCurrentPosition(p => setLocation([p.coords.longitude, p.coords.latitude]))
   }, [profile.id])
 
   useEffect(() => {
     async function loadRide() {
-      const { data } = await supabase.from('rides')
-      .select('*').eq('driver_id', profile.id)
-      .in('status', ['accepted','picked_up','en_route'] as any)
-      .order('created_at', { ascending: false }).limit(1).single()
-      if (data) {
-        setRide(data)
-        setIsNavigating(true)
-        setIsOnline(true)
-        setZoom(17)
-      }
+      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id)
+    .in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any)
+    .order('created_at', { ascending: false }).limit(1).single()
+      if (data) { setRide(data); setIsNavigating(true); setIsOnline(true); setZoom(17) }
     }
     loadRide()
   }, [profile.id])
 
   useEffect(() => {
     const ch = supabase.channel(`driver-${profile.id}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
+  .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
         const newRide = p.new as Ride
         setRide(newRide)
-        if (['accepted','picked_up'].includes(newRide.status as any)) {
-          setIsNavigating(true)
-          setZoom(17)
-        }
-        if (['completed','cancelled'].includes(newRide.status as any)) {
-          setIsNavigating(false)
-          setZoom(13)
-          setRide(null)
-        }
-      })
-    .subscribe()
+        if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
+        if (['completed','cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null) }
+      }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [profile.id])
 
-  // FIX: see searching rides
   useEffect(() => {
-    if (!isOnline || ride) return
+    if (!isOnline || ride) { setSearchingRides([]); return }
     async function loadSearching() {
-      const { data } = await supabase.from('rides').select('*').eq('status','searching').order('created_at',{ascending:false}).limit(10)
+      const { data } = await supabase.from('rides').select('*').eq('status','searching').eq('offered_driver_id', profile.id).gt('offer_expires_at', new Date().toISOString()).order('created_at',{ascending:false}).limit(1)
       if (data) setSearchingRides(data as Ride[])
+      else setSearchingRides([])
     }
     loadSearching()
-    const ch2 = supabase.channel('searching-all')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, () => loadSearching())
-    .subscribe()
-    return () => { supabase.removeChannel(ch2) }
-  }, [isOnline, ride])
+    const ch2 = supabase.channel(`offers-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `offered_driver_id=eq.${profile.id}` }, () => loadSearching()).subscribe()
+    const interval = setInterval(loadSearching, 2000)
+    return () => { supabase.removeChannel(ch2); clearInterval(interval) }
+  }, [isOnline, ride, profile.id])
 
   useEffect(() => {
     if (!isNavigating &&!isOnline) return
-    watchId.current = navigator.geolocation.watchPosition(
-      pos => {
+    watchId.current = navigator.geolocation.watchPosition(pos => {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
         setLocation(p)
-        if (ride) {
-          supabase.from('rides').update({
-            driver_lat: pos.coords.latitude,
-            driver_lng: pos.coords.longitude,
-          } as any).eq('id', ride.id).then(()=>{})
-        }
-        if (isOnline) {
-          supabase.from('profiles').update({
-            current_lat: pos.coords.latitude,
-            current_lng: pos.coords.longitude,
-          } as any).eq('id', profile.id).then(()=>{})
-        }
-      },
-      err => console.log(err),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+        if (ride) supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
+        if (isOnline) supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
+      }, err => console.log(err), { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     ) as any
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isNavigating, isOnline, ride?.id, profile.id])
@@ -117,13 +87,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     async function buildRoute() {
       if (!ride ||!location) return
-      const target: [number, number] = (ride.status as any) === 'accepted'
-      ? [ride.pickup_lng, ride.pickup_lat]
-        : [ride.dropoff_lng, ride.dropoff_lat]
-      try {
-        const r = await getRoute(location, target)
-        setRoute(r.geometry)
-      } catch {}
+      const target: [number, number] = (ride.status as any) === 'accepted' || (ride.status as any) === 'arrived'
+    ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
+      try { const r = await getRoute(location, target); setRoute(r.geometry) } catch {}
     }
     buildRoute()
   }, [ride, location])
@@ -134,114 +100,139 @@ export function DriverHome({ profile }: { profile: Profile }) {
     await supabase.from('profiles').update({ is_online: next } as any).eq('id', profile.id)
   }
 
+  async function acceptRide(rideId: string) {
+    await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted' } as any).eq('id', rideId)
+    setSearchingRides([])
+  }
+  async function declineRide(rideId: string) {
+    supabase.functions.invoke('dispatch', { body: { ride_id: rideId, declined_by: profile.id } })
+    setSearchingRides([])
+  }
+
+  async function completeRide() {
+    if (!ride) return
+    await supabase.from('rides').update({ status: 'completed' as any }).eq('id', ride.id)
+    const fare = (ride as any).fare || 0
+    const commission = fare * 0.20
+    const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
+    const newBal = (prof?.wallet_balance || 0) - commission
+    await supabase.from('profiles').update({ wallet_balance: newBal, trips_completed: (prof?.trips_completed || 0) + 1 } as any).eq('id', profile.id)
+    if (newBal < -200) { alert('Wallet -R200 - Top-up required like Bolt'); setIsOnline(false); await supabase.from('profiles').update({ is_online: false } as any).eq('id', profile.id) }
+    setIsNavigating(false); setRide(null)
+  }
+
   function openExternalMap(lat: number, lng: number) {
-    const pref = localStorage.getItem('nav_pref') || 'google'
-    if (pref === 'waze') {
-      window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank')
-    } else {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank')
-    }
+    setNavTarget({ lat, lng })
+    const pref = localStorage.getItem('nav_pref')
+    if (!pref) setShowNavChooser(true)
+    else if (pref === 'mapbox') { setIsNavigating(true); setZoom(17) }
+    else if (pref === 'waze') window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank')
+    else window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank')
+  }
+  function chooseNav(pref: 'mapbox' | 'google' | 'waze') {
+    localStorage.setItem('nav_pref', pref)
+    setShowNavChooser(false)
+    if (!navTarget) return
+    if (pref === 'mapbox') { setIsNavigating(true); setZoom(17) }
+    else if (pref === 'waze') window.open(`https://waze.com/ul?ll=${navTarget.lat},${navTarget.lng}&navigate=yes`, '_blank')
+    else window.open(`https://www.google.com/maps/dir/?api=1&destination=${navTarget.lat},${navTarget.lng}&travelmode=driving`, '_blank')
   }
 
   return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <header style={{
-      zIndex: 100,
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px',
-      padding: '12px 16px',
-      background: bg,
-      color: text,
-      borderBottom: `1px solid ${border}`,
-      position: 'relative'
-    }}>
+    <header style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
-        <button
-          onClick={() => setTheme(isDark? 'light' : 'dark')}
-          style={{
-            width: '36px', height: '36px', borderRadius: '18px',
-            background: bg2, border: `1px solid ${border}`, fontSize: '16px'
-          }}
-        >{isDark? '☀️' : '🌙'}</button>
-        <button
-          onClick={toggleOnline}
-          style={{
-            padding: '8px 14px', borderRadius: '20px', border: 'none',
-            fontWeight: 'bold', background: isOnline? '#00c853' : '#666',
-            color: 'white', fontSize: '12px'
-          }}
-        >{isOnline? '● ONLINE' : '○ OFFLINE'}</button>
+        <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, fontSize: '16px' }}>{isDark? '☀️' : '🌙'}</button>
+        <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: isOnline? '#00d181' : '#666', color: 'white', fontSize: '12px' }}>{isOnline? '● ONLINE' : '○ OFFLINE'}</button>
       </div>
     </header>
 
     <div style={{ height: '100%', paddingBottom: '220px' }}>
-      <MapView center={location} route={route} />
-      <button
-        onClick={() => { setZoom(17); setIsNavigating(true) }}
-        style={{
-          position: 'absolute', right: '16px', bottom: '240px', zIndex: 50,
-          width: '48px', height: '48px', borderRadius: '24px',
-          background: isDark? 'white' : 'black', color: isDark? 'black' : 'white',
-          border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px'
-        }}
-      >🎯</button>
+      {/* BOLT FIX: Now map has driverLocation + isNavigating for 3D */}
+      <MapView center={location} route={route} driverLocation={location} isNavigating={isNavigating} />
+      <button onClick={() => { setZoom(17); setIsNavigating(true) }} style={{ position: 'absolute', right: '16px', bottom: '240px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>🎯</button>
     </div>
 
-    <section style={{
-      position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60,
-      background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px',
-      padding: '16px', color: text, minHeight: '140px',
-      borderTop: `1px solid ${border}`,
-      boxShadow: '0 -4px 20px rgba(0,0,0,0.2)'
-    }}>
+    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px', color: text, minHeight: '140px', borderTop: `1px solid ${border}`, boxShadow: '0 -4px 20px rgba(0,0,0,0.2)' }}>
       {!ride && (
         <div style={{ textAlign: 'center' }}>
-          {/* FIX: show new requests */}
-          {isOnline && searchingRides.map(r => (
-            <div key={r.id} style={{ background: bg2, border: `1px solid #ff7a00`, borderRadius: '14px', padding: '12px', marginBottom: '10px', textAlign: 'left' }}>
-              <p style={{ fontWeight: 'bold', margin: '0 0 4px', color: '#ff7a00' }}>NEW REQUEST • R {r.fare}</p>
-              <p style={{ margin: '0 0 8px', fontSize: '13px' }}>{r.pickup_address} → {r.dropoff_address}</p>
-              <button onClick={async () => { await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted' } as any).eq('id', r.id) }} style={{ width: '100%', padding: '12px', borderRadius: '10px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>ACCEPT RIDE</button>
+          {isOnline && searchingRides.map(r => {
+            const expires = new Date((r as any).offer_expires_at || Date.now() + 12000).getTime()
+            const secs = Math.max(0, Math.floor((expires - now)/1000))
+            return (
+            <div key={r.id} style={{ background: isDark? '#1a1a1a' : 'white', border: `2px solid #00d181`, borderRadius: '16px', padding: '14px', marginBottom: '12px', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,209,129,0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <p style={{ fontWeight: 'bold', margin: 0, color: '#00d181', fontSize: '14px' }}>BOLT REQUEST • R {r.fare} • {(r as any).distance_km?.toFixed(1) || '1.2'}km</p>
+                <span style={{ background: '#00d181', color: 'white', borderRadius: '12px', padding: '2px 8px', fontSize: '12px', fontWeight: 'bold' }}>{secs}s</span>
+              </div>
+              <p style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 'bold' }}>📍 {r.pickup_address}</p>
+              <p style={{ margin: '0 0 8px', fontSize: '13px', opacity: 0.7 }}>→ {r.dropoff_address}</p>
+              <p style={{ margin: '0 0 10px', fontSize: '11px', background: bg2, display: 'inline-block', padding: '2px 6px', borderRadius: '6px' }}>💵 Cash trip • {(r as any).payment_method || 'cash'}</p>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => declineRide(r.id)} style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>DECLINE</button>
+                <button onClick={() => acceptRide(r.id)} style={{ flex: 1.5, padding: '12px', borderRadius: '10px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '15px' }}>ACCEPT</button>
+              </div>
             </div>
-          ))}
-          <div style={{ fontSize: '15px', marginBottom: '12px', opacity: 0.8 }}>
-            {isOnline? (searchingRides.length? `✅ ${searchingRides.length} request(s)` : '✅ You are online - Waiting for requests...') : 'You are offline'}
+          )})}
+          <div style={{ fontSize: '14px', marginBottom: '12px', opacity: 0.8 }}>
+            {isOnline? (searchingRides.length? `✅ Offer expires in 12s` : '✅ You are online - Waiting for Bolt offers...') : 'You are offline'}
           </div>
-          <button
-            onClick={toggleOnline}
-            style={{
-              width: '100%', padding: '16px', borderRadius: '12px', border: 'none',
-              background: isOnline? '#ff4444' : '#ff7a00', color: 'white',
-              fontWeight: 'bold', fontSize: '16px'
-            }}
-          >
-            {isOnline? 'GO OFFLINE' : 'GO ONLINE'}
-          </button>
+          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '12px', border: 'none', background: isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{isOnline? 'GO OFFLINE' : 'GO ONLINE'}</button>
+          <p style={{ fontSize: '11px', opacity: 0.5, marginTop: '8px' }}>Wallet: R {profile.wallet_balance || 0} • Trips: {profile.trips_completed || 0} • Rating: {profile.rating || 5.0}★</p>
         </div>
       )}
 
       {ride && (ride.status as any) === 'accepted' && (
         <>
-          <h3 style={{ margin: '0 0 6px', color: text }}>Go to Pickup</h3>
-          <p style={{ opacity: 0.7, margin: '0 0 12px', color: text }}>{ride.pickup_address}</p>
+          <h3 style={{ margin: '0 0 6px', color: text }}>Go to Pickup • R {ride.fare}</h3>
+          <p style={{ opacity: 0.7, margin: '0 0 12px', color: text, fontSize: '13px' }}>{ride.pickup_address}</p>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={() => openExternalMap(ride.pickup_lat, ride.pickup_lng)} style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigate</button>
-            <button onClick={async () => { await supabase.from('rides').update({ status: 'picked_up' as any }).eq('id', ride.id) }} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>Arrived → Start Trip</button>
+            <button onClick={async () => { await supabase.from('rides').update({ status: 'arrived' as any }).eq('id', ride.id) }} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>I Have Arrived</button>
           </div>
         </>
       )}
 
-      {ride && (ride.status as any) === 'picked_up' && (
+      {ride && (ride.status as any) === 'arrived' && (
+        <>
+          <h3 style={{ margin: '0 0 6px' }}>Waiting for passenger - 5 min free</h3>
+          <p style={{ fontSize: '13px', opacity: 0.7 }}>{ride.pickup_address}</p>
+          <button onClick={async () => { await supabase.from('rides').update({ status: 'picked_up' as any }).eq('id', ride.id) }} style={{ width: '100%', marginTop: '10px', padding: '14px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>Start Trip → {ride.dropoff_address}</button>
+        </>
+      )}
+
+      {ride && ((ride.status as any) === 'picked_up' || (ride.status as any) === 'en_route' || (ride.status as any) === 'in_progress') && (
         <>
           <h3 style={{ margin: '0 0 6px', color: text }}>Drive to {ride.dropoff_address}</h3>
+          <p style={{ fontSize: '12px', opacity: 0.7 }}>Cash: Collect R {ride.fare} from passenger</p>
           <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
             <button onClick={() => openExternalMap(ride.dropoff_lat, ride.dropoff_lng)} style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigate</button>
-            <button onClick={async () => { await supabase.from('rides').update({ status: 'completed' as any }).eq('id', ride.id); setIsNavigating(false); setRide(null) }} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00c853', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip</button>
+            <button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00c853', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip</button>
           </div>
         </>
       )}
     </section>
+
+    {/* BOLT NAV CHOOSER - Mapbox Recommended */}
+    {showNavChooser && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
+        <div style={{ width: '100%', background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '20px' }}>
+          <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 16px' }} />
+          <h3 style={{ margin: '0 0 4px', color: text }}>Choose Navigation</h3>
+          <p style={{ fontSize: '13px', opacity: 0.6, margin: '0 0 16px' }}>Mapbox is recommended for BuddyRide - Bolt style</p>
+          <button onClick={() => chooseNav('mapbox')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
+            <span style={{ fontSize: '22px' }}>🗺️</span> <div><div>Mapbox - In App</div><div style={{ fontSize: '11px', opacity: 0.9 }}>Recommended • 3D + live traffic</div></div> <span style={{ marginLeft: 'auto', background: 'white', color: '#00d181', padding: '2px 8px', borderRadius: '8px', fontSize: '11px' }}>BOLT</span>
+          </button>
+          <button onClick={() => chooseNav('google')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '20px' }}>📍</span> Google Maps
+          </button>
+          <button onClick={() => chooseNav('waze')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '20px' }}>🚗</span> Waze
+          </button>
+          <button onClick={() => setShowNavChooser(false)} style={{ width: '100%', padding: '14px', borderRadius: '12px', background: 'transparent', color: text, border: `1px solid ${border}` }}>Cancel</button>
+        </div>
+      </div>
+    )}
   </div>
 }

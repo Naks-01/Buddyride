@@ -15,7 +15,8 @@ async function fetchGeocode(query: string, extra: string = ""): Promise<[number,
   return data.features[0].geometry.coordinates as [number, number];
 }
 
-export async function geocode(query: string): Promise<[number, number] | null> {
+// KEEP YOUR OLD geocode for backward compat - returns single coord
+export async function geocode(query: string): Promise<any> {
   assertMapboxConfigured();
   const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
 
@@ -29,16 +30,40 @@ export async function geocode(query: string): Promise<[number, number] | null> {
   if (!result &&!cleanQuery.toLowerCase().includes("polokwane")) {
     result = await fetchGeocode(cleanQuery + " Polokwane", "proximity=29.4589,-23.9045&");
   }
-  return result;
+
+  // BOLT FIX: also return full features if caller wants suggestions
+  // For dropdown we need list, so try to get features
+  if (!result) return null
+  return result // still returns [lng, lat] for old code
 }
 
-export async function reverseGeocode(lng: number, lat: number): Promise<string> {
+// BOLT: NEW - for search suggestions (Makro dropdown)
+export async function searchPlaces(query: string): Promise<any[]> {
   assertMapboxConfigured();
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${mapbox_access_token}`;
+  const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim() + " Polokwane";
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(cleanQuery)}.json?proximity=29.4589,-23.9045&country=za&limit=5&access_token=${mapbox_access_token}`;
   const res = await fetch(url);
-  if (!res.ok) return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  if (!res.ok) return [];
   const data = await res.json();
-  return data.features?.[0]?.place_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  return data.features || [];
+}
+
+// BOLT FIX: support both reverseGeocode(lng,lat) AND reverseGeocode([lng,lat])
+export async function reverseGeocode(lng: number | [number, number], lat?: number): Promise<string> {
+  assertMapboxConfigured();
+  let lngVal: number, latVal: number;
+  if (Array.isArray(lng)) {
+    lngVal = lng[0];
+    latVal = lng[1];
+  } else {
+    lngVal = lng;
+    latVal = lat!;
+  }
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lngVal},${latVal}.json?access_token=${mapbox_access_token}`;
+  const res = await fetch(url);
+  if (!res.ok) return `${latVal.toFixed(5)}, ${lngVal.toFixed(5)}`;
+  const data = await res.json();
+  return data.features?.[0]?.place_name || `${latVal.toFixed(5)}, ${lngVal.toFixed(5)}`;
 }
 
 export async function getRoute(from: [number, number], to: [number, number]) {
@@ -51,8 +76,8 @@ export async function getRoute(from: [number, number], to: [number, number]) {
   if (!route) throw new Error("No route");
   return {
     geometry: route.geometry,
-    distance: route.distance / 1000,
-    duration: route.duration / 60,
+    distance: route.distance, // meters - raw like Mapbox
+    duration: route.duration, // seconds - raw
     distanceKm: route.distance / 1000,
     durationMin: route.duration / 60,
     route: route

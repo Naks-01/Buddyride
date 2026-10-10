@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { MapView } from '../components'
 import { NavigationMenu } from '../NavigationMenu'
-import { getRoute, geocode } from '../lib/mapbox'
+import { getRoute, geocode, reverseGeocode } from '../lib/mapbox'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
@@ -18,6 +18,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [showDropoffSug, setShowDropoffSug] = useState(false)
   const [route, setRoute] = useState<any>()
   const [ride, setRide] = useState<Ride | null>(null)
+  const [driverProfile, setDriverProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(false)
   const [distance, setDistance] = useState<number | null>(null)
   const [price, setPrice] = useState<number | null>(null)
@@ -36,219 +37,104 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
 
   useEffect(() => {
-    navigator.geolocation.getCurrentPosition(pos => {
+    navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
       setLocation(p)
       setPickupCoords(p)
-      setPickup('My Location')
+      try { const real = await reverseGeocode(p); setPickup(real) } catch { setPickup('My Location - Polokwane') }
     })
     async function loadActiveRide() {
-      const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id)
-    .in('status', ['searching','accepted','picked_up','en_route'] as any)
-    .order('created_at', { ascending: false }).limit(1).single()
+      const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
       if (data) setRide(data as Ride)
     }
     loadActiveRide()
   }, [profile.id])
 
   useEffect(() => {
+    if (ride?.driver_id) {
+      supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) })
+    } else { setDriverProfile(null) }
+  }, [ride?.driver_id])
+
+  useEffect(() => {
     if (!ride) return
-    const ch = supabase.channel(`passenger-${ride.id}`)
-  .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
-        setRide(p.new as Ride)
-      }).subscribe()
+    const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => { setRide(p.new as Ride) }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
-  // FIXED AUTOCOMPLETE - now handles both Mapbox formats and shows dropdown
   async function searchPlaces(query: string, setter: (v:any[])=>void, setShow: (v:boolean)=>void) {
-    if (!query || query.trim().length < 2) {
-      setter([])
-      setShow(false)
-      return
-    }
-    const lower = query.toLowerCase()
-    if (lower === 'my location' || lower === 'my location - polokwane' || lower === 'my location - polokwane ') {
-      setter([])
-      setShow(false)
-      return
-    }
+    if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
+    if (query.toLowerCase().includes('my location')) { setter([]); setShow(false); return }
     try {
       const results = await geocode(query + ' Polokwane') as any
-      let places = results
-      if (results?.features) places = results.features
+      let places = results?.features || results
       if (Array.isArray(places) && places.length > 0) {
-        const normalized = places.slice(0, 5).map((p:any) => ({
-          center: p.center || p.geometry?.coordinates || [p.center?.[0], p.center?.[1]],
-          place_name: p.place_name || p.text || p.place_name,
-          text: p.text || p.place_name
-        })).filter((p:any) => p.center)
-        setter(normalized)
-        setShow(normalized.length > 0)
-      } else {
-        setter([])
-        setShow(false)
-      }
-    } catch (e) {
-      console.log('geocode err', e)
-    }
+        const normalized = places.slice(0, 5).map((p:any) => ({ center: p.center || p.geometry?.coordinates, place_name: p.place_name || p.text, text: p.text || p.place_name })).filter((p:any) => p.center)
+        setter(normalized); setShow(normalized.length > 0)
+      } else { setter([]); setShow(false) }
+    } catch (e) { console.log('geocode err', e) }
   }
 
-  function onPickupChange(val: string) {
-    setPickup(val)
-    setShowEstimate(false)
-    setPrice(null)
-    if (pickupDebounce.current) clearTimeout(pickupDebounce.current)
-    pickupDebounce.current = setTimeout(() => {
-      searchPlaces(val, setPickupSuggestions, setShowPickupSug)
-    }, 300)
-  }
+  function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); setPrice(null); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => { searchPlaces(val, setPickupSuggestions, setShowPickupSug) }, 300) }
+  function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); setPrice(null); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => { searchPlaces(val, setDropoffSuggestions, setShowDropoffSug) }, 300) }
+  function selectPickupSuggestion(item: any) { setPickup(item.place_name || item.text); setPickupCoords([item.center[0], item.center[1]] as [number, number]); setPickupSuggestions([]); setShowPickupSug(false) }
+  function selectDropoffSuggestion(item: any) { setDropoff(item.place_name || item.text); setDropoffCoords([item.center[0], item.center[1]] as [number, number]); setDropoffSuggestions([]); setShowDropoffSug(false) }
 
-  function onDropoffChange(val: string) {
-    setDropoff(val)
-    setShowEstimate(false)
-    setPrice(null)
-    if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current)
-    dropoffDebounce.current = setTimeout(() => {
-      searchPlaces(val, setDropoffSuggestions, setShowDropoffSug)
-    }, 300)
-  }
-
-  function selectPickupSuggestion(item: any) {
-    setPickup(item.place_name || item.text)
-    setPickupCoords([item.center[0], item.center[1]] as [number, number])
-    setPickupSuggestions([])
-    setShowPickupSug(false)
-  }
-
-  function selectDropoffSuggestion(item: any) {
-    setDropoff(item.place_name || item.text)
-    setDropoffCoords([item.center[0], item.center[1]] as [number, number])
-    setDropoffSuggestions([])
-    setShowDropoffSug(false)
-  }
-
-  // FIXED: auto-geocode even if user didn't click suggestion (your video case)
   async function ensureCoords() {
     let pCoords = pickupCoords
     let dCoords = dropoffCoords
-    if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) {
-      try {
-        const res = await geocode(pickup + ' Polokwane') as any
-        const first = res?.[0] || res?.features?.[0]
-        const c = first?.center || first?.geometry?.coordinates
-        if (c) pCoords = [c[0], c[1]]
-      } catch {}
-    }
+    if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) { try { const res = await geocode(pickup + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) pCoords = [c[0], c[1]] } catch {} }
     if (!pCoords) pCoords = location
-    if (!dCoords && dropoff) {
-      try {
-        const res = await geocode(dropoff + ' Polokwane') as any
-        const first = res?.[0] || res?.features?.[0]
-        const c = first?.center || first?.geometry?.coordinates
-        if (c) dCoords = [c[0], c[1]]
-      } catch {}
-    }
+    if (!dCoords && dropoff) { try { const res = await geocode(dropoff + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) dCoords = [c[0], c[1]] } catch {} }
     return { pCoords, dCoords }
   }
 
   async function calculateEstimate() {
     const { pCoords, dCoords } = await ensureCoords()
-    if (!pCoords ||!dCoords) {
-      alert('Select destination from dropdown, or type and press Estimate again')
-      return
-    }
-    setPickupCoords(pCoords)
-    setDropoffCoords(dCoords)
-    try {
-      const r = await getRoute(pCoords, dCoords) as any
-      setRoute(r.geometry)
-      const km = r.distance / 1000
-      setDistance(km)
-      const calc = 10 + (km * 6)
-      setPrice(Math.max(20, Math.round(calc)))
-      setShowEstimate(true)
-    } catch {
-      setDistance(3)
-      setPrice(20)
-      setShowEstimate(true)
-    }
+    if (!pCoords ||!dCoords) { alert('Select destination from dropdown'); return }
+    setPickupCoords(pCoords); setDropoffCoords(dCoords)
+    try { const r = await getRoute(pCoords, dCoords) as any; setRoute(r.geometry); const km = r.distance / 1000; const mins = r.duration / 60; setDistance(km); const hour = new Date().getHours(); const isPeak = hour >= 16 && hour <= 19; const perKm = isPeak? 11 : 8.5; let calc = 20 + (km * perKm) + (mins * 1.5); if (isPeak) calc = calc * 1.3; calc = Math.max(35, Math.round(calc)); setPrice(calc); setShowEstimate(true) } catch { setDistance(3); setPrice(35); setShowEstimate(true) }
   }
 
   async function useMyLocation() {
-    navigator.geolocation.getCurrentPosition(pos => {
-      const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-      setLocation(p)
-      setPickupCoords(p)
-      setPickup('My Location - Polokwane')
-      setPickupSuggestions([])
-      setShowPickupSug(false)
-    })
+    navigator.geolocation.getCurrentPosition(async pos => { const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setPickupCoords(p); try { const real = await reverseGeocode(p); setPickup(real) } catch { setPickup('My Location - Polokwane') }; setPickupSuggestions([]); setShowPickupSug(false) })
   }
 
+  // FIXED - NO supabase.functions.invoke - BOLT FRONTEND DISPATCH
   async function requestRide() {
     setLoading(true)
     const { pCoords, dCoords } = await ensureCoords()
-    if (!dCoords) {
-      setLoading(false)
-      alert('Please enter destination')
-      return
-    }
-    setPickupCoords(pCoords)
-    setDropoffCoords(dCoords)
-    let finalFare = price || 20
+    if (!dCoords) { setLoading(false); alert('Please enter destination'); return }
+    setPickupCoords(pCoords); setDropoffCoords(dCoords)
+    let finalFare = price || 35
+    let finalKm = distance || 3
     if (!price) {
-      try {
-        const r = await getRoute(pCoords!, dCoords) as any
-        const km = r.distance / 1000
-        finalFare = Math.max(20, Math.round(10 + km * 6))
-      } catch { finalFare = 20 }
+      try { const r = await getRoute(pCoords!, dCoords) as any; const km = r.distance / 1000; const mins = r.duration / 60; finalKm = km; const hour = new Date().getHours(); const perKm = (hour >=16 && hour <=19)? 11 : 8.5; let calc = 20 + (km * perKm) + (mins * 1.5); if (hour >=16 && hour <=19) calc = calc * 1.3; finalFare = Math.max(35, Math.round(calc)) } catch { finalFare = 35 }
     }
-    const { data, error } = await supabase.from('rides').insert({
-      passenger_id: profile.id,
-      pickup_lat: pCoords![1],
-      pickup_lng: pCoords![0],
-      pickup_address: pickup || 'My Location - Polokwane',
-      dropoff_lat: dCoords[1],
-      dropoff_lng: dCoords[0],
-      dropoff_address: dropoff,
-      status: 'searching',
-      fare: finalFare
-    } as any).select().single()
+    let realPickup = pickup
+    if (!pickup || pickup.toLowerCase().includes('my location')) { try { realPickup = await reverseGeocode(pCoords!) } catch { realPickup = 'Polokwane' } }
+    const { data, error } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords![1], pickup_lng: pCoords![0], pickup_address: realPickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash' } as any).select().single()
+    if (error) { setLoading(false); alert(error.message); return }
+    if (data) {
+      setRide(data as Ride)
+      // BOLT DISPATCH - find closest online driver - NO CLI
+      try {
+        const { data: onlineDrivers } = await supabase.from('profiles').select('id, current_lat, current_lng').eq('role','driver').eq('is_online', true).limit(20)
+        if (onlineDrivers && onlineDrivers.length > 0) {
+          function dist(a:number,b:number,c:number,d:number){ if(!a||!b||!c||!d) return 9999; const R=6371, dLat=(c-a)*Math.PI/180, dLng=(d-b)*Math.PI/180; const aa=Math.sin(dLat/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dLng/2)**2; return R*2*Math.atan2(Math.sqrt(aa),Math.sqrt(1-aa)) }
+          onlineDrivers.sort((x:any,y:any)=> dist(pCoords![1],pCoords![0],x.current_lat,x.current_lng) - dist(pCoords![1],pCoords![0],y.current_lat,y.current_lng))
+          const closest = onlineDrivers[0]
+          await supabase.from('rides').update({ offered_driver_id: closest.id, offer_expires_at: new Date(Date.now()+12000).toISOString(), tried_driver_ids: [] } as any).eq('id', data.id)
+        }
+      } catch (e) { console.log('dispatch err', e) }
+    }
     setLoading(false)
-    if (error) alert(error.message)
-    else if (data) setRide(data as Ride)
   }
 
-  async function cancelRide() {
-    if (!ride) return
-    await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id)
-    setRide(null)
-    setRoute(undefined)
-    setShowEstimate(false)
-  }
+  async function cancelRide() { if (!ride) return; await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id); setRide(null); setRoute(undefined); setShowEstimate(false) }
 
-  const sugStyle = (dark:boolean) => ({
-    position: 'absolute' as const,
-    top: '58px',
-    left: 0,
-    right: 0,
-    zIndex: 9999,
-    background: dark? '#2a2a2a' : 'white',
-    border: `1px solid ${dark? '#444' : '#ddd'}`,
-    borderRadius: '12px',
-    maxHeight: '200px',
-    overflowY: 'auto' as const,
-    boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
-  })
-
-  const sugItemStyle = (dark:boolean) => ({
-    padding: '12px 14px',
-    borderBottom: `1px solid ${dark? '#333' : '#eee'}`,
-    cursor: 'pointer',
-    fontSize: '14px',
-    color: dark? 'white' : 'black'
-  })
+  const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '200px', overflowY: 'auto' as const, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' })
+  const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
   return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <header style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
@@ -259,15 +145,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         <button onClick={() => void supabase.auth.signOut()} style={{ background: bg2, color: text, border: `1px solid ${border}`, padding: '8px 14px', borderRadius: '20px', fontWeight: 'bold', fontSize: '13px' }}>Logout</button>
       </div>
     </header>
-
     <div style={{ height: '100%', paddingBottom: '350px' }}>
-      <MapView center={pickupCoords || location} route={route} />
+      <MapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} />
       <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '360px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>📍</button>
     </div>
-
     <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px', color: text, borderTop: `1px solid ${border}` }}>
-      {!ride && (
-        <>
+      {!ride && (<>
           <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 12px' }} />
           <h2 style={{ margin: '0 0 16px', fontSize: '22px', fontWeight: 'bold' }}>Where are you going?</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -276,52 +159,26 @@ export function PassengerHome({ profile }: { profile: Profile }) {
                 <input value={pickup} onChange={e => onPickupChange(e.target.value)} onFocus={() => pickupSuggestions.length && setShowPickupSug(true)} placeholder="Pickup - e.g. My Location" style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px' }} />
                 <button onClick={useMyLocation} style={{ width: '52px', borderRadius: '14px', background: '#ff7a00', border: 'none', fontSize: '20px' }}>📍</button>
               </div>
-              {showPickupSug && pickupSuggestions.length > 0 && (
-                <div style={sugStyle(isDark) as any}>
-                  {pickupSuggestions.map((s,i) => (
-                    <div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>
-                      📍 {s.place_name || s.text}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {showPickupSug && pickupSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{pickupSuggestions.map((s,i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
             <div style={{ position: 'relative' }}>
               <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro" style={{ width: '100%', padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '15px', boxSizing: 'border-box' }} />
-              {showDropoffSug && dropoffSuggestions.length > 0 && (
-                <div style={sugStyle(isDark) as any}>
-                  {dropoffSuggestions.map((s,i) => (
-                    <div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>
-                      📍 {s.place_name || s.text}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {showDropoffSug && dropoffSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{dropoffSuggestions.map((s,i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
             <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
               <button onClick={calculateEstimate} style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{loading? '...' : 'Request ride'}</button>
+              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{loading? '...' : 'Request Bolt'}</button>
             </div>
-            {showEstimate && distance!== null && price!== null && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', borderRadius: '12px', background: bg2, marginTop: '4px', border: `1px solid ${border}` }}>
-                <span style={{ opacity: 0.8 }}>{distance.toFixed(1)} km •</span>
-                <span style={{ fontWeight: 'bold', fontSize: '16px' }}>R {price.toFixed(2)}</span>
-              </div>
-            )}
+            {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', borderRadius: '12px', background: bg2, marginTop: '4px', border: `1px solid ${border}` }}><span style={{ opacity: 0.8 }}>{distance.toFixed(1)} km • {new Date().getHours()>=16&&new Date().getHours()<=19?'Surge 1.3x': 'Standard'}</span><span style={{ fontWeight: 'bold', fontSize: '16px' }}>R {price.toFixed(0)}</span></div>)}
           </div>
-        </>
-      )}
-      {ride && (
-        <>
-          <h3 style={{ margin: '0 0 6px' }}>{ride.status === 'searching'? 'Searching driver...' : (ride.status as any) === 'accepted'? 'Driver is coming!' : 'On trip'}</h3>
-          <p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
-          {price && <p style={{ fontWeight: 'bold' }}>R {price}</p>}
+        </>)}
+      {ride && (<>
+          {ride.status === 'searching' && (<><h3 style={{ margin: '0 0 6px' }}>Searching driver... <span style={{ color: '#00d181' }}>●</span></h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p></>)}
+          {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Sipho'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#00d181', fontWeight: 'bold' }}>{ride.status === 'arrived'? 'Driver has arrived - 5 min free wait' : 'Driver is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div>)}
+          {(ride.status as any) === 'en_route' || (ride.status as any) === 'in_progress' || (ride.status as any) === 'picked_up'? (<><h3>Heading to {ride.dropoff_address}</h3><p style={{ fontSize: '13px', opacity: 0.7 }}>Cash trip • R {ride.fare}</p><div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: '#ff3b30', border: 'none', color: 'white', fontWeight: 'bold' }}>SOS</button><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, border: `1px solid ${border}`, color: text }}>Share Trip</button></div></>) : null}
           <button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button>
-        </>
-      )}
+        </>)}
     </section>
-    {(showPickupSug || showDropoffSug) && (
-      <div onClick={() => { setShowPickupSug(false); setShowDropoffSug(false) }} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
-    )}
+    {(showPickupSug || showDropoffSug) && (<div onClick={() => { setShowPickupSug(false); setShowDropoffSug(false) }} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />)}
   </div>
 }

@@ -11,15 +11,25 @@ export type FareEstimate = {
 };
 
 export function calculateFare(distanceKm: number, durationMin: number = 10): FareEstimate {
-  const BASE = 15;
-  const PER_KM = 6.5;
-  const PER_MIN = 0.5;
-  const BOOKING = 5;
+  // BOLT FORMULA - EXACT
+  const BASE = 20; // Bolt base
+  const BOOKING = 0; // Bolt includes booking in fare - no extra
+  const hour = new Date().getHours()
+  const isPeak = hour >= 16 && hour <= 19 // 4pm-7pm surge like Bolt Polokwane
+  
+  const PER_KM = isPeak ? 11 : 8.5
+  const PER_MIN = 1.5
 
-  let calcFare = BASE + distanceKm * PER_KM + durationMin * PER_MIN;
-  if (calcFare < 35) calcFare = 35;
-  calcFare = Math.round(calcFare);
-  const total = calcFare + BOOKING;
+  let calcFare = BASE + (distanceKm * PER_KM) + (durationMin * PER_MIN)
+  
+  if (isPeak) {
+    calcFare = calcFare * 1.3 // 1.3x surge
+  }
+  
+  if (calcFare < 35) calcFare = 35 // Bolt min R35 in Polokwane
+  
+  calcFare = Math.round(calcFare)
+  const total = calcFare + BOOKING
 
   return {
     distance: distanceKm,

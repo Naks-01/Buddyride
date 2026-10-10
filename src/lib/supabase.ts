@@ -18,14 +18,27 @@ export type Profile = {
   full_name: string | null
   phone: string | null
   avatar_url: string | null
+  // BOLT FIELDS - ADD THESE
+  is_online?: boolean | null
+  current_lat?: number | null
+  current_lng?: number | null
+  wallet_balance?: number | null
+  trips_completed?: number | null
+  rating?: number | null
+  car_model?: string | null
+  car_plate?: string | null
+  car_color?: string | null
 }
 
 export type RideStatus =
   | 'searching'
   | 'accepted'
+  | 'arrived'
+  | 'picked_up'
+  | 'en_route'
+  | 'in_progress'
   | 'driver_arriving'
   | 'driver_arrived'
-  | 'in_progress'
   | 'completed'
   | 'cancelled'
 
@@ -41,11 +54,19 @@ export type Ride = {
   dropoff_lng: number
   distance_km: number
   fare: number
-  booking_fee: number
-  total_fare: number
-  driver_earnings: number
-  buddyride_commission: number
+  booking_fee?: number | null
+  total_fare?: number | null
+  driver_earnings?: number | null
+  buddyride_commission?: number | null
   status: RideStatus
-  passenger_name?: string
-  driver_name?: string
+  passenger_name?: string | null
+  driver_name?: string | null
+  // BOLT FIELDS
+  driver_lat?: number | null
+  driver_lng?: number | null
+  offered_driver_id?: string | null
+  offer_expires_at?: string | null
+  tried_driver_ids?: string[] | null
+  payment_method?: string | null
+  created_at?: string
 }
