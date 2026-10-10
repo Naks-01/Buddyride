@@ -18,7 +18,6 @@ export type Profile = {
   full_name: string | null
   phone: string | null
   avatar_url: string | null
-  // BOLT FIELDS - ADD THESE
   is_online?: boolean | null
   current_lat?: number | null
   current_lng?: number | null
@@ -28,6 +27,7 @@ export type Profile = {
   car_model?: string | null
   car_plate?: string | null
   car_color?: string | null
+  created_at?: string | null
 }
 
 export type RideStatus =
@@ -61,12 +61,14 @@ export type Ride = {
   status: RideStatus
   passenger_name?: string | null
   driver_name?: string | null
-  // BOLT FIELDS
   driver_lat?: number | null
   driver_lng?: number | null
   offered_driver_id?: string | null
   offer_expires_at?: string | null
   tried_driver_ids?: string[] | null
   payment_method?: string | null
+  ride_category?: string | null
+  started_at?: string | null
+  ended_at?: string | null
   created_at?: string
 }

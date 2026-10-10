@@ -6,6 +6,33 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
+// 🔊 PASSENGER SOUNDS
+const SOUNDS = {
+  accepted: 'https://cdn.pixabay.com/audio/2021/08/04/audio_0625c8b9d0.mp3',
+  arrived: 'https://cdn.pixabay.com/audio/2022/03/10/audio_5a4fe0f4f1.mp3',
+}
+function playTone(freq1: number, freq2: number = 0, duration = 0.8) {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const osc = ctx.createOscillator()
+    const osc2 = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain); osc2.connect(gain); gain.connect(ctx.destination)
+    osc.frequency.value = freq1
+    osc2.frequency.value = freq2 || freq1 * 1.5
+    gain.gain.setValueAtTime(0.8, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration)
+    osc.start(); osc2.start()
+    osc.stop(ctx.currentTime + duration); osc2.stop(ctx.currentTime + duration)
+    if (navigator.vibrate) navigator.vibrate([300, 100, 300])
+  } catch {}
+  // Also try mp3
+  try {
+    const a = new Audio(freq1 > 700? SOUNDS.arrived : SOUNDS.accepted)
+    a.volume = 1; a.play().catch(()=>{})
+  } catch {}
+}
+
 const CATEGORIES = [
   { id: 'buddy_go', name: 'Go', icon: '🚗', base: 15, perKm: 7.5, min: 35, seats: 2, mult: 1 },
   { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 20, perKm: 9, min: 45, seats: 3, mult: 1.2 },
@@ -34,6 +61,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
+  const prevStatus = useRef<string>('')
 
   const isDark = theme === 'dark'
   const bg = isDark? '#121212' : '#ffffff'
@@ -52,7 +80,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     })
     async function loadActiveRide() {
       const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
-      if (data) setRide(data as Ride)
+      if (data) { setRide(data as Ride); prevStatus.current = (data as any).status }
     }
     loadActiveRide()
   }, [profile.id])
@@ -65,7 +93,20 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     if (!ride) return
-    const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => { setRide(p.new as Ride) }).subscribe()
+    const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
+      const newRide = p.new as Ride
+      // 🔊 SOUND ON STATUS CHANGE
+      const oldS = prevStatus.current
+      const newS = newRide.status
+      if (oldS && oldS!== newS) {
+        if (newS === 'accepted') playTone(600, 900, 1.0) // Buddy accepted!
+        if (newS === 'arrived') playTone(900, 1200, 1.2) // Buddy arrived - loud
+        if (newS === 'picked_up' || newS === 'en_route' || newS === 'in_progress') playTone(500, 700, 0.6)
+        if (newS === 'completed') playTone(700, 1000, 1.0)
+      }
+      prevStatus.current = newS
+      setRide(newRide)
+    }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
@@ -111,6 +152,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function calculateEstimate() {
+    // 🔊 Unlock audio on first tap
+    try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); ctx.resume() } catch {}
     if (!dropoff || dropoff.trim().length < 2) { alert('Please enter destination'); return }
     const { pCoords, dCoords } = await ensureCoords()
     if (!pCoords) { alert('Waiting for GPS'); return }
@@ -136,6 +179,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function requestRide() {
+    // 🔊 Unlock audio
+    try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); ctx.resume() } catch {}
     setLoading(true)
     if (!dropoff || dropoff.trim().length < 2) {
       setLoading(false)
@@ -156,6 +201,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (error) { setLoading(false); alert(error.message); return }
     if (data) {
       setRide(data as Ride)
+      prevStatus.current = 'searching'
       try {
         const { data: onlineDrivers } = await supabase.from('profiles').select('id, current_lat, current_lng').eq('role','driver').eq('is_online', true).limit(20)
         if (onlineDrivers && onlineDrivers.length > 0) {
@@ -227,7 +273,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       {ride && (<>
           {ride.status === 'searching' && (<><h3 style={{ margin: '0 0 6px' }}>Searching Buddy driver... <span style={{ color: '#ff7a00' }}>●</span></h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
 
-          {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Buddy Driver'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#ff7a00', fontWeight: 'bold' }}>{ride.status === 'arrived'? 'Buddy has arrived - 5 min free wait' : 'Buddy is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
+          {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Buddy Driver'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#ff7a00', fontWeight: 'bold' }}>{ride.status === 'arrived'? '🔔 Buddy has arrived - 5 min free wait' : '🔔 Buddy is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
 
           {['en_route','in_progress','picked_up'].includes(ride.status as any) && (
             <>

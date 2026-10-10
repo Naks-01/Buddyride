@@ -10,38 +10,48 @@ export type FareEstimate = {
   booking_fee: number;
 };
 
-export function calculateFare(distanceKm: number, durationMin: number = 10): FareEstimate {
-  // BOLT FORMULA - EXACT
-  const BASE = 20; // Bolt base
-  const BOOKING = 0; // Bolt includes booking in fare - no extra
-  const hour = new Date().getHours()
-  const isPeak = hour >= 16 && hour <= 19 // 4pm-7pm surge like Bolt Polokwane
-  
-  const PER_KM = isPeak ? 11 : 8.5
-  const PER_MIN = 1.5
+const CATEGORY_RATES: Record<string, { base: number; perKm: number; perMin: number; min: number }> = {
+  buddy_go: { base: 15, perKm: 7.5, perMin: 1.2, min: 35 },
+  buddy_comfort: { base: 20, perKm: 9, perMin: 1.5, min: 45 },
+  buddy_xl: { base: 28, perKm: 11, perMin: 1.8, min: 60 },
+  go: { base: 15, perKm: 7.5, perMin: 1.2, min: 35 },
+}
 
-  let calcFare = BASE + (distanceKm * PER_KM) + (durationMin * PER_MIN)
-  
-  if (isPeak) {
-    calcFare = calcFare * 1.3 // 1.3x surge
-  }
-  
-  if (calcFare < 35) calcFare = 35 // Bolt min R35 in Polokwane
-  
-  calcFare = Math.round(calcFare)
-  const total = calcFare + BOOKING
+function isPeakHour() {
+  const hour = new Date().getHours()
+  return hour >= 16 && hour <= 19 // 4-7pm Polokwane surge like Bolt
+}
+
+export function calculateFare(distanceKm: number, durationMin: number = 10, category: string = 'buddy_go'): FareEstimate {
+  const rates = CATEGORY_RATES[category] || CATEGORY_RATES.buddy_go
+  const surge = isPeakHour()? 1.3 : 1.0
+
+  let calcFare = rates.base + (distanceKm * rates.perKm) + (durationMin * rates.perMin)
+  calcFare = calcFare * surge
+
+  if (calcFare < rates.min) calcFare = rates.min
+  if (calcFare > 350) calcFare = 350
+  calcFare = Math.ceil(calcFare / 5) * 5 // Round to R5 like Bolt
+
+  const bookingFee = 0
+  const total = calcFare + bookingFee
 
   return {
     distance: distanceKm,
     distanceKm,
-    duration: durationMin,
+    duration: durationMin * 60,
     durationMin,
     fare: calcFare,
     total,
     price: calcFare,
-    bookingFee: BOOKING,
-    booking_fee: BOOKING
+    bookingFee,
+    booking_fee: bookingFee
   };
+}
+
+// For PassengerHome compatibility
+export function calculateFareForCategory(catId: string, km: number, min: number = 10) {
+  return calculateFare(km, min, catId).fare
 }
 
 export default calculateFare;
