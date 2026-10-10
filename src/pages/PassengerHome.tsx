@@ -86,12 +86,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) { try { const res = await geocode(pickup + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) pCoords = [c[0], c[1]] } catch {} }
     if (!pCoords) pCoords = location
     if (!dCoords && dropoff) { try { const res = await geocode(dropoff + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) dCoords = [c[0], c[1]] } catch {} }
+    // BUDDY FALLBACK - if still no coords and user typed Makro, use hardcoded Makro Polokwane
+    if (!dCoords && dropoff.toLowerCase().includes('makro')) {
+      dCoords = [29.4521, -23.9145] as any
+    }
     return { pCoords, dCoords }
   }
 
   async function calculateEstimate() {
     const { pCoords, dCoords } = await ensureCoords()
-    if (!pCoords ||!dCoords) { alert('Select destination from dropdown'); return }
+    if (!pCoords ||!dCoords) { alert('Please enter destination - e.g. Makro'); return }
     setPickupCoords(pCoords); setDropoffCoords(dCoords)
     try { const r = await getRoute(pCoords, dCoords) as any; setRoute(r.geometry); const km = r.distance / 1000; const mins = r.duration / 60; setDistance(km); const hour = new Date().getHours(); const isPeak = hour >= 16 && hour <= 19; const perKm = isPeak? 11 : 8.5; let calc = 20 + (km * perKm) + (mins * 1.5); if (isPeak) calc = calc * 1.3; calc = Math.max(35, Math.round(calc)); setPrice(calc); setShowEstimate(true) } catch { setDistance(3); setPrice(35); setShowEstimate(true) }
   }
@@ -100,7 +104,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     navigator.geolocation.getCurrentPosition(async pos => { const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setPickupCoords(p); try { const real = await reverseGeocode(p); setPickup(real) } catch { setPickup('My Location - Polokwane') }; setPickupSuggestions([]); setShowPickupSug(false) })
   }
 
-  // FIXED - NO supabase.functions.invoke - BOLT FRONTEND DISPATCH
+  // BUDDY DISPATCH - NO Bolt
   async function requestRide() {
     setLoading(true)
     const { pCoords, dCoords } = await ensureCoords()
@@ -117,7 +121,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (error) { setLoading(false); alert(error.message); return }
     if (data) {
       setRide(data as Ride)
-      // BOLT DISPATCH - find closest online driver - NO CLI
+      // BUDDY DISPATCH - find closest online driver
       try {
         const { data: onlineDrivers } = await supabase.from('profiles').select('id, current_lat, current_lng').eq('role','driver').eq('is_online', true).limit(20)
         if (onlineDrivers && onlineDrivers.length > 0) {
@@ -167,14 +171,14 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             </div>
             <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
               <button onClick={calculateEstimate} style={{ flex: 1, padding: '16px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{loading? '...' : 'Request Bolt'}</button>
+              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{loading? 'Finding Buddy...' : 'Request Buddy'}</button>
             </div>
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', borderRadius: '12px', background: bg2, marginTop: '4px', border: `1px solid ${border}` }}><span style={{ opacity: 0.8 }}>{distance.toFixed(1)} km • {new Date().getHours()>=16&&new Date().getHours()<=19?'Surge 1.3x': 'Standard'}</span><span style={{ fontWeight: 'bold', fontSize: '16px' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
       {ride && (<>
-          {ride.status === 'searching' && (<><h3 style={{ margin: '0 0 6px' }}>Searching driver... <span style={{ color: '#00d181' }}>●</span></h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p></>)}
-          {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Sipho'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#00d181', fontWeight: 'bold' }}>{ride.status === 'arrived'? 'Driver has arrived - 5 min free wait' : 'Driver is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div>)}
+          {ride.status === 'searching' && (<><h3 style={{ margin: '0 0 6px' }}>Searching Buddy driver... <span style={{ color: '#ff7a00' }}>●</span></h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p></>)}
+          {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Buddy Driver'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#ff7a00', fontWeight: 'bold' }}>{ride.status === 'arrived'? 'Buddy has arrived - 5 min free wait' : 'Buddy is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div>)}
           {(ride.status as any) === 'en_route' || (ride.status as any) === 'in_progress' || (ride.status as any) === 'picked_up'? (<><h3>Heading to {ride.dropoff_address}</h3><p style={{ fontSize: '13px', opacity: 0.7 }}>Cash trip • R {ride.fare}</p><div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: '#ff3b30', border: 'none', color: 'white', fontWeight: 'bold' }}>SOS</button><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, border: `1px solid ${border}`, color: text }}>Share Trip</button></div></>) : null}
           <button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button>
         </>)}
