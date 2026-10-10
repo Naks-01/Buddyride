@@ -104,15 +104,20 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!dCoords && dropoff.toLowerCase().includes('makro')) {
       dCoords = [29.4521, -23.9145] as any
     }
+    // ✅ FIX: Allow free text like Puma Makgofe even if Mapbox fails
+    if (!dCoords && dropoff && dropoff.trim().length > 2) {
+      dCoords = [pCoords![0] + 0.018, pCoords![1] + 0.018] as [number, number]
+    }
     return { pCoords, dCoords }
   }
 
   async function calculateEstimate() {
+    if (!dropoff || dropoff.trim().length < 2) { alert('Please enter destination'); return }
     const { pCoords, dCoords } = await ensureCoords()
-    if (!pCoords ||!dCoords) { alert('Please enter destination - e.g. Makro'); return }
-    setPickupCoords(pCoords); setDropoffCoords(dCoords)
+    if (!pCoords) { alert('Waiting for GPS'); return }
+    setPickupCoords(pCoords); setDropoffCoords(dCoords!)
     try {
-      const r = await getRoute(pCoords, dCoords) as any;
+      const r = await getRoute(pCoords, dCoords!) as any;
       setRoute(r.geometry);
       const km = r.distance / 1000;
       setDistance(km);
@@ -120,8 +125,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setPrice(fare);
       setShowEstimate(true)
     } catch {
-      setDistance(3);
-      setPrice(calcFareForCategory(selectedCat, 3));
+      const km = 2.5
+      setDistance(km);
+      setPrice(calcFareForCategory(selectedCat, km));
       setShowEstimate(true)
     }
   }
@@ -132,17 +138,22 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   async function requestRide() {
     setLoading(true)
+    if (!dropoff || dropoff.trim().length < 2) {
+      setLoading(false)
+      alert('Please enter destination - e.g. Puma Makgofe');
+      return
+    }
     const { pCoords, dCoords } = await ensureCoords()
-    if (!dCoords) { setLoading(false); alert('Please enter destination'); return }
-    setPickupCoords(pCoords); setDropoffCoords(dCoords)
+    if (!pCoords) { setLoading(false); alert('Waiting for GPS'); return }
+    setPickupCoords(pCoords); setDropoffCoords(dCoords!)
     let finalFare = price || calcFareForCategory(selectedCat, 3)
-    let finalKm = distance || 3
+    let finalKm = distance || 2.5
     if (!price) {
-      try { const r = await getRoute(pCoords!, dCoords) as any; const km = r.distance / 1000; finalKm = km; finalFare = calcFareForCategory(selectedCat, km) } catch { finalFare = calcFareForCategory(selectedCat, 3) }
+      try { const r = await getRoute(pCoords!, dCoords!) as any; const km = r.distance / 1000; finalKm = km; finalFare = calcFareForCategory(selectedCat, km) } catch { finalFare = calcFareForCategory(selectedCat, 2.5) }
     }
     let realPickup = pickup
     if (!pickup || pickup.toLowerCase().includes('my location')) { try { realPickup = await reverseGeocode(pCoords!) } catch { realPickup = 'Polokwane' } }
-    const { data, error } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords![1], pickup_lng: pCoords![0], pickup_address: realPickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
+    const { data, error } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords![1], pickup_lng: pCoords![0], pickup_address: realPickup, dropoff_lat: dCoords![1], dropoff_lng: dCoords![0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
     if (error) { setLoading(false); alert(error.message); return }
     if (data) {
       setRide(data as Ride)
@@ -190,7 +201,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               {showPickupSug && pickupSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{pickupSuggestions.map((s,i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
             <div style={{ position: 'relative' }}>
-              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '14px', boxSizing: 'border-box' }} />
+              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro, Puma Makgofe" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '14px', boxSizing: 'border-box' }} />
               {showDropoffSug && dropoffSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{dropoffSuggestions.map((s,i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
             <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 0' }}>
@@ -201,7 +212,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
                   <button key={cat.id} onClick={() => { setSelectedCat(cat.id); if (distance) setPrice(calcFareForCategory(cat.id, distance)) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, textAlign: 'left' }}>
                     <div style={{ fontSize: '20px' }}>{cat.icon}</div>
                     <div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>
-                    <div style={{ fontSize: '10px', opacity: 0.6 }}>{cat.seats} seats • {cat.seats} pax</div>
+                    <div style={{ fontSize: '10px', opacity: 0.8 }}>{cat.seats} pax</div>
                     {fare && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px', marginTop: '2px' }}>R {fare}</div>}
                   </button>
                 )
