@@ -104,7 +104,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!dCoords && dropoff.toLowerCase().includes('makro')) {
       dCoords = [29.4521, -23.9145] as any
     }
-    // ✅ FIX: Allow free text like Puma Makgofe even if Mapbox fails
     if (!dCoords && dropoff && dropoff.trim().length > 2) {
       dCoords = [pCoords![0] + 0.018, pCoords![1] + 0.018] as [number, number]
     }
@@ -226,10 +225,43 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           </div>
         </>)}
       {ride && (<>
-          {ride.status === 'searching' && (<><h3 style={{ margin: '0 0 6px' }}>Searching Buddy driver... <span style={{ color: '#ff7a00' }}>●</span></h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p></>)}
-          {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Buddy Driver'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#ff7a00', fontWeight: 'bold' }}>{ride.status === 'arrived'? 'Buddy has arrived - 5 min free wait' : 'Buddy is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div>)}
-          {(ride.status as any) === 'en_route' || (ride.status as any) === 'in_progress' || (ride.status as any) === 'picked_up'? (<><h3>Heading to {ride.dropoff_address}</h3><p style={{ fontSize: '13px', opacity: 0.7 }}>Cash trip • R {ride.fare}</p><div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: '#ff3b30', border: 'none', color: 'white', fontWeight: 'bold' }}>SOS</button><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, border: `1px solid ${border}`, color: text }}>Share Trip</button></div></>) : null}
-          <button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button>
+          {ride.status === 'searching' && (<><h3 style={{ margin: '0 0 6px' }}>Searching Buddy driver... <span style={{ color: '#ff7a00' }}>●</span></h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
+
+          {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Buddy Driver'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#ff7a00', fontWeight: 'bold' }}>{ride.status === 'arrived'? 'Buddy has arrived - 5 min free wait' : 'Buddy is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
+
+          {['en_route','in_progress','picked_up'].includes(ride.status as any) && (
+            <>
+              <h3 style={{ margin: '0 0 6px' }}>Heading to {ride.dropoff_address}</h3>
+              <p style={{ fontSize: '13px', opacity: 0.7 }}>Cash trip • R {ride.fare}</p>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                <button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: '#ff3b30', border: 'none', color: 'white', fontWeight: 'bold' }}>SOS</button>
+                <button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, border: `1px solid ${border}`, color: text }}>Share Trip</button>
+              </div>
+              <button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button>
+            </>
+          )}
+
+          {ride.status === 'completed' && (
+            <>
+              <div style={{ textAlign: 'center', padding: '10px' }}>
+                <div style={{ fontSize: '48px' }}>✅</div>
+                <h2 style={{ margin: '8px 0' }}>Trip Completed!</h2>
+                <p style={{ opacity: 0.8 }}>Paid R {ride.fare} cash to driver</p>
+                <p style={{ fontSize: '13px', marginTop: '8px' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
+                <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', margin: '16px 0', fontSize: '28px' }}>
+                  <span>⭐</span><span>⭐</span><span>⭐</span><span>⭐</span><span>⭐</span>
+                </div>
+              </div>
+              <button onClick={() => { setRide(null); setRoute(undefined); setShowEstimate(false); setDistance(null); setPrice(null); setDropoff(''); setDropoffCoords(null) }} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>Done - Book New Ride</button>
+            </>
+          )}
+
+          {ride.status === 'cancelled' && (
+            <>
+              <h3>Trip Cancelled</h3>
+              <button onClick={() => { setRide(null); setRoute(undefined) }} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: '#ff7a00', border: 'none', color: 'white', fontWeight: 'bold' }}>Book New Ride</button>
+            </>
+          )}
         </>)}
     </section>
     {(showPickupSug || showDropoffSug) && (<div onClick={() => { setShowPickupSug(false); setShowDropoffSug(false) }} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />)}
