@@ -29,6 +29,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
 
+  // SET DEFAULT NAV = MAPBOX (like Bolt)
+  useEffect(() => {
+    if (!localStorage.getItem('buddy_nav')) localStorage.setItem('buddy_nav', 'mapbox')
+    if (!localStorage.getItem('buddy_nav_autostart')) localStorage.setItem('buddy_nav_autostart', 'true')
+    if (!localStorage.getItem('nav_pref')) localStorage.setItem('nav_pref', 'mapbox')
+  }, [])
+
   useEffect(() => {
     async function loadStatus() {
       const { data } = await supabase.from('profiles').select('is_online').eq('id', profile.id).single()
@@ -41,8 +48,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     async function loadRide() {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id)
-    .in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any)
-    .order('created_at', { ascending: false }).limit(1).single()
+   .in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any)
+   .order('created_at', { ascending: false }).limit(1).single()
       if (data) { setRide(data); setIsNavigating(true); setIsOnline(true); setZoom(17) }
     }
     loadRide()
@@ -50,7 +57,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     const ch = supabase.channel(`driver-${profile.id}`)
-  .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
+ .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
         const newRide = p.new as Ride
         setRide(newRide)
         if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
@@ -88,7 +95,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     async function buildRoute() {
       if (!ride ||!location) return
       const target: [number, number] = (ride.status as any) === 'accepted' || (ride.status as any) === 'arrived'
-    ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
+   ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
       try { const r = await getRoute(location, target); setRoute(r.geometry) } catch {}
     }
     buildRoute()
@@ -103,6 +110,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
   async function acceptRide(rideId: string) {
     await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted' } as any).eq('id', rideId)
     setSearchingRides([])
+    // AUTO START MAPBOX NAVIGATION LIKE BOLT
+    setIsNavigating(true)
+    setZoom(17)
   }
   async function declineRide(rideId: string) {
     supabase.functions.invoke('dispatch', { body: { ride_id: rideId, declined_by: profile.id } })
@@ -121,15 +131,26 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setIsNavigating(false); setRide(null)
   }
 
+  // FIXED: Mapbox is automatic, Google/Waze only if changed in Settings
   function openExternalMap(lat: number, lng: number) {
     setNavTarget({ lat, lng })
-    const pref = localStorage.getItem('nav_pref')
-    if (!pref) setShowNavChooser(true)
-    else if (pref === 'mapbox') { setIsNavigating(true); setZoom(17) }
-    else if (pref === 'waze') window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank')
-    else window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank')
+    const pref = localStorage.getItem('buddy_nav') || localStorage.getItem('nav_pref') || 'mapbox'
+
+    if (pref === 'mapbox' || pref === 'buddy') {
+      setIsNavigating(true)
+      setZoom(17)
+      return
+    }
+    if (pref === 'waze') {
+      window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank')
+      return
+    }
+    // google
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank')
   }
+
   function chooseNav(pref: 'mapbox' | 'google' | 'waze') {
+    localStorage.setItem('buddy_nav', pref)
     localStorage.setItem('nav_pref', pref)
     setShowNavChooser(false)
     if (!navTarget) return
@@ -149,7 +170,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     </header>
 
     <div style={{ height: '100%', paddingBottom: '220px' }}>
-      {/* BOLT FIX: Now map has driverLocation + isNavigating for 3D */}
       <MapView center={location} route={route} driverLocation={location} isNavigating={isNavigating} />
       <button onClick={() => { setZoom(17); setIsNavigating(true) }} style={{ position: 'absolute', right: '16px', bottom: '240px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>🎯</button>
     </div>
@@ -163,7 +183,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
             return (
             <div key={r.id} style={{ background: isDark? '#1a1a1a' : 'white', border: `2px solid #00d181`, borderRadius: '16px', padding: '14px', marginBottom: '12px', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,209,129,0.2)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <p style={{ fontWeight: 'bold', margin: 0, color: '#00d181', fontSize: '14px' }}>BOLT REQUEST • R {r.fare} • {(r as any).distance_km?.toFixed(1) || '1.2'}km</p>
+                <p style={{ fontWeight: 'bold', margin: 0, color: '#00d181', fontSize: '14px' }}>BUDDY REQUEST • R {r.fare} • {(r as any).distance_km?.toFixed(1) || '1.2'}km</p>
                 <span style={{ background: '#00d181', color: 'white', borderRadius: '12px', padding: '2px 8px', fontSize: '12px', fontWeight: 'bold' }}>{secs}s</span>
               </div>
               <p style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 'bold' }}>📍 {r.pickup_address}</p>
@@ -176,7 +196,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
             </div>
           )})}
           <div style={{ fontSize: '14px', marginBottom: '12px', opacity: 0.8 }}>
-            {isOnline? (searchingRides.length? `✅ Offer expires in 12s` : '✅ You are online - Waiting for Bolt offers...') : 'You are offline'}
+            {isOnline? (searchingRides.length? `✅ Offer expires in 12s` : '✅ You are online - Waiting for Buddy requests...') : 'You are offline'}
           </div>
           <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '12px', border: 'none', background: isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{isOnline? 'GO OFFLINE' : 'GO ONLINE'}</button>
           <p style={{ fontSize: '11px', opacity: 0.5, marginTop: '8px' }}>Wallet: R {profile.wallet_balance || 0} • Trips: {profile.trips_completed || 0} • Rating: {profile.rating || 5.0}★</p>
@@ -188,7 +208,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
           <h3 style={{ margin: '0 0 6px', color: text }}>Go to Pickup • R {ride.fare}</h3>
           <p style={{ opacity: 0.7, margin: '0 0 12px', color: text, fontSize: '13px' }}>{ride.pickup_address}</p>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => openExternalMap(ride.pickup_lat, ride.pickup_lng)} style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigate</button>
+            <button onClick={() => openExternalMap(ride.pickup_lat, ride.pickup_lng)} style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>{isNavigating? 'Navigating...' : 'Navigate'}</button>
             <button onClick={async () => { await supabase.from('rides').update({ status: 'arrived' as any }).eq('id', ride.id) }} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>I Have Arrived</button>
           </div>
         </>
@@ -214,15 +234,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
       )}
     </section>
 
-    {/* BOLT NAV CHOOSER - Mapbox Recommended */}
+    {/* Settings chooser - only opens if user explicitly wants to change */}
     {showNavChooser && (
       <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
         <div style={{ width: '100%', background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '20px' }}>
           <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 16px' }} />
           <h3 style={{ margin: '0 0 4px', color: text }}>Choose Navigation</h3>
-          <p style={{ fontSize: '13px', opacity: 0.6, margin: '0 0 16px' }}>Mapbox is recommended for BuddyRide - Bolt style</p>
+          <p style={{ fontSize: '13px', opacity: 0.6, margin: '0 0 16px' }}>Buddy navigation is recommended</p>
           <button onClick={() => chooseNav('mapbox')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
-            <span style={{ fontSize: '22px' }}>🗺️</span> <div><div>Mapbox - In App</div><div style={{ fontSize: '11px', opacity: 0.9 }}>Recommended • 3D + live traffic</div></div> <span style={{ marginLeft: 'auto', background: 'white', color: '#00d181', padding: '2px 8px', borderRadius: '8px', fontSize: '11px' }}>BOLT</span>
+            <span style={{ fontSize: '22px' }}>🗺️</span> <div><div>Buddy navigation</div><div style={{ fontSize: '11px', opacity: 0.9 }}>Recommended • In App</div></div> <span style={{ marginLeft: 'auto', background: 'white', color: '#00d181', padding: '2px 8px', borderRadius: '8px', fontSize: '11px' }}>DEFAULT</span>
           </button>
           <button onClick={() => chooseNav('google')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '20px' }}>📍</span> Google Maps

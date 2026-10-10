@@ -15,7 +15,6 @@ async function fetchGeocode(query: string, extra: string = ""): Promise<[number,
   return data.features[0].geometry.coordinates as [number, number];
 }
 
-// KEEP YOUR OLD geocode for backward compat - returns single coord
 export async function geocode(query: string): Promise<any> {
   assertMapboxConfigured();
   const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
@@ -31,13 +30,10 @@ export async function geocode(query: string): Promise<any> {
     result = await fetchGeocode(cleanQuery + " Polokwane", "proximity=29.4589,-23.9045&");
   }
 
-  // BOLT FIX: also return full features if caller wants suggestions
-  // For dropdown we need list, so try to get features
   if (!result) return null
-  return result // still returns [lng, lat] for old code
+  return result
 }
 
-// BOLT: NEW - for search suggestions (Makro dropdown)
 export async function searchPlaces(query: string): Promise<any[]> {
   assertMapboxConfigured();
   const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim() + " Polokwane";
@@ -48,7 +44,6 @@ export async function searchPlaces(query: string): Promise<any[]> {
   return data.features || [];
 }
 
-// BOLT FIX: support both reverseGeocode(lng,lat) AND reverseGeocode([lng,lat])
 export async function reverseGeocode(lng: number | [number, number], lat?: number): Promise<string> {
   assertMapboxConfigured();
   let lngVal: number, latVal: number;
@@ -66,9 +61,10 @@ export async function reverseGeocode(lng: number | [number, number], lat?: numbe
   return data.features?.[0]?.place_name || `${latVal.toFixed(5)}, ${lngVal.toFixed(5)}`;
 }
 
+// FIXED: Added steps for Buddy turn-by-turn auto navigation inside app
 export async function getRoute(from: [number, number], to: [number, number]) {
   assertMapboxConfigured();
-  const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&access_token=${mapbox_access_token}`;
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&steps=true&banner_instructions=true&voice_instructions=true&access_token=${mapbox_access_token}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("Route failed");
   const data = await res.json();
@@ -76,10 +72,11 @@ export async function getRoute(from: [number, number], to: [number, number]) {
   if (!route) throw new Error("No route");
   return {
     geometry: route.geometry,
-    distance: route.distance, // meters - raw like Mapbox
-    duration: route.duration, // seconds - raw
+    distance: route.distance,
+    duration: route.duration,
     distanceKm: route.distance / 1000,
     durationMin: route.duration / 60,
+    legs: route.legs, // for turn by turn
     route: route
   };
 }
