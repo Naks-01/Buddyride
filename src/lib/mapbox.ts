@@ -7,33 +7,38 @@ export function assertMapboxConfigured() {
 }
 
 async function fetchGeocodeRaw(query: string, extra: string = ""): Promise<any> {
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${extra}country=za&limit=5&access_token=${mapbox_access_token}`;
+  // Added: types=poi first, fuzzyMatch, autocomplete
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${extra}country=za&limit=6&types=poi,address,place,locality&fuzzyMatch=true&autocomplete=true&access_token=${mapbox_access_token}`;
   const res = await fetch(url);
   if (!res.ok) return null;
   return await res.json();
 }
 
-// ✅ For suggestions - returns features array (what PassengerHome needs)
+// For suggestions - returns features array (what PassengerHome needs)
 export async function geocode(query: string): Promise<any> {
   assertMapboxConfigured();
   const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
 
+  // 1. Try exact + Polokwane bias + bbox (most accurate for Polokwane)
   let data = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&bbox=29.1,-24.15,29.85,-23.65&");
+
+  // 2. If no result, try with just proximity
   if (!data?.features?.length) {
     data = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&");
   }
+  // 3. If still no result, try WITHOUT adding Polokwane - this fixes Puma makgofe
   if (!data?.features?.length) {
     data = await fetchGeocodeRaw(cleanQuery, "");
   }
+  // 4. LAST resort only - add Polokwane
   if (!data?.features?.length &&!cleanQuery.toLowerCase().includes("polokwane")) {
     data = await fetchGeocodeRaw(cleanQuery + " Polokwane", "proximity=29.4589,-23.9045&");
   }
 
-  // Return full data with features - PassengerHome expects.features
   return data
 }
 
-// ✅ For getting coords quickly
+// For getting coords quickly
 export async function geocodeCoords(query: string): Promise<[number, number] | null> {
   const data = await geocode(query)
   if (!data?.features?.length) return null
@@ -42,12 +47,10 @@ export async function geocodeCoords(query: string): Promise<[number, number] | n
 
 export async function searchPlaces(query: string): Promise<any[]> {
   assertMapboxConfigured();
-  const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim() + " Polokwane";
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(cleanQuery)}.json?proximity=29.4589,-23.9045&country=za&limit=5&access_token=${mapbox_access_token}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.features || [];
+  const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
+  // DON'T force + Polokwane here, let geocode() handle it
+  const data = await geocode(cleanQuery);
+  return data?.features || [];
 }
 
 export async function reverseGeocode(lng: number | [number, number], lat?: number): Promise<string> {

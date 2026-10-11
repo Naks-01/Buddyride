@@ -2,10 +2,21 @@ import { useEffect, useState } from 'react'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 import { NavigationMenu } from '../NavigationMenu'
 
+type Doc = {
+  id: string
+  driver_id: string
+  doc_type: string
+  file_url: string
+  status: string
+  created_at: string
+  driver_name?: string
+}
+
 export function AdminHome({ profile }: { profile: Profile }) {
   const [rides, setRides] = useState<Ride[]>([])
   const [users, setUsers] = useState<Profile[]>([])
-  const [filter, setFilter] = useState<'all'|'searching'|'active'|'completed'>('all')
+  const [docs, setDocs] = useState<Doc[]>([])
+  const [filter, setFilter] = useState<'all'|'searching'|'active'|'completed'|'documents'>('all')
 
   function playAdminPing() {
     try {
@@ -20,10 +31,14 @@ export function AdminHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     Promise.all([
       supabase.from('rides').select('*').order('created_at', { ascending: false }).limit(100),
-      supabase.from('profiles').select('*').order('created_at', { ascending: false }).limit(200)
-    ]).then(([r, u]) => { setRides((r.data as any) || []); setUsers((u.data as any) || []) })
+      supabase.from('profiles').select('*').order('created_at', { ascending: false }).limit(200),
+      supabase.from('driver_documents').select('*').order('created_at', { ascending: false }).limit(100)
+    ]).then(([r, u, d]) => { 
+      setRides((r.data as any) || []); 
+      setUsers((u.data as any) || [])
+      setDocs((d.data as any) || [])
+    })
 
-    // 🔴 LIVE - like your driver app
     const ch = supabase.channel('admin-rides').on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, p => {
       const newRide = p.new as Ride
       setRides(prev => {
@@ -41,8 +56,26 @@ export function AdminHome({ profile }: { profile: Profile }) {
         return [n, ...prev].slice(0, 200)
       })
     }).subscribe()
-    return () => { supabase.removeChannel(ch); supabase.removeChannel(ch2) }
+    const ch3 = supabase.channel('admin-docs').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_documents' }, p => {
+      setDocs(prev => {
+        const n = p.new as Doc
+        const exists = prev.find(d => d.id === n.id)
+        if (exists) return prev.map(d => d.id === n.id? n : d)
+        playAdminPing()
+        return [n, ...prev].slice(0, 100)
+      })
+    }).subscribe()
+    return () => { supabase.removeChannel(ch); supabase.removeChannel(ch2); supabase.removeChannel(ch3) }
   }, [])
+
+  const approveDoc = async (id: string) => {
+    await supabase.from('driver_documents').update({ status: 'approved' }).eq('id', id)
+    setDocs(prev => prev.map(d => d.id===id? {...d, status:'approved'}:d))
+  }
+  const rejectDoc = async (id: string) => {
+    await supabase.from('driver_documents').update({ status: 'rejected' }).eq('id', id)
+    setDocs(prev => prev.map(d => d.id===id? {...d, status:'rejected'}:d))
+  }
 
   const completed = rides.filter(r => r.status === 'completed')
   const searching = rides.filter(r => r.status === 'searching')
@@ -50,13 +83,13 @@ export function AdminHome({ profile }: { profile: Profile }) {
   const drivers = users.filter(u => (u as any).role === 'driver')
   const onlineDrivers = drivers.filter((d: any) => d.is_online)
   const passengers = users.filter(u => (u as any).role !== 'driver' && (u as any).role !== 'admin')
-  // Revenue: 20% like your DriverHome
   const revenue = completed.reduce((s, r) => {
     const comm = (r as any).buddyride_commission || (Number(r.fare) * 0.20)
     return s + Number(comm || 0)
   }, 0)
 
   const filteredRides = filter === 'searching'? searching : filter === 'active'? active : filter === 'completed'? completed : rides
+  const pendingDocs = docs.filter(d=>d.status==='pending')
 
   return <div className="admin" style={{ padding: '16px', background: '#121212', color: 'white', minHeight: '100dvh' }}>
     <header className="topbar" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}><NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} /><strong>BuddyRide Admin</strong><span style={{ marginLeft: 'auto', opacity: 0.7, fontSize: '12px' }}>{profile.email}</span></header>
@@ -64,30 +97,57 @@ export function AdminHome({ profile }: { profile: Profile }) {
     <div className="stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '10px', marginBottom: '16px' }}>
       <div style={{ background: '#1e1e1e', padding: '12px', borderRadius: '12px', textAlign: 'center' }}><b style={{ display: 'block', fontSize: '20px' }}>{users.length}</b><span style={{ fontSize: '11px', opacity: 0.7 }}>Total Users</span><div style={{ fontSize: '10px', marginTop: '4px' }}>{drivers.length} drivers • {passengers.length} pax • <span style={{ color: '#00d181' }}>{onlineDrivers.length} online</span></div></div>
       <div style={{ background: '#1e1e1e', padding: '12px', borderRadius: '12px', textAlign: 'center' }}><b style={{ display: 'block', fontSize: '20px' }}>{rides.length}</b><span style={{ fontSize: '11px', opacity: 0.7 }}>Total Rides</span><div style={{ fontSize: '10px', marginTop: '4px', color: '#ff7a00' }}>{searching.length} searching • {active.length} active</div></div>
-      <div style={{ background: '#1e1e1e', padding: '12px', borderRadius: '12px', textAlign: 'center' }}><b style={{ display: 'block', fontSize: '20px', color: '#00d181' }}>R {revenue.toFixed(2)}</b><span style={{ fontSize: '11px', opacity: 0.7 }}>Platform 20%</span><div style={{ fontSize: '10px', marginTop: '4px' }}>{completed.length} completed</div></div>
+      <div style={{ background: '#1e1e1e', padding: '12px', borderRadius: '12px', textAlign: 'center' }}><b style={{ display: 'block', fontSize: '20px', color: '#00d181' }}>R {revenue.toFixed(2)}</b><span style={{ fontSize: '11px', opacity: 0.7 }}>Platform 20%</span><div style={{ fontSize: '10px', marginTop: '4px' }}>{completed.length} completed • {pendingDocs.length} docs pending</div></div>
     </div>
 
-    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap:'wrap' }}>
       <button onClick={() => setFilter('all')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='all'? '#ff7a00' : '#2a2a2a', color: 'white', fontSize: '12px', fontWeight: 'bold' }}>All {rides.length}</button>
       <button onClick={() => setFilter('searching')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='searching'? '#ff7a00' : '#2a2a2a', color: 'white', fontSize: '12px' }}>🔍 Searching {searching.length}</button>
       <button onClick={() => setFilter('active')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='active'? '#00d181' : '#2a2a2a', color: 'white', fontSize: '12px' }}>🟢 Active {active.length}</button>
       <button onClick={() => setFilter('completed')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='completed'? '#00d181' : '#2a2a2a', color: 'white', fontSize: '12px' }}>✅ Completed {completed.length}</button>
+      <button onClick={() => setFilter('documents')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='documents'? '#4285F4' : '#2a2a2a', color: 'white', fontSize: '12px', fontWeight: filter==='documents'?'bold':'normal' }}>📄 Docs {pendingDocs.length? `(${pendingDocs.length} pending)`: `(${docs.length})`}</button>
     </div>
 
-    <section className="panel" style={{ background: '#1e1e1e', borderRadius: '12px', padding: '12px' }}>
-      <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Recent rides - {filter} • Live 🔊</h2>
-      {filteredRides.map(r => (
-        <div className="table-row" key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #333', fontSize: '12px' }}>
-          <span style={{ opacity: 0.6 }}>{r.id.slice(0,8)} • {new Date(r.created_at).toLocaleTimeString()}</span>
-          <span style={{ 
-            background: r.status==='searching'? '#ff7a00' : r.status==='completed'? '#00d181' : '#4285F4',
-            color: 'white', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold'
-          }}>{r.status}</span>
-          <span>R {Number((r as any).total_fare ?? r.fare ?? 0).toFixed(0)} • {(r as any).ride_category || 'Go'}</span>
-          <span style={{ color: '#00d181' }}>BR R {Number((r as any).buddyride_commission ?? Number(r.fare)*0.2).toFixed(0)}</span>
-        </div>
-      ))}
-    </section>
+    {filter === 'documents' ? (
+      <section className="panel" style={{ background: '#1e1e1e', borderRadius: '12px', padding: '12px' }}>
+        <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Driver Documents - Bolt Style - Live</h2>
+        {docs.length===0? <p style={{opacity:0.6, fontSize:12}}>No documents uploaded yet. Ask driver to go to Menu {'>'} My documents {'>'} Upload CRC.</p> : docs.map(d => {
+          const driver = users.find(u=>u.id===d.driver_id)
+          return (
+            <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems:'center', padding: '10px 0', borderBottom: '1px solid #333', fontSize: '12px', gap:8 }}>
+              <div style={{flex:1}}>
+                <b>{driver?.full_name || d.driver_id.slice(0,8)}</b> • {d.doc_type.toUpperCase()}<br/>
+                <span style={{opacity:0.6, fontSize:11}}>{new Date(d.created_at).toLocaleString()} • {d.status}</span>
+              </div>
+              <a href={d.file_url} target="_blank" rel="noreferrer" style={{background:'#333', color:'white', padding:'6px 10px', borderRadius:8, textDecoration:'none', fontSize:11}}>View</a>
+              {d.status==='pending' && (
+                <>
+                  <button onClick={()=>approveDoc(d.id)} style={{background:'#00d181', color:'white', border:'none', padding:'6px 10px', borderRadius:8, fontSize:11, fontWeight:'bold'}}>Approve</button>
+                  <button onClick={()=>rejectDoc(d.id)} style={{background:'#ff4444', color:'white', border:'none', padding:'6px 10px', borderRadius:8, fontSize:11}}>Reject</button>
+                </>
+              )}
+              {d.status==='approved' && <span style={{color:'#00d181', fontWeight:'bold', fontSize:11}}>✅ Approved</span>}
+              {d.status==='rejected' && <span style={{color:'#ff4444', fontWeight:'bold', fontSize:11}}>❌ Rejected</span>}
+            </div>
+          )
+        })}
+      </section>
+    ) : (
+      <section className="panel" style={{ background: '#1e1e1e', borderRadius: '12px', padding: '12px' }}>
+        <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Recent rides - {filter} • Live 🔊</h2>
+        {filteredRides.map(r => (
+          <div className="table-row" key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #333', fontSize: '12px' }}>
+            <span style={{ opacity: 0.6 }}>{r.id.slice(0,8)} • {new Date(r.created_at).toLocaleTimeString()}</span>
+            <span style={{ 
+              background: r.status==='searching'? '#ff7a00' : r.status==='completed'? '#00d181' : '#4285F4',
+              color: 'white', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold'
+            }}>{r.status}</span>
+            <span>R {Number((r as any).total_fare ?? r.fare ?? 0).toFixed(0)} • {(r as any).ride_category || 'Go'}</span>
+            <span style={{ color: '#00d181' }}>BR R {Number((r as any).buddyride_commission ?? Number(r.fare)*0.2).toFixed(0)}</span>
+          </div>
+        ))}
+      </section>
+    )}
 
     <section className="panel" style={{ background: '#1e1e1e', borderRadius: '12px', padding: '12px', marginTop: '12px' }}>
       <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Drivers Online • {onlineDrivers.length}</h2>
