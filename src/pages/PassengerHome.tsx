@@ -6,7 +6,17 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
-// 🔊 PASSENGER SOUNDS
+const LOCAL_PLACES = [
+  { text: 'Puma Makgofe', place_name: 'Puma Makgofe, Polokwane', center: [29.4340, -23.8840] as [number, number] },
+  { text: 'Mall of the North', place_name: 'Mall of the North, Polokwane', center: [29.4395, -23.8885] as [number, number] },
+  { text: 'Makro Polokwane', place_name: 'Makro, Polokwane', center: [29.4521, -23.9145] as [number, number] },
+  { text: 'Savannah Mall', place_name: 'Savannah Mall, Polokwane', center: [29.4422, -23.9042] as [number, number] },
+  { text: 'Limpopo Mall', place_name: 'Limpopo Mall, Polokwane', center: [29.4589, -23.9045] as [number, number] },
+  { text: 'Polokwane Airport', place_name: 'Polokwane International Airport', center: [29.4524, -23.8580] as [number, number] },
+  { text: 'Seshego Hospital', place_name: 'Seshego Hospital, Seshego', center: [29.3950, -23.8520] as [number, number] },
+  { text: 'University of Limpopo', place_name: 'University of Limpopo, Turfloop', center: [29.7400, -23.8800] as [number, number] },
+]
+
 const SOUNDS = {
   accepted: 'https://cdn.pixabay.com/audio/2021/08/04/audio_0625c8b9d0.mp3',
   arrived: 'https://cdn.pixabay.com/audio/2022/03/10/audio_5a4fe0f4f1.mp3',
@@ -26,7 +36,6 @@ function playTone(freq1: number, freq2: number = 0, duration = 0.8) {
     osc.stop(ctx.currentTime + duration); osc2.stop(ctx.currentTime + duration)
     if (navigator.vibrate) navigator.vibrate([300, 100, 300])
   } catch {}
-  // Also try mp3
   try {
     const a = new Audio(freq1 > 700? SOUNDS.arrived : SOUNDS.accepted)
     a.volume = 1; a.play().catch(()=>{})
@@ -95,12 +104,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!ride) return
     const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
       const newRide = p.new as Ride
-      // 🔊 SOUND ON STATUS CHANGE
       const oldS = prevStatus.current
       const newS = newRide.status
       if (oldS && oldS!== newS) {
-        if (newS === 'accepted') playTone(600, 900, 1.0) // Buddy accepted!
-        if (newS === 'arrived') playTone(900, 1200, 1.2) // Buddy arrived - loud
+        if (newS === 'accepted') playTone(600, 900, 1.0)
+        if (newS === 'arrived') playTone(900, 1200, 1.2)
         if (newS === 'picked_up' || newS === 'en_route' || newS === 'in_progress') playTone(500, 700, 0.6)
         if (newS === 'completed') playTone(700, 1000, 1.0)
       }
@@ -121,14 +129,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function searchPlaces(query: string, setter: (v:any[])=>void, setShow: (v:boolean)=>void) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
     if (query.toLowerCase().includes('my location')) { setter([]); setShow(false); return }
+    const lower = query.toLowerCase().trim()
+    const localMatches = LOCAL_PLACES.filter(p => p.text.toLowerCase().includes(lower) || p.place_name.toLowerCase().includes(lower))
     try {
-      const results = await geocode(query + ' Polokwane') as any
-      let places = results?.features || results
+      const results = await geocode(query) as any
+      let places = results?.features || results || []
+      let normalized: any[] = []
       if (Array.isArray(places) && places.length > 0) {
-        const normalized = places.slice(0, 5).map((p:any) => ({ center: p.center || p.geometry?.coordinates, place_name: p.place_name || p.text, text: p.text || p.place_name })).filter((p:any) => p.center)
-        setter(normalized); setShow(normalized.length > 0)
-      } else { setter([]); setShow(false) }
-    } catch (e) { console.log('geocode err', e) }
+        normalized = places.slice(0, 5).map((p:any) => ({ center: p.center || p.geometry?.coordinates, place_name: p.place_name || p.text, text: p.text || p.place_name })).filter((p:any) => p.center)
+      }
+      const merged = [...localMatches,...normalized]
+      const unique = merged.filter((v,i,a)=> a.findIndex(t=>t.place_name===v.place_name)===i).slice(0,6)
+      setter(unique)
+      setShow(unique.length > 0)
+    } catch {
+      if (localMatches.length > 0) { setter(localMatches); setShow(true) }
+      else { setter([]); setShow(false) }
+    }
   }
 
   function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); setPrice(null); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => { searchPlaces(val, setPickupSuggestions, setShowPickupSug) }, 300) }
@@ -139,11 +156,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function ensureCoords() {
     let pCoords = pickupCoords
     let dCoords = dropoffCoords
-    if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) { try { const res = await geocode(pickup + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) pCoords = [c[0], c[1]] } catch {} }
+    const findLocal = (name: string) => {
+      if (!name) return null
+      const l = name.toLowerCase()
+      return LOCAL_PLACES.find(p => l.includes(p.text.toLowerCase()) || p.text.toLowerCase().includes(l) || l.includes(p.place_name.toLowerCase().split(',')[0].trim()))
+    }
+    if (!pCoords && pickup &&!pickup.toLowerCase().includes('my location')) {
+      const local = findLocal(pickup)
+      if (local) pCoords = local.center
+      else { try { const res = await geocode(pickup) as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) pCoords = [c[0], c[1]] } catch {} }
+    }
     if (!pCoords) pCoords = location
-    if (!dCoords && dropoff) { try { const res = await geocode(dropoff + ' Polokwane') as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) dCoords = [c[0], c[1]] } catch {} }
-    if (!dCoords && dropoff.toLowerCase().includes('makro')) {
-      dCoords = [29.4521, -23.9145] as any
+    if (!dCoords && dropoff) {
+      const local = findLocal(dropoff)
+      if (local) dCoords = local.center
+      else { try { const res = await geocode(dropoff) as any; const first = res?.[0] || res?.features?.[0]; const c = first?.center || first?.geometry?.coordinates; if (c) dCoords = [c[0], c[1]] } catch {} }
     }
     if (!dCoords && dropoff && dropoff.trim().length > 2) {
       dCoords = [pCoords![0] + 0.018, pCoords![1] + 0.018] as [number, number]
@@ -152,7 +179,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function calculateEstimate() {
-    // 🔊 Unlock audio on first tap
     try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); ctx.resume() } catch {}
     if (!dropoff || dropoff.trim().length < 2) { alert('Please enter destination'); return }
     const { pCoords, dCoords } = await ensureCoords()
@@ -179,22 +205,15 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function requestRide() {
-    // 🔊 Unlock audio
     try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); ctx.resume() } catch {}
     setLoading(true)
-    if (!dropoff || dropoff.trim().length < 2) {
-      setLoading(false)
-      alert('Please enter destination - e.g. Puma Makgofe');
-      return
-    }
+    if (!dropoff || dropoff.trim().length < 2) { setLoading(false); alert('Please enter destination - e.g. Puma Makgofe'); return }
     const { pCoords, dCoords } = await ensureCoords()
     if (!pCoords) { setLoading(false); alert('Waiting for GPS'); return }
     setPickupCoords(pCoords); setDropoffCoords(dCoords!)
     let finalFare = price || calcFareForCategory(selectedCat, 3)
     let finalKm = distance || 2.5
-    if (!price) {
-      try { const r = await getRoute(pCoords!, dCoords!) as any; const km = r.distance / 1000; finalKm = km; finalFare = calcFareForCategory(selectedCat, km) } catch { finalFare = calcFareForCategory(selectedCat, 2.5) }
-    }
+    if (!price) { try { const r = await getRoute(pCoords!, dCoords!) as any; const km = r.distance / 1000; finalKm = km; finalFare = calcFareForCategory(selectedCat, km) } catch { finalFare = calcFareForCategory(selectedCat, 2.5) } }
     let realPickup = pickup
     if (!pickup || pickup.toLowerCase().includes('my location')) { try { realPickup = await reverseGeocode(pCoords!) } catch { realPickup = 'Polokwane' } }
     const { data, error } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords![1], pickup_lng: pCoords![0], pickup_address: realPickup, dropoff_lat: dCoords![1], dropoff_lng: dCoords![0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
@@ -272,42 +291,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         </>)}
       {ride && (<>
           {ride.status === 'searching' && (<><h3 style={{ margin: '0 0 6px' }}>Searching Buddy driver... <span style={{ color: '#ff7a00' }}>●</span></h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
-
           {(ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>👨</div><div style={{ flex: 1 }}><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name || 'Buddy Driver'} • {driverProfile.rating?.toFixed(1) || '4.9'}★</div><div style={{ fontSize: '13px', opacity: 0.8 }}>{driverProfile.car_model || 'White Corolla'} • {driverProfile.car_plate || 'ND 123 L'}</div><div style={{ fontSize: '13px', color: '#ff7a00', fontWeight: 'bold' }}>{ride.status === 'arrived'? '🔔 Buddy has arrived - 5 min free wait' : '🔔 Buddy is coming - 3 min away'}</div></div><a href={`tel:${driverProfile.phone || ''}`} style={{ width: '40px', height: '40px', borderRadius: '20px', background: bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>📞</a></div><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
-
-          {['en_route','in_progress','picked_up'].includes(ride.status as any) && (
-            <>
-              <h3 style={{ margin: '0 0 6px' }}>Heading to {ride.dropoff_address}</h3>
-              <p style={{ fontSize: '13px', opacity: 0.7 }}>Cash trip • R {ride.fare}</p>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                <button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: '#ff3b30', border: 'none', color: 'white', fontWeight: 'bold' }}>SOS</button>
-                <button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, border: `1px solid ${border}`, color: text }}>Share Trip</button>
-              </div>
-              <button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button>
-            </>
-          )}
-
-          {ride.status === 'completed' && (
-            <>
-              <div style={{ textAlign: 'center', padding: '10px' }}>
-                <div style={{ fontSize: '48px' }}>✅</div>
-                <h2 style={{ margin: '8px 0' }}>Trip Completed!</h2>
-                <p style={{ opacity: 0.8 }}>Paid R {ride.fare} cash to driver</p>
-                <p style={{ fontSize: '13px', marginTop: '8px' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
-                <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', margin: '16px 0', fontSize: '28px' }}>
-                  <span>⭐</span><span>⭐</span><span>⭐</span><span>⭐</span><span>⭐</span>
-                </div>
-              </div>
-              <button onClick={() => { setRide(null); setRoute(undefined); setShowEstimate(false); setDistance(null); setPrice(null); setDropoff(''); setDropoffCoords(null) }} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>Done - Book New Ride</button>
-            </>
-          )}
-
-          {ride.status === 'cancelled' && (
-            <>
-              <h3>Trip Cancelled</h3>
-              <button onClick={() => { setRide(null); setRoute(undefined) }} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: '#ff7a00', border: 'none', color: 'white', fontWeight: 'bold' }}>Book New Ride</button>
-            </>
-          )}
+          {['en_route','in_progress','picked_up'].includes(ride.status as any) && (<><h3 style={{ margin: '0 0 6px' }}>Heading to {ride.dropoff_address}</h3><p style={{ fontSize: '13px', opacity: 0.7 }}>Cash trip • R {ride.fare}</p><div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: '#ff3b30', border: 'none', color: 'white', fontWeight: 'bold' }}>SOS</button><button style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, border: `1px solid ${border}`, color: text }}>Share Trip</button></div><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Cancel Ride</button></>)}
+          {ride.status === 'completed' && (<><div style={{ textAlign: 'center', padding: '10px' }}><div style={{ fontSize: '48px' }}>✅</div><h2 style={{ margin: '8px 0' }}>Trip Completed!</h2><p style={{ opacity: 0.8 }}>Paid R {ride.fare} cash to driver</p><p style={{ fontSize: '13px', marginTop: '8px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><div style={{ display: 'flex', gap: '6px', justifyContent: 'center', margin: '16px 0', fontSize: '28px' }}><span>⭐</span><span>⭐</span><span>⭐</span><span>⭐</span><span>⭐</span></div></div><button onClick={() => { setRide(null); setRoute(undefined); setShowEstimate(false); setDistance(null); setPrice(null); setDropoff(''); setDropoffCoords(null) }} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>Done - Book New Ride</button></>)}
+          {ride.status === 'cancelled' && (<><h3>Trip Cancelled</h3><button onClick={() => { setRide(null); setRoute(undefined) }} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: '#ff7a00', border: 'none', color: 'white', fontWeight: 'bold' }}>Book New Ride</button></>)}
         </>)}
     </section>
     {(showPickupSug || showDropoffSug) && (<div onClick={() => { setShowPickupSug(false); setShowDropoffSug(false) }} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />)}
