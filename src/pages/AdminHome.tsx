@@ -117,7 +117,7 @@ export function AdminHome({ profile }: { profile: Profile }) {
             <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems:'center', padding: '10px 0', borderBottom: '1px solid #333', fontSize: '12px', gap:8 }}>
               <div style={{flex:1}}>
                 <b>{driver?.full_name || d.driver_id.slice(0,8)}</b> • {d.doc_type.toUpperCase()}<br/>
-                <span style={{opacity:0.6, fontSize:11}}>{new Date(d.created_at).toLocaleString()} • {d.status}</span>
+                <span style={{opacity:0.6, fontSize:11}}>{d.created_at ? new Date(d.created_at).toLocaleString() : ''} • {d.status}</span>
               </div>
               <a href={d.file_url} target="_blank" rel="noreferrer" style={{background:'#333', color:'white', padding:'6px 10px', borderRadius:8, textDecoration:'none', fontSize:11}}>View</a>
               {d.status==='pending' && (
@@ -137,7 +137,7 @@ export function AdminHome({ profile }: { profile: Profile }) {
         <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Recent rides - {filter} • Live 🔊</h2>
         {filteredRides.map(r => (
           <div className="table-row" key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #333', fontSize: '12px' }}>
-            <span style={{ opacity: 0.6 }}>{r.id.slice(0,8)} • {new Date(r.created_at).toLocaleTimeString()}</span>
+            <span style={{ opacity: 0.6 }}>{r.id.slice(0,8)} • {r.created_at ? new Date(r.created_at).toLocaleTimeString() : ''}</span>
             <span style={{ 
               background: r.status==='searching'? '#ff7a00' : r.status==='completed'? '#00d181' : '#4285F4',
               color: 'white', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold'
