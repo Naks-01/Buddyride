@@ -6,49 +6,75 @@ export function assertMapboxConfigured() {
   }
 }
 
+async function fetchMapboxSearchBox(query: string): Promise<any> {
+  try {
+    const url = `https://api.mapbox.com/search/searchbox/v1/suggest?q=${encodeURIComponent(query)}&proximity=29.4589,-23.9045&bbox=28.8,-24.6,30.2,-22.9&country=ZA&language=en&limit=6&types=address,street,poi,place&access_token=${mapbox_access_token}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const features = [];
+    for (const s of (data.suggestions || []).slice(0, 3)) {
+      try {
+        const detUrl = `https://api.mapbox.com/search/searchbox/v1/retrieve/${s.mapbox_id}?session_token=${s.mapbox_id}&access_token=${mapbox_access_token}`;
+        const detRes = await fetch(detUrl);
+        const det = await detRes.json();
+        if (det.features?.[0]) {
+          const f = det.features[0];
+          features.push({
+            id: f.id,
+            text: f.properties?.name || s.name,
+            place_name: f.properties?.full_address || s.full_address || s.name,
+            center: f.geometry.coordinates,
+            geometry: f.geometry
+          });
+        }
+      } catch {}
+    }
+    return { features };
+  } catch { return null; }
+}
+
 async function fetchGeocodeRaw(query: string, extra: string = ""): Promise<any> {
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${extra}country=za&limit=10&types=address,poi,place,locality,neighborhood,street&fuzzyMatch=true&autocomplete=true&language=en&access_token=${mapbox_access_token}`;
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${extra}country=za&limit=8&types=address,poi,place,locality,neighborhood,street&fuzzyMatch=true&autocomplete=true&language=en&access_token=${mapbox_access_token}`;
   const res = await fetch(url);
   if (!res.ok) return null;
   return await res.json();
+}
+
+async function fetchOSM(query: string): Promise<any> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ' Polokwane')}&format=json&countrycodes=za&limit=4&viewbox=28.8,-24.6,30.2,-22.9&bounded=1`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const features = data.map((d: any) => ({
+      id: `osm_${d.place_id}`,
+      text: d.display_name.split(',')[0],
+      place_name: d.display_name,
+      center: [parseFloat(d.lon), parseFloat(d.lat)],
+      geometry: { coordinates: [parseFloat(d.lon), parseFloat(d.lat)] }
+    }));
+    return { features };
+  } catch { return null; }
 }
 
 export async function geocode(query: string): Promise<any> {
   assertMapboxConfigured();
   let cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
   if (cleanQuery.length < 2) return { features: [] };
-
-  // For streets, Mapbox needs "Polokwane" added if user just types street name
-  const isStreetSearch =!cleanQuery.toLowerCase().includes("mall") &&!cleanQuery.toLowerCase().includes("seshego") && cleanQuery.split(" ").length <= 3;
-
   let allFeatures: any[] = [];
-
-  // 1. Main search - Greater Polokwane
-  let data = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&bbox=28.8,-24.6,30.2,-22.9&");
-  if (data?.features) allFeatures = [...allFeatures,...data.features];
-
-  // 2. If it looks like a street name, search again with "Street" + Polokwane
-  if (isStreetSearch && allFeatures.length < 3) {
-    let data2 = await fetchGeocodeRaw(cleanQuery + " Street Polokwane", "proximity=29.4589,-23.9045&bbox=28.8,-24.6,30.2,-22.9&");
-    if (data2?.features) allFeatures = [...allFeatures,...data2.features];
+  const sb = await fetchMapboxSearchBox(cleanQuery);
+  if (sb?.features?.length) allFeatures = [...allFeatures,...sb.features];
+  if (allFeatures.length < 3) {
+    const data = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&bbox=28.8,-24.6,30.2,-22.9&");
+    if (data?.features) allFeatures = [...allFeatures,...data.features];
   }
-
-  // 3. Wide search no bbox
   if (allFeatures.length < 2) {
-    let data3 = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&");
-    if (data3?.features) allFeatures = [...allFeatures,...data3.features];
+    const osm = await fetchOSM(cleanQuery);
+    if (osm?.features) allFeatures = [...allFeatures,...osm.features];
   }
-
-  // 4. Add Polokwane word
-  if (allFeatures.length === 0 &&!cleanQuery.toLowerCase().includes("polokwane")) {
-    let data4 = await fetchGeocodeRaw(cleanQuery + " Polokwane", "proximity=29.4589,-23.9045&");
-    if (data4?.features) allFeatures = [...allFeatures,...data4.features];
-  }
-
-  // Remove duplicates
-  const unique = Array.from(new Map(allFeatures.map((f:any) => [f.id, f])).values());
-
-  return { features: unique.slice(0, 10) }
+  const unique = Array.from(new Map(allFeatures.map((f: any) => [f.place_name, f])).values());
+  return { features: unique.slice(0, 8) };
 }
 
 export async function geocodeCoords(query: string): Promise<[number, number] | null> {
@@ -67,13 +93,7 @@ export async function searchPlaces(query: string): Promise<any[]> {
 export async function reverseGeocode(lng: number | [number, number], lat?: number): Promise<string> {
   assertMapboxConfigured();
   let lngVal: number, latVal: number;
-  if (Array.isArray(lng)) {
-    lngVal = lng[0];
-    latVal = lng[1];
-  } else {
-    lngVal = lng;
-    latVal = lat!;
-  }
+  if (Array.isArray(lng)) { lngVal = lng[0]; latVal = lng[1]; } else { lngVal = lng; latVal = lat!; }
   const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lngVal},${latVal}.json?access_token=${mapbox_access_token}`;
   const res = await fetch(url);
   if (!res.ok) return `${latVal.toFixed(5)}, ${lngVal.toFixed(5)}`;
@@ -96,6 +116,7 @@ export async function getRoute(from: [number, number], to: [number, number]) {
     distanceKm: route.distance / 1000,
     durationMin: route.duration / 60,
     legs: route.legs,
+    steps: route.legs?.[0]?.steps || [],
     route: route
   };
 }

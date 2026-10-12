@@ -6,24 +6,16 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
-const SOUNDS = {
-  request: 'https://cdn.pixabay.com/audio/2022/03/10/audio_5a4fe0f4f1.mp3',
-}
+const SOUNDS = { request: 'https://cdn.pixabay.com/audio/2022/03/10/audio_5a4fe0f4f1.mp3' }
 function playSound() {
   try {
-    const audio = new Audio(SOUNDS.request)
-    audio.volume = 1.0
-    audio.play().catch(() => {
+    const audio = new Audio(SOUNDS.request); audio.volume = 1.0; audio.play().catch(() => {
       try {
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.connect(gain); gain.connect(ctx.destination)
-        osc.frequency.value = 900
-        gain.gain.setValueAtTime(0.8, ctx.currentTime)
-        osc.start()
-        setTimeout(() => { osc.frequency.value = 1200 }, 200)
-        osc.stop(ctx.currentTime + 1.2)
+        const osc = ctx.createOscillator(); const gain = ctx.createGain()
+        osc.connect(gain); gain.connect(ctx.destination); osc.frequency.value = 900
+        gain.gain.setValueAtTime(0.8, ctx.currentTime); osc.start()
+        setTimeout(() => { osc.frequency.value = 1200 }, 200); osc.stop(ctx.currentTime + 1.2)
       } catch {}
     })
     if (navigator.vibrate) navigator.vibrate([400, 100, 400, 100, 800])
@@ -35,6 +27,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [ride, setRide] = useState<Ride | null>(null)
   const [searchingRides, setSearchingRides] = useState<Ride[]>([])
   const [route, setRoute] = useState<any>()
+  const [routeData, setRouteData] = useState<any>(null)
   const [isNavigating, setIsNavigating] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
@@ -56,7 +49,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
-
   useEffect(() => {
     if (!localStorage.getItem('buddy_nav')) localStorage.setItem('buddy_nav', 'mapbox')
     if (!localStorage.getItem('buddy_nav_autostart')) localStorage.setItem('buddy_nav_autostart', 'true')
@@ -71,28 +63,23 @@ export function DriverHome({ profile }: { profile: Profile }) {
     loadStatus()
     navigator.geolocation.getCurrentPosition(p => {
       const pos: [number, number] = [p.coords.longitude, p.coords.latitude]
-      setLocation(pos)
-      lastLocation.current = pos
+      setLocation(pos); lastLocation.current = pos
     })
   }, [profile.id])
 
   useEffect(() => {
     async function loadRide() {
-      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id)
-.in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any)
-.order('created_at', { ascending: false }).limit(1).single()
+      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
       if (data) { setRide(data); setIsNavigating(true); setIsOnline(true); setZoom(17) }
     }
     loadRide()
   }, [profile.id])
 
   useEffect(() => {
-    const ch = supabase.channel(`driver-${profile.id}`)
-.on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
-        const newRide = p.new as Ride
-        setRide(newRide)
+    const ch = supabase.channel(`driver-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
+        const newRide = p.new as Ride; setRide(newRide)
         if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
-        if (['completed','cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined) }
+        if (['completed','cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null) }
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [profile.id])
@@ -101,8 +88,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!isOnline || ride) { setSearchingRides([]); return }
     async function loadSearching() {
       const { data } = await supabase.from('rides').select('*').eq('status','searching').eq('offered_driver_id', profile.id).gt('offer_expires_at', new Date().toISOString()).order('created_at',{ascending:false}).limit(1)
-      if (data) setSearchingRides(data as Ride[])
-      else setSearchingRides([])
+      if (data) setSearchingRides(data as Ride[]); else setSearchingRides([])
     }
     loadSearching()
     const ch2 = supabase.channel(`offers-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `offered_driver_id=eq.${profile.id}` }, () => loadSearching()).subscribe()
@@ -110,12 +96,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch2); clearInterval(interval) }
   }, [isOnline, ride, profile.id])
 
-  useEffect(() => {
-    if (searchingRides.length > 0 && prevSearchingCount.current === 0) {
-      playSound()
-    }
-    prevSearchingCount.current = searchingRides.length
-  }, [searchingRides])
+  useEffect(() => { if (searchingRides.length > 0 && prevSearchingCount.current === 0) playSound(); prevSearchingCount.current = searchingRides.length }, [searchingRides])
 
   useEffect(() => {
     if (!isNavigating &&!isOnline) return
@@ -123,29 +104,18 @@ export function DriverHome({ profile }: { profile: Profile }) {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
         const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
         if (dist > 0.00005) {
-          // Calculate bearing for driving mode rotation
-          const dLng = p[0] - lastLocation.current[0]
-          const dLat = p[1] - lastLocation.current[1]
-          if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) {
-            const b = Math.atan2(dLng, dLat) * 180 / Math.PI
-            setBearing(b)
-          }
-          setLocation(p)
-          lastLocation.current = p
+          const dLng = p[0] - lastLocation.current[0]; const dLat = p[1] - lastLocation.current[1]
+          if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) { const b = Math.atan2(dLng, dLat) * 180 / Math.PI; setBearing(b) }
+          setLocation(p); lastLocation.current = p
         }
         const now = Date.now()
         if (now - lastSupabaseUpdate.current > 3000) {
           lastSupabaseUpdate.current = now
-          if (ride) {
-            supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
-          }
-          if (isOnline) {
-            supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
-          }
+          if (ride) supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
+          if (isOnline) supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
           supabase.from('driver_locations').upsert({ driver_id: profile.id, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() } as any).then(()=>{})
         }
-      }, err => console.log(err),
-      { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+      }, err => console.log(err), { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
     ) as any
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isNavigating, isOnline, ride?.id, profile.id])
@@ -153,79 +123,48 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     async function buildRoute() {
       if (!ride ||!location) return
-      const target: [number, number] = (ride.status as any) === 'accepted' || (ride.status as any) === 'arrived'
-? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
-      try { const r = await getRoute(location, target); setRoute(r.geometry) } catch {}
+      const target: [number, number] = (ride.status as any) === 'accepted' || (ride.status as any) === 'arrived'? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
+      try { const r = await getRoute(location, target); setRoute(r.geometry); setRouteData(r) } catch {}
     }
     buildRoute()
-  }, [ride?.id, ride?.status])
+  }, [ride?.id, ride?.status, location])
 
   async function toggleOnline() {
     try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); ctx.resume() } catch {}
-    const next =!isOnline
-    setIsOnline(next)
+    const next =!isOnline; setIsOnline(next)
     await supabase.from('profiles').update({ is_online: next } as any).eq('id', profile.id)
   }
-
   async function acceptRide(rideId: string) {
     await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted', started_at: new Date().toISOString() } as any).eq('id', rideId)
-    setSearchingRides([])
-    prevSearchingCount.current = 0
-    setIsNavigating(true)
-    setZoom(17)
+    setSearchingRides([]); prevSearchingCount.current = 0; setIsNavigating(true); setZoom(17)
   }
   async function declineRide(rideId: string) {
     supabase.functions.invoke('dispatch', { body: { ride_id: rideId, declined_by: profile.id } })
-    setSearchingRides([])
-    prevSearchingCount.current = 0
+    setSearchingRides([]); prevSearchingCount.current = 0
   }
-
   async function completeRide() {
     if (!ride) return
     await supabase.from('rides').update({ status: 'completed' as any, ended_at: new Date().toISOString() }).eq('id', ride.id)
-    const fare = (ride as any).fare || 0
-    const commission = fare * 0.20
+    const fare = (ride as any).fare || 0; const commission = fare * 0.20
     const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
     const newBal = (prof?.wallet_balance || 0) - commission
     await supabase.from('profiles').update({ wallet_balance: newBal, trips_completed: (prof?.trips_completed || 0) + 1 } as any).eq('id', profile.id)
     if (newBal < -200) { alert('Wallet -R200 - Top-up required like Bolt'); setIsOnline(false); await supabase.from('profiles').update({ is_online: false } as any).eq('id', profile.id) }
-    setIsNavigating(false); setRide(null); setRoute(undefined)
+    setIsNavigating(false); setRide(null); setRoute(undefined); setRouteData(null)
   }
 
   function openExternalMap(lat: number, lng: number) {
     setNavTarget({ lat, lng })
     const pref = localStorage.getItem('buddy_nav') || localStorage.getItem('nav_pref') || 'mapbox'
-    if (pref === 'mapbox' || pref === 'buddy') {
-      setIsNavigating(true)
-      setZoom(17)
-      return
-    }
-    if (pref === 'waze') {
-      window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank')
-      return
-    }
-    if (pref === 'google') {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank')
-      return
-    }
+    if (pref === 'mapbox' || pref === 'buddy') { setIsNavigating(true); setZoom(17); return }
+    if (pref === 'waze') { window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank'); return }
+    if (pref === 'google') { window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank'); return }
     setShowNavChooser(true)
   }
-
-  function openGoogleDirect(lat: number, lng: number) {
-    localStorage.setItem('buddy_nav', 'google')
-    localStorage.setItem('nav_pref', 'google')
-    window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank')
-  }
-  function openWazeDirect(lat: number, lng: number) {
-    localStorage.setItem('buddy_nav', 'waze')
-    localStorage.setItem('nav_pref', 'waze')
-    window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank')
-  }
-
+  function openGoogleDirect(lat: number, lng: number) { localStorage.setItem('buddy_nav', 'google'); localStorage.setItem('nav_pref', 'google'); window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank') }
+  function openWazeDirect(lat: number, lng: number) { localStorage.setItem('buddy_nav', 'waze'); localStorage.setItem('nav_pref', 'waze'); window.open(`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`, '_blank') }
   function chooseNav(pref: 'mapbox' | 'google' | 'waze') {
-    localStorage.setItem('buddy_nav', pref)
-    localStorage.setItem('nav_pref', pref)
-    setShowNavChooser(false)
+    localStorage.setItem('buddy_nav', pref); localStorage.setItem('nav_pref', pref); setShowNavChooser(false)
     if (!navTarget) return
     if (pref === 'mapbox') { setIsNavigating(true); setZoom(17) }
     else if (pref === 'waze') window.open(`https://waze.com/ul?ll=${navTarget.lat},${navTarget.lng}&navigate=yes`, '_blank')
@@ -241,6 +180,18 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: isOnline? '#00d181' : '#666', color: 'white', fontSize: '12px' }}>{isOnline? '● ONLINE' : '○ OFFLINE'}</button>
       </div>
     </header>
+
+    {routeData?.steps?.length > 0 && isNavigating && ride && (
+      <div style={{ position: 'absolute', top: '68px', left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '14px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
+        <div style={{ background: '#00d181', color: 'white', minWidth: '44px', height: '44px', borderRadius: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', fontWeight: 'bold' }}>
+          {routeData.steps[0]?.maneuver?.modifier?.includes('left')? '↰' : routeData.steps[0]?.maneuver?.modifier?.includes('right')? '↱' : '↑'}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 'bold', color: 'black', fontSize: '14px' }}>{routeData.steps[0]?.maneuver?.instruction || 'Continue'}</div>
+          <div style={{ fontSize: '12px', color: '#666' }}>{routeData.distanceKm.toFixed(1)}km • {routeData.durationMin.toFixed(0)} min • {routeData.steps[0]?.name || ''}</div>
+        </div>
+      </div>
+    )}
 
     <div style={{ height: '100%', paddingBottom: '220px' }}>
       <MapView center={location} route={route} driverLocation={location} isNavigating={isNavigating} followDriver={isNavigating} bearing={bearing} />
@@ -268,14 +219,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
               </div>
             </div>
           )})}
-          <div style={{ fontSize: '14px', marginBottom: '12px', opacity: 0.8 }}>
-            {isOnline? (searchingRides.length? `✅ Offer expires in 12s 🔊` : '✅ You are online - Waiting for Buddy requests...') : 'You are offline'}
-          </div>
+          <div style={{ fontSize: '14px', marginBottom: '12px', opacity: 0.8 }}>{isOnline? (searchingRides.length? `✅ Offer expires in 12s 🔊` : '✅ You are online - Waiting for Buddy requests...') : 'You are offline'}</div>
           <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '12px', border: 'none', background: isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{isOnline? 'GO OFFLINE' : 'GO ONLINE 🔊'}</button>
           <p style={{ fontSize: '11px', opacity: 0.5, marginTop: '8px' }}>Wallet: R {profile.wallet_balance || 0} • Trips: {profile.trips_completed || 0} • Rating: {profile.rating || 5.0}★</p>
         </div>
       )}
-
       {ride && (ride.status as any) === 'accepted' && (
         <>
           <h3 style={{ margin: '0 0 6px', color: text }}>Go to Pickup • R {ride.fare}</h3>
@@ -285,13 +233,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
             <button onClick={async () => { await supabase.from('rides').update({ status: 'arrived' as any }).eq('id', ride.id) }} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>I Have Arrived</button>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-            <button onClick={() => openGoogleDirect(ride.pickup_lat, ride.pickup_lng)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#4285F4', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '12px' }}>🗺️ Google Maps</button>
+            <button onClick={() => openGoogleDirect(ride.pickup_lat, ride.pickup_lng)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#4285F4', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '12px' }}>🗺️ Google</button>
             <button onClick={() => openWazeDirect(ride.pickup_lat, ride.pickup_lng)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#33CCFF', color: 'black', border: 'none', fontWeight: 'bold', fontSize: '12px' }}>🚗 Waze</button>
             <button onClick={() => { setNavTarget({ lat: ride.pickup_lat, lng: ride.pickup_lng }); setShowNavChooser(true) }} style={{ padding: '10px 12px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}`, fontSize: '12px' }}>⚙️</button>
           </div>
         </>
       )}
-
       {ride && (ride.status as any) === 'arrived' && (
         <>
           <h3 style={{ margin: '0 0 6px' }}>Waiting for passenger - 5 min free</h3>
@@ -299,7 +246,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
           <button onClick={async () => { await supabase.from('rides').update({ status: 'picked_up' as any }).eq('id', ride.id) }} style={{ width: '100%', marginTop: '10px', padding: '14px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>Start Trip → {ride.dropoff_address}</button>
         </>
       )}
-
       {ride && ((ride.status as any) === 'picked_up' || (ride.status as any) === 'en_route' || (ride.status as any) === 'in_progress') && (
         <>
           <h3 style={{ margin: '0 0 6px', color: text }}>Drive to {ride.dropoff_address}</h3>
@@ -309,8 +255,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
             <button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00c853', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip</button>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-            <button onClick={() => openGoogleDirect(ride.dropoff_lat, ride.dropoff_lng)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '12px' }}>🧭 Google to Dropoff</button>
-            <button onClick={() => openWazeDirect(ride.dropoff_lat, ride.dropoff_lng)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#33CCFF', color: 'black', border: 'none', fontWeight: 'bold', fontSize: '12px' }}>Waze to Dropoff</button>
+            <button onClick={() => openGoogleDirect(ride.dropoff_lat, ride.dropoff_lng)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '12px' }}>🧭 Google</button>
+            <button onClick={() => openWazeDirect(ride.dropoff_lat, ride.dropoff_lng)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#33CCFF', color: 'black', border: 'none', fontWeight: 'bold', fontSize: '12px' }}>Waze</button>
             <button onClick={() => { setNavTarget({ lat: ride.dropoff_lat, lng: ride.dropoff_lng }); setShowNavChooser(true) }} style={{ padding: '10px 12px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}`, fontSize: '12px' }}>⚙️</button>
           </div>
         </>
@@ -322,16 +268,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <div style={{ width: '100%', background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '20px' }}>
           <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 16px' }} />
           <h3 style={{ margin: '0 0 4px', color: text }}>Choose Navigation</h3>
-          <p style={{ fontSize: '13px', opacity: 0.6, margin: '0 0 16px' }}>Buddy navigation is recommended - now with Google & Waze</p>
+          <p style={{ fontSize: '13px', opacity: 0.6, margin: '0 0 16px' }}>Buddy navigation is recommended - now with arrows</p>
           <button onClick={() => chooseNav('mapbox')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
-            <span style={{ fontSize: '22px' }}>🗺️</span> <div><div>Buddy navigation</div><div style={{ fontSize: '11px', opacity: 0.9 }}>Recommended • In App</div></div> <span style={{ marginLeft: 'auto', background: 'white', color: '#00d181', padding: '2px 8px', borderRadius: '8px', fontSize: '11px' }}>DEFAULT</span>
+            <span style={{ fontSize: '22px' }}>🗺️</span> <div><div>Buddy navigation</div><div style={{ fontSize: '11px', opacity: 0.9 }}>With Arrows • In App</div></div> <span style={{ marginLeft: 'auto', background: 'white', color: '#00d181', padding: '2px 8px', borderRadius: '8px', fontSize: '11px' }}>DEFAULT</span>
           </button>
-          <button onClick={() => chooseNav('google')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '20px' }}>📍</span> Google Maps • Voice + Traffic
-          </button>
-          <button onClick={() => chooseNav('waze')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '20px' }}>🚗</span> Waze • Police + Hazards
-          </button>
+          <button onClick={() => chooseNav('google')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}><span style={{ fontSize: '20px' }}>📍</span> Google Maps • Voice + Traffic</button>
+          <button onClick={() => chooseNav('waze')} style={{ width: '100%', padding: '16px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}><span style={{ fontSize: '20px' }}>🚗</span> Waze • Police + Hazards</button>
           <button onClick={() => setShowNavChooser(false)} style={{ width: '100%', padding: '14px', borderRadius: '12px', background: 'transparent', color: text, border: `1px solid ${border}` }}>Cancel</button>
         </div>
       </div>

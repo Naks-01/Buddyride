@@ -1,163 +1,102 @@
 import { useEffect, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { assertMapboxConfigured } from './lib/mapbox'
 
-export function MapView({ center, route, markers = [], driverLocation, isNavigating, bearing, followDriver }: {
-  center: [number, number]
-  route?: GeoJSON.LineString | any
-  markers?: Array<{ id: string; lng: number; lat: number; label?: string }>
-  driverLocation?: [number, number]
-  isNavigating?: boolean
-  bearing?: number
-  followDriver?: boolean
-}) {
-  const el = useRef<HTMLDivElement>(null)
-  const map = useRef<mapboxgl.Map | null>(null)
-  const markersRef = useRef<mapboxgl.Marker[]>([])
+const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
+if (TOKEN) mapboxgl.accessToken = TOKEN
+
+export function MapView({ center, route, driverLocation, isNavigating, followDriver, bearing = 0 }: any) {
+  const mapRef = useRef<mapboxgl.Map | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null)
-  const lastCenterRef = useRef<[number, number]>(center)
-  const hasFitRoute = useRef(false)
 
   useEffect(() => {
-    if (!el.current) return
-    try { assertMapboxConfigured() } catch { return }
-    mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string
-
-    const style = isNavigating || driverLocation
-   ? 'mapbox://styles/mapbox/navigation-day-v1'
-      : 'mapbox://styles/mapbox/streets-v12'
-
-    map.current = new mapboxgl.Map({
-      container: el.current,
-      style,
-      center: driverLocation || center,
-      zoom: isNavigating? 17 : 13,
-      pitch: isNavigating? 60 : 0,
-      bearing: bearing || 0,
-      antialias: true
+    if (!containerRef.current || mapRef.current) return
+    const map = new mapboxgl.Map({
+      container: containerRef.current,
+      style: 'mapbox://styles/mapbox/dark-v11',
+      center: center || [29.4589, -23.9045],
+      zoom: 13
     })
-    map.current.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right')
-    lastCenterRef.current = center
-    return () => map.current?.remove()
-  }, []) // create once
+    mapRef.current = map
+    return () => { map.remove(); mapRef.current = null }
+  }, [])
 
-  // FIXED: Only change zoom/pitch when isNavigating toggles
   useEffect(() => {
-    const m = map.current
-    if (!m) return
-    if (isNavigating) {
-      m.easeTo({ zoom: 17, pitch: 60, duration: 800 })
-    } else {
-      m.easeTo({ zoom: 13, pitch: 0, duration: 800 })
-      hasFitRoute.current = false
+    if (!mapRef.current ||!followDriver ||!driverLocation) return
+    mapRef.current.easeTo({
+      center: driverLocation,
+      bearing: isNavigating? bearing : 0,
+      pitch: isNavigating? 55 : 0,
+      zoom: isNavigating? 17 : 13,
+      duration: 1000
+    })
+  }, [driverLocation, followDriver, bearing, isNavigating])
+
+  useEffect(() => {
+    if (!mapRef.current ||!route) return
+    const map = mapRef.current
+    const doAdd = () => {
+      const geo = route.type === 'Feature'? route : { type: 'Feature', geometry: route, properties: {} }
+      if (map.getSource('route')) {
+        (map.getSource('route') as mapboxgl.GeoJSONSource).setData(geo as any)
+      } else {
+        map.addSource('route', { type: 'geojson', data: geo as any })
+        map.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route',
+          paint: { 'line-color': '#00d181', 'line-width': 7, 'line-opacity': 0.95 }
+        })
+        map.addLayer({
+          id: 'route-arrows',
+          type: 'symbol',
+          source: 'route',
+          layout: {
+            'symbol-placement': 'line',
+            'text-field': '▲',
+            'text-size': 18,
+            'symbol-spacing': 75,
+            'text-keep-upright': false,
+            'text-rotation-alignment': 'map',
+            'text-allow-overlap': true
+          },
+          paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': '#00d181',
+            'text-halo-width': 2
+          }
+        })
+      }
     }
-  }, [isNavigating])
+    if (!map.isStyleLoaded()) map.once('load', doAdd)
+    else doAdd()
+  }, [route])
 
-  // Driver marker moves, map ONLY follows if >30m away and followDriver=true
   useEffect(() => {
-    const m = map.current
-    if (!m ||!driverLocation) return
-
-    const pos = driverLocation
+    if (!mapRef.current ||!driverLocation) return
+    const map = mapRef.current
     if (!driverMarkerRef.current) {
-      const div = document.createElement('div')
-      div.style.width = '44px'
-      div.style.height = '44px'
-      div.style.background = '#00d181'
-      div.style.border = '3px solid white'
-      div.style.borderRadius = '50%'
-      div.style.boxShadow = '0 3px 10px rgba(0,0,0,0.4)'
-      div.style.display = 'flex'
-      div.style.alignItems = 'center'
-      div.style.justifyContent = 'center'
-      div.style.fontSize = '22px'
-      div.innerHTML = '🚗'
-      driverMarkerRef.current = new mapboxgl.Marker({ element: div, rotationAlignment: 'map' })
-     .setLngLat(pos)
-     .addTo(m)
+      const el = document.createElement('div')
+      el.style.width = '36px'
+      el.style.height = '36px'
+      el.style.background = '#00d181'
+      el.style.borderRadius = '18px'
+      el.style.border = '3px solid white'
+      el.style.boxShadow = '0 2px 10px rgba(0,0,0,0.5)'
+      el.style.display = 'flex'
+      el.style.alignItems = 'center'
+      el.style.justifyContent = 'center'
+      el.style.fontSize = '18px'
+      el.innerText = '▲'
+      el.style.color = 'white'
+      driverMarkerRef.current = new mapboxgl.Marker({ element: el, rotationAlignment: 'map' }).setLngLat(driverLocation).addTo(map)
     } else {
-      driverMarkerRef.current.setLngLat(pos)
+      driverMarkerRef.current.setLngLat(driverLocation)
+      const el = driverMarkerRef.current.getElement()
+      el.style.transform = `rotate(${bearing}deg)`
     }
+  }, [driverLocation, bearing])
 
-    if (followDriver && isNavigating) {
-      const currentCenter = m.getCenter()
-      const dist = Math.hypot(currentCenter.lng - pos[0], currentCenter.lat - pos[1])
-      if (dist > 0.0003) {
-        m.easeTo({ center: pos, duration: 1000 })
-      }
-    }
-  }, [driverLocation, isNavigating, followDriver])
-
-  // center updates only when NOT navigating
-  useEffect(() => {
-    const m = map.current
-    if (!m || isNavigating) return
-    const dist = Math.hypot(center[0] - lastCenterRef.current[0], center[1] - lastCenterRef.current[1])
-    if (dist > 0.0001) {
-      m.easeTo({ center, duration: 800 })
-      lastCenterRef.current = center
-    }
-  }, [center, isNavigating])
-
-  // markers and route
-  useEffect(() => {
-    const m = map.current
-    if (!m) return
-
-    markersRef.current.forEach(x => x.remove())
-    markersRef.current = []
-    for (const marker of markers) {
-      const mk = new mapboxgl.Marker().setLngLat([marker.lng, marker.lat])
-      if (marker.label) mk.setPopup(new mapboxgl.Popup().setText(marker.label))
-      mk.addTo(m)
-      markersRef.current.push(mk)
-    }
-
-    if (route && route.coordinates?.length) {
-      const geo = route.type === 'Feature'? route.geometry : route
-      const apply = () => {
-        const data = { type: 'Feature' as const, geometry: geo, properties: {} }
-        if (m.getSource('ride-route')) {
-          (m.getSource('ride-route') as mapboxgl.GeoJSONSource).setData(data)
-        } else {
-          m.addSource('ride-route', { type: 'geojson', data })
-          m.addLayer({
-            id: 'ride-route-glow',
-            type: 'line',
-            source: 'ride-route',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#1E90FF', 'line-width': 14, 'line-opacity': 0.25, 'line-blur': 4 }
-          })
-          m.addLayer({
-            id: 'ride-route-line',
-            type: 'line',
-            source: 'ride-route',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: {
-              'line-color': '#1E90FF',
-              'line-width': 7,
-              'line-opacity': 1
-            }
-          })
-        }
-        if (!isNavigating &&!hasFitRoute.current) {
-          const bounds = new mapboxgl.LngLatBounds()
-          geo.coordinates.forEach((c: any) => bounds.extend(c as any))
-          m.fitBounds(bounds, { padding: 100, duration: 800 })
-          hasFitRoute.current = true
-        }
-      }
-      m.isStyleLoaded()? apply() : m.once('load', apply)
-    } else {
-      if (m.getLayer('ride-route-line')) m.removeLayer('ride-route-line')
-      if (m.getLayer('ride-route-glow')) m.removeLayer('ride-route-glow')
-      if (m.getSource('ride-route')) m.removeSource('ride-route')
-      hasFitRoute.current = false
-    }
-  }, [route, markers, isNavigating])
-
-  return <div ref={el} className="map" style={{ width:'100%', height:'100%' }} />
+  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 }
-
-export const MapViewComponent = MapView
