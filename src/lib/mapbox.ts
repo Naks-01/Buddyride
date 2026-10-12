@@ -7,38 +7,50 @@ export function assertMapboxConfigured() {
 }
 
 async function fetchGeocodeRaw(query: string, extra: string = ""): Promise<any> {
-  // Added: types=poi first, fuzzyMatch, autocomplete
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${extra}country=za&limit=6&types=poi,address,place,locality&fuzzyMatch=true&autocomplete=true&access_token=${mapbox_access_token}`;
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${extra}country=za&limit=10&types=address,poi,place,locality,neighborhood,street&fuzzyMatch=true&autocomplete=true&language=en&access_token=${mapbox_access_token}`;
   const res = await fetch(url);
   if (!res.ok) return null;
   return await res.json();
 }
 
-// For suggestions - returns features array (what PassengerHome needs)
 export async function geocode(query: string): Promise<any> {
   assertMapboxConfigured();
-  const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
+  let cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
+  if (cleanQuery.length < 2) return { features: [] };
 
-  // 1. Try exact + Polokwane bias + bbox (most accurate for Polokwane)
-  let data = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&bbox=29.1,-24.15,29.85,-23.65&");
+  // For streets, Mapbox needs "Polokwane" added if user just types street name
+  const isStreetSearch =!cleanQuery.toLowerCase().includes("mall") &&!cleanQuery.toLowerCase().includes("seshego") && cleanQuery.split(" ").length <= 3;
 
-  // 2. If no result, try with just proximity
-  if (!data?.features?.length) {
-    data = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&");
-  }
-  // 3. If still no result, try WITHOUT adding Polokwane - this fixes Puma makgofe
-  if (!data?.features?.length) {
-    data = await fetchGeocodeRaw(cleanQuery, "");
-  }
-  // 4. LAST resort only - add Polokwane
-  if (!data?.features?.length &&!cleanQuery.toLowerCase().includes("polokwane")) {
-    data = await fetchGeocodeRaw(cleanQuery + " Polokwane", "proximity=29.4589,-23.9045&");
+  let allFeatures: any[] = [];
+
+  // 1. Main search - Greater Polokwane
+  let data = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&bbox=28.8,-24.6,30.2,-22.9&");
+  if (data?.features) allFeatures = [...allFeatures,...data.features];
+
+  // 2. If it looks like a street name, search again with "Street" + Polokwane
+  if (isStreetSearch && allFeatures.length < 3) {
+    let data2 = await fetchGeocodeRaw(cleanQuery + " Street Polokwane", "proximity=29.4589,-23.9045&bbox=28.8,-24.6,30.2,-22.9&");
+    if (data2?.features) allFeatures = [...allFeatures,...data2.features];
   }
 
-  return data
+  // 3. Wide search no bbox
+  if (allFeatures.length < 2) {
+    let data3 = await fetchGeocodeRaw(cleanQuery, "proximity=29.4589,-23.9045&");
+    if (data3?.features) allFeatures = [...allFeatures,...data3.features];
+  }
+
+  // 4. Add Polokwane word
+  if (allFeatures.length === 0 &&!cleanQuery.toLowerCase().includes("polokwane")) {
+    let data4 = await fetchGeocodeRaw(cleanQuery + " Polokwane", "proximity=29.4589,-23.9045&");
+    if (data4?.features) allFeatures = [...allFeatures,...data4.features];
+  }
+
+  // Remove duplicates
+  const unique = Array.from(new Map(allFeatures.map((f:any) => [f.id, f])).values());
+
+  return { features: unique.slice(0, 10) }
 }
 
-// For getting coords quickly
 export async function geocodeCoords(query: string): Promise<[number, number] | null> {
   const data = await geocode(query)
   if (!data?.features?.length) return null
@@ -48,7 +60,6 @@ export async function geocodeCoords(query: string): Promise<[number, number] | n
 export async function searchPlaces(query: string): Promise<any[]> {
   assertMapboxConfigured();
   const cleanQuery = query.replace(/, Limpopo.*/i, "").replace(/, South Africa/i, "").trim();
-  // DON'T force + Polokwane here, let geocode() handle it
   const data = await geocode(cleanQuery);
   return data?.features || [];
 }

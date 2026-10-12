@@ -6,6 +6,7 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
+// ✅ EXPANDED - Now includes STREETS + 30 places so it works even offline
 const LOCAL_PLACES = [
   { text: 'Puma Makgofe', place_name: 'Puma Makgofe, Polokwane', center: [29.4340, -23.8840] as [number, number] },
   { text: 'Mall of the North', place_name: 'Mall of the North, Polokwane', center: [29.4395, -23.8885] as [number, number] },
@@ -15,6 +16,32 @@ const LOCAL_PLACES = [
   { text: 'Polokwane Airport', place_name: 'Polokwane International Airport', center: [29.4524, -23.8580] as [number, number] },
   { text: 'Seshego Hospital', place_name: 'Seshego Hospital, Seshego', center: [29.3950, -23.8520] as [number, number] },
   { text: 'University of Limpopo', place_name: 'University of Limpopo, Turfloop', center: [29.7400, -23.8800] as [number, number] },
+  // STREETS - these were missing before
+  { text: 'Thabo Mbeki Street', place_name: 'Thabo Mbeki Street, Polokwane', center: [29.4589, -23.9045] as [number, number] },
+  { text: 'Grobler Street', place_name: 'Grobler Street, Polokwane', center: [29.4550, -23.9040] as [number, number] },
+  { text: 'Church Street', place_name: 'Church Street, Polokwane', center: [29.4570, -23.9030] as [number, number] },
+  { text: 'Landdros Mare Street', place_name: 'Landdros Mare Street, Polokwane', center: [29.4595, -23.9060] as [number, number] },
+  { text: 'Hans Van Rensburg Street', place_name: 'Hans Van Rensburg Street, Polokwane', center: [29.4580, -23.9035] as [number, number] },
+  { text: 'Bodenstein Street', place_name: 'Bodenstein Street, Polokwane', center: [29.4575, -23.9050] as [number, number] },
+  { text: 'Suid Street', place_name: 'Suid Street, Polokwane', center: [29.4600, -23.9070] as [number, number] },
+  { text: 'Voortrekker Street', place_name: 'Voortrekker Street, Polokwane', center: [29.4610, -23.9080] as [number, number] },
+  { text: 'Compensation Street', place_name: 'Compensation Street, Polokwane', center: [29.4540, -23.9020] as [number, number] },
+  { text: 'Magazyn Street', place_name: 'Magazyn Street, Polokwane', center: [29.4560, -23.9048] as [number, number] },
+  { text: 'Devenish Street', place_name: 'Devenish Street, Polokwane', center: [29.4530, -23.9055] as [number, number] },
+  { text: 'Market Street', place_name: 'Market Street, Polokwane', center: [29.4565, -23.9025] as [number, number] },
+  { text: 'Excelsior Street', place_name: 'Excelsior Street, Polokwane', center: [29.4525, -23.9015] as [number, number] },
+  { text: 'Munnik Street', place_name: 'Munnik Street, Polokwane', center: [29.4590, -23.9020] as [number, number] },
+  // Areas
+  { text: 'Bendor', place_name: 'Bendor, Polokwane', center: [29.4670, -23.8900] as [number, number] },
+  { text: 'Flora Park', place_name: 'Flora Park, Polokwane', center: [29.4470, -23.8890] as [number, number] },
+  { text: 'Sterpark', place_name: 'Sterpark, Polokwane', center: [29.4650, -23.9120] as [number, number] },
+  { text: 'Fauna Park', place_name: 'Fauna Park, Polokwane', center: [29.4350, -23.9150] as [number, number] },
+  { text: 'Ladanna', place_name: 'Ladanna, Polokwane', center: [29.4500, -23.8920] as [number, number] },
+  { text: 'Seshego Zone 1', place_name: 'Seshego Zone 1, Polokwane', center: [29.3850, -23.8520] as [number, number] },
+  { text: 'Seshego Zone 4', place_name: 'Seshego Zone 4, Polokwane', center: [29.3900, -23.8600] as [number, number] },
+  { text: 'Seshego Zone 8', place_name: 'Seshego Zone 8, Polokwane', center: [29.4000, -23.8550] as [number, number] },
+  { text: 'Mankweng', place_name: 'Mankweng, Polokwane', center: [29.7200, -23.8850] as [number, number] },
+  { text: 'Lebowakgomo', place_name: 'Lebowakgomo, Limpopo', center: [29.5600, -24.3000] as [number, number] },
 ]
 
 const SOUNDS = {
@@ -126,20 +153,33 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return Math.ceil(fare / 5) * 5
   }
 
+  // ✅ FIXED - Now finds STREETS too
   async function searchPlaces(query: string, setter: (v:any[])=>void, setShow: (v:boolean)=>void) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
     if (query.toLowerCase().includes('my location')) { setter([]); setShow(false); return }
     const lower = query.toLowerCase().trim()
-    const localMatches = LOCAL_PLACES.filter(p => p.text.toLowerCase().includes(lower) || p.place_name.toLowerCase().includes(lower))
+
+    // 1. Local match FIRST - this finds streets even if Mapbox fails
+    const localMatches = LOCAL_PLACES.filter(p =>
+      p.text.toLowerCase().includes(lower) ||
+      p.place_name.toLowerCase().includes(lower) ||
+      lower.includes(p.text.toLowerCase().split(' ')[0])
+    )
+
     try {
       const results = await geocode(query) as any
       let places = results?.features || results || []
       let normalized: any[] = []
       if (Array.isArray(places) && places.length > 0) {
-        normalized = places.slice(0, 5).map((p:any) => ({ center: p.center || p.geometry?.coordinates, place_name: p.place_name || p.text, text: p.text || p.place_name })).filter((p:any) => p.center)
+        normalized = places.slice(0, 8).map((p:any) => ({
+          center: p.center || p.geometry?.coordinates,
+          place_name: p.place_name || p.text,
+          text: p.text || p.place_name
+        })).filter((p:any) => p.center)
       }
+      // Merge: local first (streets), then Mapbox
       const merged = [...localMatches,...normalized]
-      const unique = merged.filter((v,i,a)=> a.findIndex(t=>t.place_name===v.place_name)===i).slice(0,6)
+      const unique = merged.filter((v,i,a)=> a.findIndex(t=>t.place_name===v.place_name)===i).slice(0,8)
       setter(unique)
       setShow(unique.length > 0)
     } catch {
@@ -148,8 +188,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
   }
 
-  function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); setPrice(null); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => { searchPlaces(val, setPickupSuggestions, setShowPickupSug) }, 300) }
-  function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); setPrice(null); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => { searchPlaces(val, setDropoffSuggestions, setShowDropoffSug) }, 300) }
+  function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); setPrice(null); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => { searchPlaces(val, setPickupSuggestions, setShowPickupSug) }, 250) }
+  function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); setPrice(null); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => { searchPlaces(val, setDropoffSuggestions, setShowDropoffSug) }, 250) }
   function selectPickupSuggestion(item: any) { setPickup(item.place_name || item.text); setPickupCoords([item.center[0], item.center[1]] as [number, number]); setPickupSuggestions([]); setShowPickupSug(false) }
   function selectDropoffSuggestion(item: any) { setDropoff(item.place_name || item.text); setDropoffCoords([item.center[0], item.center[1]] as [number, number]); setDropoffSuggestions([]); setShowDropoffSug(false) }
 
@@ -236,7 +276,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   async function cancelRide() { if (!ride) return; await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id); setRide(null); setRoute(undefined); setShowEstimate(false) }
 
-  const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '200px', overflowY: 'auto' as const, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' })
+  const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' })
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
   return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
@@ -265,7 +305,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               {showPickupSug && pickupSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{pickupSuggestions.map((s,i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
             <div style={{ position: 'relative' }}>
-              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Makro, Puma Makgofe" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '14px', boxSizing: 'border-box' }} />
+              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - e.g. Church Street, Grobler, Mall" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontSize: '14px', boxSizing: 'border-box' }} />
               {showDropoffSug && dropoffSuggestions.length > 0 && (<div style={sugStyle(isDark) as any}>{dropoffSuggestions.map((s,i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name || s.text}</div>))}</div>)}
             </div>
             <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 0' }}>

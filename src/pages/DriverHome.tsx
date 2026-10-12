@@ -6,17 +6,14 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
-// 🔊 SOUNDS - no files needed, works offline too
 const SOUNDS = {
   request: 'https://cdn.pixabay.com/audio/2022/03/10/audio_5a4fe0f4f1.mp3',
 }
 function playSound() {
   try {
-    // Try loud beep
     const audio = new Audio(SOUNDS.request)
     audio.volume = 1.0
     audio.play().catch(() => {
-      // Fallback beep if browser blocks
       try {
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
         const osc = ctx.createOscillator()
@@ -45,6 +42,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [now, setNow] = useState(Date.now())
   const [showNavChooser, setShowNavChooser] = useState(false)
   const [navTarget, setNavTarget] = useState<{lat:number,lng:number} | null>(null)
+  const [bearing, setBearing] = useState(0)
   const watchId = useRef<number | null>(null)
   const lastSupabaseUpdate = useRef<number>(0)
   const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
@@ -94,7 +92,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
         const newRide = p.new as Ride
         setRide(newRide)
         if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
-        if (['completed','cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null) }
+        if (['completed','cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined) }
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [profile.id])
@@ -112,7 +110,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch2); clearInterval(interval) }
   }, [isOnline, ride, profile.id])
 
-  // 🔊 PLAY SOUND WHEN NEW REQUEST COMES - like Bolt
   useEffect(() => {
     if (searchingRides.length > 0 && prevSearchingCount.current === 0) {
       playSound()
@@ -126,6 +123,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
         const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
         if (dist > 0.00005) {
+          // Calculate bearing for driving mode rotation
+          const dLng = p[0] - lastLocation.current[0]
+          const dLat = p[1] - lastLocation.current[1]
+          if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) {
+            const b = Math.atan2(dLng, dLat) * 180 / Math.PI
+            setBearing(b)
+          }
           setLocation(p)
           lastLocation.current = p
         }
@@ -157,7 +161,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [ride?.id, ride?.status])
 
   async function toggleOnline() {
-    // 🔊 Unlock audio on user tap (required by browser)
     try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); ctx.resume() } catch {}
     const next =!isOnline
     setIsOnline(next)
@@ -186,7 +189,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const newBal = (prof?.wallet_balance || 0) - commission
     await supabase.from('profiles').update({ wallet_balance: newBal, trips_completed: (prof?.trips_completed || 0) + 1 } as any).eq('id', profile.id)
     if (newBal < -200) { alert('Wallet -R200 - Top-up required like Bolt'); setIsOnline(false); await supabase.from('profiles').update({ is_online: false } as any).eq('id', profile.id) }
-    setIsNavigating(false); setRide(null)
+    setIsNavigating(false); setRide(null); setRoute(undefined)
   }
 
   function openExternalMap(lat: number, lng: number) {
@@ -240,7 +243,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     </header>
 
     <div style={{ height: '100%', paddingBottom: '220px' }}>
-      <MapView center={location} route={route} driverLocation={location} isNavigating={isNavigating} followDriver={isNavigating} />
+      <MapView center={location} route={route} driverLocation={location} isNavigating={isNavigating} followDriver={isNavigating} bearing={bearing} />
       <button onClick={() => { setZoom(17); setIsNavigating(true) }} style={{ position: 'absolute', right: '16px', bottom: '240px', zIndex: 50, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', fontSize: '22px' }}>🎯</button>
     </div>
 
