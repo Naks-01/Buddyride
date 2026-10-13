@@ -4,7 +4,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
 
-export function MapboxMapView({ center, route, passengerLocation, driverLocation }: any) {
+export function MapboxMapView({ center, route, passengerLocation, driverLocation, mapStyle, theme }: any) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -12,7 +12,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     if (!containerRef.current || mapRef.current) return
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
+      style: mapStyle || 'mapbox://styles/mapbox/streets-v12',
       center: center || [29.4589, -23.9045],
       zoom: 15,
       pitch: 55,
@@ -22,35 +22,56 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     map.addControl(new mapboxgl.NavigationControl(), 'bottom-right')
     mapRef.current = map
     map.on('load', () => {
-      map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} } })
-      map.addLayer({ id: 'route-line', type: 'line', source: 'route', paint: { 'line-color': '#ff7a00', 'line-width': 6, 'line-opacity': 0.9 } })
-      // 3D buildings
-      const layers = map.getStyle().layers
-      const labelLayerId = layers?.find(l => l.type === 'symbol' && (l.layout as any)?.['text-field'])?.id
-      map.addLayer({
-        id: '3d-buildings',
-        source: 'composite',
-        'source-layer': 'building',
-        filter: ['==', 'extrude', 'true'],
-        type: 'fill-extrusion',
-        minzoom: 15,
-        paint: { 'fill-extrusion-color': '#aaa', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'min_height'], 'fill-extrusion-opacity': 0.6 }
-      }, labelLayerId)
+      try {
+        map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} } })
+        map.addLayer({ id: 'route-line', type: 'line', source: 'route', paint: { 'line-color': '#ff7a00', 'line-width': 6, 'line-opacity': 0.9 } })
+        // 3D buildings
+        const layers = map.getStyle().layers
+        const labelLayerId = layers?.find(l => l.type === 'symbol' && (l.layout as any)?.['text-field'])?.id
+        map.addLayer({
+          id: '3d-buildings',
+          source: 'composite',
+          'source-layer': 'building',
+          filter: ['==', 'extrude', 'true'],
+          type: 'fill-extrusion',
+          minzoom: 15,
+          paint: { 'fill-extrusion-color': '#aaa', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'min_height'], 'fill-extrusion-opacity': 0.6 }
+        }, labelLayerId)
+      } catch {}
     })
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
+  // FIX: clear route when undefined
   useEffect(() => {
-    if (!mapRef.current ||!route) return
-    const coords = route.type === 'Feature'? route.geometry.coordinates : route.coordinates
+    if (!mapRef.current) return
     const source: any = mapRef.current.getSource('route')
-    if (source) source.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} })
+    if (!source) return
+
+    if (!route) {
+      // Clear to empty line
+      source.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} })
+      return
+    }
+
+    const coords = route.type === 'Feature'? route.geometry.coordinates : route.coordinates
+    source.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} })
   }, [route])
 
   useEffect(() => {
     if (!mapRef.current ||!center) return
     mapRef.current.flyTo({ center, duration: 1000 })
   }, [center])
+
+  // Optional: change style when theme changes
+  useEffect(() => {
+    if (!mapRef.current ||!mapStyle) return
+    try {
+      if ((mapRef.current as any).isStyleLoaded()) {
+        mapRef.current.setStyle(mapStyle)
+      }
+    } catch {}
+  }, [mapStyle])
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 }

@@ -160,10 +160,24 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
     loadActiveRide()
   }, [profile.id])
+
   useEffect(() => {
     if (ride?.driver_id) { supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) }) }
     else setDriverProfile(null)
   }, [ride?.driver_id])
+
+  // FIX: clear route instantly when ride completes/cancelled
+  useEffect(() => {
+    if (!ride) {
+      setRoute(undefined)
+      setDriverProfile(null)
+      return
+    }
+    if (['completed','cancelled','rated'].includes(ride.status as any)) {
+      setRoute(undefined)
+    }
+  }, [ride?.status])
+
   useEffect(() => {
     if (!ride) return
     const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
@@ -171,11 +185,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       if (prevStatus.current!== newRide.status) {
         if (newRide.status === 'accepted') playTone(600, 900, 1.0)
         if (newRide.status === 'arrived') playTone(900, 1200, 1.2)
+        if (['completed','cancelled'].includes(newRide.status as any)) {
+          setRoute(undefined)
+          setDriverProfile(null)
+        }
       }
       prevStatus.current = newRide.status; setRide(newRide)
     }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
+
   function calcFareForCategory(catId: string, km: number) {
     const cat = CATEGORIES.find(c => c.id === catId) || CATEGORIES[0]
     let fare = cat.base + (km * cat.perKm)
@@ -251,7 +270,28 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
     setLoading(false)
   }
-  async function cancelRide() { if (!ride) return; await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id); setRide(null); setRoute(undefined); setShowEstimate(false) }
+  async function cancelRide() {
+    if (!ride) return
+    setRoute(undefined)
+    setDriverProfile(null)
+    setShowEstimate(false)
+    await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id)
+    setRide(null)
+  }
+
+  async function finishTrip() {
+    if (!ride) return
+    setRoute(undefined)
+    setDriverProfile(null)
+    setShowEstimate(false)
+    setDropoff('')
+    setDropoffCoords(null)
+    setDistance(null)
+    setPrice(null)
+    await supabase.from('rides').update({ status: 'rated' as any }).eq('id', ride.id)
+    setRide(null)
+  }
+
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' })
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
   return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
@@ -299,7 +339,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         </>)}
       {ride && ride.status === 'searching' && (<><h3>Searching Buddy driver... ●</h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button></>)}
       {ride && (ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👨</div><div><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div><div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div><div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? 'Buddy arrived' : 'Buddy coming'}</div></div></div><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, fontWeight: 'bold' }}>Cancel</button></>)}
-      {ride && ride.status === 'completed' && (<><div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2>Trip Completed! R {ride.fare}</h2><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '12px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '40px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}</div></div><button onClick={async () => { await supabase.from('rides').update({ status: 'rated' as any }).eq('id', ride.id); setRide(null); setRoute(undefined); setShowEstimate(false) }} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{rating? `Rate ${rating}★` : 'Finish'}</button></>)}
+      {ride && ride.status === 'completed' && (<><div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2>Trip Completed! R {ride.fare}</h2><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '12px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '40px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}</div></div><button onClick={finishTrip} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{rating? `Rate ${rating}★` : 'Finish'}</button></>)}
     </section>
   </div>
 }

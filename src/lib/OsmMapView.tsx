@@ -35,12 +35,22 @@ export function OsmMapView({ center, route, driverLocation }: any) {
     }
   }, [center])
 
-  // route
+  // route - FIXED: now clears when route is undefined
   useEffect(() => {
-    if (!mapRef.current ||!route) return
+    if (!mapRef.current) return
+
+    if (!route) {
+      if (routeLineRef.current) {
+        mapRef.current.removeLayer(routeLineRef.current)
+        routeLineRef.current = null
+      }
+      return
+    }
+
     const coords = route.type === 'Feature'? route.geometry.coordinates : route.coordinates
     // GeoJSON is [lng, lat] -> Leaflet needs [lat, lng]
     const latLngs = coords.map((c: any) => [c[1], c[0]])
+
     if (routeLineRef.current) {
       routeLineRef.current.setLatLngs(latLngs)
     } else {
@@ -49,9 +59,18 @@ export function OsmMapView({ center, route, driverLocation }: any) {
     }
   }, [route])
 
-  // driver marker
+  // driver marker - also clear when no driver
   useEffect(() => {
-    if (!mapRef.current ||!driverLocation) return
+    if (!mapRef.current) return
+
+    if (!driverLocation) {
+      if (driverMarkerRef.current) {
+        mapRef.current.removeLayer(driverMarkerRef.current)
+        driverMarkerRef.current = null
+      }
+      return
+    }
+
     const latLng: any = [driverLocation[1], driverLocation[0]]
     if (!driverMarkerRef.current) {
       const icon = L.divIcon({

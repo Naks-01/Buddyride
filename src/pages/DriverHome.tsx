@@ -41,6 +41,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
 
+  // FIX: auto clear route when ride becomes null
+  useEffect(() => {
+    if (!ride) {
+      setRoute(undefined)
+      setRouteData(null)
+      setIsNavigating(false)
+      setZoom(13)
+    }
+  }, [ride])
+
   useEffect(() => {
     async function loadStatus() {
       const { data } = await supabase.from('profiles').select('is_online').eq('id', profile.id).single()
@@ -85,9 +95,17 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     const ch = supabase.channel(`driver-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
-        const newRide = p.new as Ride; setRide(newRide)
+        const newRide = p.new as Ride
+        if (['completed','cancelled'].includes(newRide.status as any)) {
+          setIsNavigating(false)
+          setZoom(13)
+          setRide(null)
+          setRoute(undefined)
+          setRouteData(null)
+          return
+        }
+        setRide(newRide)
         if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
-        if (['completed','cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null) }
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [profile.id])
@@ -152,12 +170,21 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }
   async function completeRide() {
     if (!ride) return
-    await supabase.from('rides').update({ status: 'completed' as any, ended_at: new Date().toISOString() }).eq('id', ride.id)
-    const fare = (ride as any).fare || 0; const commission = fare * 0.20
+    const rideId = ride.id
+    const fare = (ride as any).fare || 0
+
+    // FIX: clear route INSTANTLY before DB
+    setRoute(undefined)
+    setRouteData(null)
+    setIsNavigating(false)
+    setRide(null)
+    setZoom(13)
+
+    await supabase.from('rides').update({ status: 'completed' as any, ended_at: new Date().toISOString() }).eq('id', rideId)
+    const commission = fare * 0.20
     const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
     const newBal = (prof?.wallet_balance || 0) - commission
     await supabase.from('profiles').update({ wallet_balance: newBal, trips_completed: (prof?.trips_completed || 0) + 1 } as any).eq('id', profile.id)
-    setIsNavigating(false); setRide(null); setRoute(undefined); setRouteData(null)
   }
 
   const instruction = routeData?.steps?.[0]?.instruction || 'Drive southeast.'
@@ -220,7 +247,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
             <button onClick={async () => { await supabase.from('rides').update({ status: 'picked_up' as any } as any).eq('id', ride.id) }} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '16px' }}>Start Trip → Passenger In</button>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={async () => { await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id); setRide(null); setIsNavigating(false) }} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>Cancel Ride</button>
+            <button onClick={async () => { setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id) }} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>Cancel Ride</button>
           </div>
         </>
       )}
