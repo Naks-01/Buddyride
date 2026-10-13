@@ -1,0 +1,244 @@
+import { useEffect, useState, useRef } from 'react'
+import { MapboxMapView } from '../lib/MapboxMapView'
+import { NavigationMenu } from '../NavigationMenu'
+import { getRoute } from '../lib/mapbox'
+import { supabase, type Profile, type Ride } from '../lib/supabase'
+
+const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
+const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie'] as const
+const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com']
+
+export function DriverHome({ profile }: { profile: Profile }) {
+  const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
+  const [ride, setRide] = useState<Ride | null>(null)
+  const [searchingRides, setSearchingRides] = useState<Ride[]>([])
+  const [route, setRoute] = useState<any>()
+  const [routeData, setRouteData] = useState<any>(null)
+  const [isNavigating, setIsNavigating] = useState(false)
+  const [isOnline, setIsOnline] = useState(false)
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
+  const [zoom, setZoom] = useState(13)
+  const [now, setNow] = useState(Date.now())
+  const [bearing, setBearing] = useState(0)
+  const watchId = useRef<number | null>(null)
+  const lastSupabaseUpdate = useRef<number>(0)
+  const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
+
+  const [docStatus, setDocStatus] = useState<'approved'|'pending'|'missing'>('missing')
+  const [approvedDocs, setApprovedDocs] = useState<string[]>([])
+
+  const isDark = theme === 'dark'
+  const bg = isDark? '#0e0e10' : '#f5f5f7'
+  const bgCard = isDark? '#18181b' : '#ffffff'
+  const bg2 = isDark? '#242428' : '#eeeeef'
+  const text = isDark? 'white' : '#111827'
+  const subText = isDark? '#9ca3af' : '#6b7280'
+  const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
+  const mapStyleUrl = isDark? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'
+
+  const isTestDriver = TEST_DRIVER_EMAILS.includes(profile.email || '') || (profile.full_name || '').toLowerCase().includes('mokgalaka')
+
+  useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
+
+  useEffect(() => {
+    async function loadStatus() {
+      const { data } = await supabase.from('profiles').select('is_online').eq('id', profile.id).single()
+      if (data) setIsOnline((data as any).is_online || false)
+    }
+    loadStatus()
+    navigator.geolocation.getCurrentPosition(p => {
+      const pos: [number, number] = [p.coords.longitude, p.coords.latitude]
+      setLocation(pos); lastLocation.current = pos
+    })
+  }, [profile.id])
+
+  useEffect(() => {
+    if (isTestDriver) {
+      setDocStatus('approved')
+      setApprovedDocs([...REQUIRED_DOCS])
+      return
+    }
+    async function checkDocs() {
+      const { data } = await supabase.from('driver_documents').select('doc_type,status').eq('driver_id', profile.id)
+      if (!data || data.length === 0) {
+        setDocStatus('missing')
+        setApprovedDocs([])
+        return
+      }
+      const approved = data.filter((d:any) => d.status === 'approved').map((d:any)=>d.doc_type)
+      setApprovedDocs(approved)
+      const hasAll = REQUIRED_DOCS.every(r => approved.includes(r))
+      if (hasAll) setDocStatus('approved')
+      else setDocStatus('pending')
+    }
+    checkDocs()
+  }, [profile.id, isTestDriver])
+
+  useEffect(() => {
+    async function loadRide() {
+      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
+      if (data) { setRide(data); setIsNavigating(true); setZoom(17) }
+    }
+    loadRide()
+  }, [profile.id])
+
+  useEffect(() => {
+    const ch = supabase.channel(`driver-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
+        const newRide = p.new as Ride; setRide(newRide)
+        if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
+        if (['completed','cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null) }
+      }).subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [profile.id])
+
+  useEffect(() => {
+    if (!isOnline || ride) { setSearchingRides([]); return }
+    async function loadSearching() {
+      const { data } = await supabase.from('rides').select('*').eq('status','searching').eq('offered_driver_id', profile.id).gt('offer_expires_at', new Date().toISOString()).order('created_at',{ascending:false}).limit(1)
+      if (data) setSearchingRides(data as Ride[]); else setSearchingRides([])
+    }
+    loadSearching()
+    const ch2 = supabase.channel(`offers-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `offered_driver_id=eq.${profile.id}` }, () => loadSearching()).subscribe()
+    const interval = setInterval(loadSearching, 2000)
+    return () => { supabase.removeChannel(ch2); clearInterval(interval) }
+  }, [isOnline, ride, profile.id])
+
+  useEffect(() => {
+    if (!isNavigating &&!isOnline) return
+    watchId.current = navigator.geolocation.watchPosition(pos => {
+        const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
+        const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
+        if (dist > 0.00005) {
+          const dLng = p[0] - lastLocation.current[0]; const dLat = p[1] - lastLocation.current[1]
+          if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) { const b = Math.atan2(dLng, dLat) * 180 / Math.PI; setBearing(b) }
+          setLocation(p); lastLocation.current = p
+        }
+        const nowTs = Date.now()
+        if (nowTs - lastSupabaseUpdate.current > 3000) {
+          lastSupabaseUpdate.current = nowTs
+          if (ride) supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
+          if (isOnline) supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
+        }
+      }, err => console.log(err), { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+    ) as any
+    return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
+  }, [isNavigating, isOnline, ride?.id, profile.id])
+
+  useEffect(() => {
+    async function buildRoute() {
+      if (!ride ||!location) return
+      const target: [number, number] = (ride.status as any) === 'accepted' || (ride.status as any) === 'arrived'? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
+      try { const r = await getRoute(location, target); setRoute(r.geometry); setRouteData(r) } catch {}
+    }
+    buildRoute()
+  }, [ride?.id, ride?.status, location])
+
+  async function toggleOnline() {
+    if (!isTestDriver && docStatus!== 'approved') {
+      alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d)).join(', ')}. Upload 6 docs and wait for approval.`)
+      return
+    }
+    const next =!isOnline; setIsOnline(next)
+    await supabase.from('profiles').update({ is_online: next } as any).eq('id', profile.id)
+  }
+  async function acceptRide(rideId: string) {
+    await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted', started_at: new Date().toISOString() } as any).eq('id', rideId)
+    setSearchingRides([]); setIsNavigating(true); setZoom(17)
+  }
+  async function declineRide(rideId: string) {
+    supabase.functions.invoke('dispatch', { body: { ride_id: rideId, declined_by: profile.id } })
+    setSearchingRides([])
+  }
+  async function completeRide() {
+    if (!ride) return
+    await supabase.from('rides').update({ status: 'completed' as any, ended_at: new Date().toISOString() }).eq('id', ride.id)
+    const fare = (ride as any).fare || 0; const commission = fare * 0.20
+    const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
+    const newBal = (prof?.wallet_balance || 0) - commission
+    await supabase.from('profiles').update({ wallet_balance: newBal, trips_completed: (prof?.trips_completed || 0) + 1 } as any).eq('id', profile.id)
+    setIsNavigating(false); setRide(null); setRoute(undefined); setRouteData(null)
+  }
+
+  const instruction = routeData?.steps?.[0]?.instruction || 'Drive southeast.'
+  const distText = routeData? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min •` : '0.0km • 0 min •'
+  const showTopBanner =!isTestDriver && docStatus!== 'approved' || isTestDriver
+  const topBannerHeight = showTopBanner? 42 : 0
+
+  return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    <div style={{ position: 'absolute', inset: 0 }}>
+      <MapboxMapView center={location} route={route} mapStyle={mapStyleUrl} theme={theme} />
+    </div>
+
+    <header style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
+      <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
+      <strong>BuddyRide<br/>Driver</strong>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
+        <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: docStatus!== 'approved' &&!isTestDriver? '#666' : isOnline? '#00d181' : '#666', color: 'white', fontSize: '12px' }}>{docStatus!== 'approved' &&!isTestDriver? '⛔ BLOCKED' : isOnline? '● ONLINE' : '○ OFFLINE'}</button>
+      </div>
+    </header>
+
+    {showTopBanner && (
+      <div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: isTestDriver? '#00d181' : docStatus==='missing'? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>
+        {isTestDriver? `✅ Test mode: ${profile.email} - bypass docs` : docStatus==='missing'? `⚠️ Upload 6 docs: ${approvedDocs.length}/6` : `⏳ Pending: ${approvedDocs.length}/6 approved`}
+      </div>
+    )}
+
+    {isNavigating && ride && (
+      <div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+        <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div>
+        <div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div>
+      </div>
+    )}
+
+    <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: '260px', zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px' }}>🎯</button>
+
+    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '14px 12px 20px', color: text, borderTop: `1px solid ${border}` }}>
+      {ride && (ride.status as any) === 'accepted' && (
+        <>
+          <h3 style={{ margin: '0 0 4px' }}>Go to Pickup • R {ride.fare}</h3>
+          <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>{ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+            <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>{isNavigating? 'Navigating...' : 'Navigate'}</button>
+            <button onClick={async () => { await supabase.from('rides').update({ status: 'arrived' as any }).eq('id', ride.id) }} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>I Have Arrived</button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${ride.pickup_lat},${ride.pickup_lng}`, '_blank')} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#4285F4', color: 'white', border: 'none', fontWeight: 'bold' }}>🗺️ Google</button>
+            <button onClick={() => window.open(`https://waze.com/ul?ll=${ride.pickup_lat},${ride.pickup_lng}&navigate=yes`, '_blank')} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#33CCFF', color: 'black', border: 'none', fontWeight: 'bold' }}>🚗 Waze</button>
+            <button style={{ width: '44px', borderRadius: '10px', background: bg2, border: `1px solid ${border}` }}>⚙️</button>
+          </div>
+        </>
+      )}
+      {!ride && (
+        <div style={{ textAlign: 'center' }}>
+          {isOnline && searchingRides.map(r => {
+            const expires = new Date((r as any).offer_expires_at || Date.now() + 12000).getTime()
+            const secs = Math.max(0, Math.floor((expires - now)/1000))
+            return (
+            <div key={r.id} style={{ background: isDark? '#1e1e22' : 'white', border: `2px solid #00d181`, borderRadius: '16px', padding: '14px', marginBottom: '12px', textAlign: 'left' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><p style={{ fontWeight: 'bold', margin: 0, color: '#00d181' }}>BUDDY REQUEST • R {r.fare}</p><span style={{ background: '#00d181', color: 'white', borderRadius: '12px', padding: '2px 8px', fontSize: '12px' }}>{secs}s</span></div>
+              <p style={{ margin: '6px 0', fontSize: '13px' }}>📍 {r.pickup_address?.split(',')[0]}</p>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                <button onClick={() => declineRide(r.id)} style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>DECLINE</button>
+                <button onClick={() => acceptRide(r.id)} style={{ flex: 1.5, padding: '12px', borderRadius: '10px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>ACCEPT</button>
+              </div>
+            </div>
+          )})}
+          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{!isOnline && docStatus!=='approved' &&!isTestDriver? `⛔ Blocked - Docs: ${approvedDocs.length}/6` : isTestDriver? '✅ Test mode' : isOnline? '✅ Waiting for Buddy requests...' : 'You are offline'}</div>
+          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: docStatus!=='approved' &&!isTestDriver? '#666' : isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{docStatus!=='approved' &&!isTestDriver? `NEED DOCS (${approvedDocs.length}/6)` : isOnline? 'GO OFFLINE' : 'GO ONLINE'}</button>
+        </div>
+      )}
+      {ride && (ride.status as any) === 'picked_up' && (
+        <>
+          <h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]}</h3>
+          <p style={{ fontSize: '12px', color: subText }}>Collect R {ride.fare} cash</p>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigating...</button>
+            <button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00c853', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip</button>
+          </div>
+        </>
+      )}
+    </section>
+  </div>
+}
