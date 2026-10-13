@@ -35,7 +35,7 @@ export function OsmMapView({ center, route, driverLocation }: any) {
     }
   }, [center])
 
-  // route - FIXED: now clears when route is undefined
+  // route - BLUE + clears when undefined
   useEffect(() => {
     if (!mapRef.current) return
 
@@ -54,12 +54,12 @@ export function OsmMapView({ center, route, driverLocation }: any) {
     if (routeLineRef.current) {
       routeLineRef.current.setLatLngs(latLngs)
     } else {
-      routeLineRef.current = L.polyline(latLngs, { color: '#00d181', weight: 6, opacity: 0.9 }).addTo(mapRef.current)
+      routeLineRef.current = L.polyline(latLngs, { color: '#1E90FF', weight: 6, opacity: 0.95 }).addTo(mapRef.current)
       mapRef.current.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50] })
     }
   }, [route])
 
-  // driver marker - also clear when no driver
+  // driver marker
   useEffect(() => {
     if (!mapRef.current) return
 
@@ -74,7 +74,7 @@ export function OsmMapView({ center, route, driverLocation }: any) {
     const latLng: any = [driverLocation[1], driverLocation[0]]
     if (!driverMarkerRef.current) {
       const icon = L.divIcon({
-        html: '<div style="background:#00d181;width:36px;height:36px;border-radius:18px;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.5)">🚗</div>',
+        html: '<div style="background:#1E90FF;width:36px;height:36px;border-radius:18px;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.5)">🚗</div>',
         className: '',
         iconSize: [36, 36],
       })
