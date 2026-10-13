@@ -36,7 +36,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [showNavChooser, setShowNavChooser] = useState(false)
   const [navTarget, setNavTarget] = useState<{lat:number,lng:number} | null>(null)
   const [bearing, setBearing] = useState(0)
-  const [sheetHidden, setSheetHidden] = useState(false) // NEW: slide-hide
+  const [sheetHidden, setSheetHidden] = useState(false)
   const watchId = useRef<number | null>(null)
   const lastSupabaseUpdate = useRef<number>(0)
   const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
@@ -49,10 +49,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const text = isDark? 'white' : '#111827'
   const subText = isDark? '#9ca3af' : '#6b7280'
   const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
-  const mapStyleUrl = isDark? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11' // NEW: day/night map
+  const mapStyleUrl = isDark? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
-  useEffect(() => { if (isNavigating) setSheetHidden(true); else setSheetHidden(false) }, [isNavigating]) // NEW: auto hide when navigating
+  useEffect(() => { if (isNavigating) setSheetHidden(true); else setSheetHidden(false) }, [isNavigating])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   useEffect(() => {
     if (!localStorage.getItem('buddy_nav')) localStorage.setItem('buddy_nav', 'mapbox')
@@ -186,7 +186,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }
 
   return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <header style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: isDark? 'rgba(14,14,16,0.92)' : 'rgba(255,255,255,0.92)', backdropFilter:'blur(20px)', color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
+    <header style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -208,7 +208,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       transform: sheetHidden? 'translateY(calc(100% - 56px))' : 'translateY(0)',
       transition: 'transform 0.45s cubic-bezier(0.32, 0.72, 0, 1)'
     }}>
-      {/* Handle + minimized bar */}
       <div onClick={() => { if (isNavigating || ride) setSheetHidden(!sheetHidden) }} style={{ width:'100%', display:'flex', flexDirection:'column', alignItems:'center', cursor: (isNavigating || ride)? 'pointer':'default', padding:'2px 0 10px' }}>
         <div style={{ width: '36px', height: '4px', background: isDark? '#3a3a3e' : '#d1d5db', borderRadius: '2px', marginBottom: '8px' }} />
         {sheetHidden && ride && (
@@ -273,7 +272,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       )}
     </section>
     {showNavChooser && (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
         <div style={{ width: '100%', background: bgCard, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '20px' }}>
           <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 16px' }} />
           <h3 style={{ margin: '0 0 4px', color: text }}>Choose Navigation</h3>
