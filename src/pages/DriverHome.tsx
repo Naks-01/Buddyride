@@ -195,6 +195,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: '260px', zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px' }}>🎯</button>
 
     <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '14px 12px 20px', color: text, borderTop: `1px solid ${border}` }}>
+
       {ride && (ride.status as any) === 'accepted' && (
         <>
           <h3 style={{ margin: '0 0 4px' }}>Go to Pickup • R {ride.fare}</h3>
@@ -210,6 +211,35 @@ export function DriverHome({ profile }: { profile: Profile }) {
           </div>
         </>
       )}
+
+      {ride && (ride.status as any) === 'arrived' && (
+        <>
+          <h3 style={{ margin: '0 0 4px' }}>You Have Arrived • R {ride.fare}</h3>
+          <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>Waiting at {ride.pickup_address?.split(',').slice(0,2).join(',')} — passenger notified</p>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+            <button onClick={async () => { await supabase.from('rides').update({ status: 'picked_up' as any } as any).eq('id', ride.id) }} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '16px' }}>Start Trip → Passenger In</button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={async () => { await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id); setRide(null); setIsNavigating(false) }} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>Cancel Ride</button>
+          </div>
+        </>
+      )}
+
+      {ride && (ride.status as any) === 'picked_up' && (
+        <>
+          <h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]} • R {ride.fare}</h3>
+          <p style={{ fontSize: '12px', color: subText }}>Collect R {ride.fare} cash</p>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigating...</button>
+            <button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00c853', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip</button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${ride.dropoff_lat},${ride.dropoff_lng}`, '_blank')} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#4285F4', color: 'white', border: 'none', fontWeight: 'bold' }}>🗺️ Google</button>
+            <button onClick={() => window.open(`https://waze.com/ul?ll=${ride.dropoff_lat},${ride.dropoff_lng}&navigate=yes`, '_blank')} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#33CCFF', color: 'black', border: 'none', fontWeight: 'bold' }}>🚗 Waze</button>
+          </div>
+        </>
+      )}
+
       {!ride && (
         <div style={{ textAlign: 'center' }}>
           {isOnline && searchingRides.map(r => {
@@ -229,16 +259,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
           <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: docStatus!=='approved' &&!isTestDriver? '#666' : isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{docStatus!=='approved' &&!isTestDriver? `NEED DOCS (${approvedDocs.length}/6)` : isOnline? 'GO OFFLINE' : 'GO ONLINE'}</button>
         </div>
       )}
-      {ride && (ride.status as any) === 'picked_up' && (
-        <>
-          <h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]}</h3>
-          <p style={{ fontSize: '12px', color: subText }}>Collect R {ride.fare} cash</p>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-            <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigating...</button>
-            <button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00c853', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip</button>
-          </div>
-        </>
-      )}
+
     </section>
   </div>
 }
