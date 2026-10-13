@@ -5,39 +5,50 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
 if (TOKEN) mapboxgl.accessToken = TOKEN
 
-export function MapView({ center, route, driverLocation, isNavigating, followDriver, bearing = 0 }: any) {
+export function MapView({ center, route, driverLocation, isNavigating, followDriver, bearing = 0, mapStyle, theme }: any) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const routeCacheRef = useRef<any>(null)
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
+      style: mapStyle || 'mapbox://styles/mapbox/dark-v11',
       center: center || [29.4589, -23.9045],
       zoom: 13
     })
     mapRef.current = map
+
+    // Re-add route after style loads (for day/night switch)
+    map.on('style.load', () => {
+      if (routeCacheRef.current) {
+        setTimeout(() => addRouteToMap(routeCacheRef.current), 100)
+      }
+    })
+
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
+  // NEW: Day/Night map switch - keeps route
   useEffect(() => {
-    if (!mapRef.current ||!followDriver ||!driverLocation) return
-    mapRef.current.easeTo({
-      center: driverLocation,
-      bearing: isNavigating? bearing : 0,
-      pitch: isNavigating? 55 : 0,
-      zoom: isNavigating? 17 : 13,
-      duration: 1000
-    })
-  }, [driverLocation, followDriver, bearing, isNavigating])
+    if (!mapRef.current ||!mapStyle) return
+    // Save route before switching
+    if (route) routeCacheRef.current = route
 
-  useEffect(() => {
-    if (!mapRef.current ||!route) return
+    const currentStyle = (mapRef.current as any).style?.stylesheet?.name || ''
+    if (mapRef.current.isStyleLoaded()) {
+      mapRef.current.setStyle(mapStyle)
+    }
+  }, [mapStyle])
+
+  function addRouteToMap(routeData: any) {
+    if (!mapRef.current ||!routeData) return
     const map = mapRef.current
-    const doAdd = () => {
-      const geo = route.type === 'Feature'? route : { type: 'Feature', geometry: route, properties: {} }
+    const geo = routeData.type === 'Feature'? routeData : { type: 'Feature', geometry: routeData, properties: {} }
+
+    try {
       if (map.getSource('route')) {
         (map.getSource('route') as mapboxgl.GeoJSONSource).setData(geo as any)
       } else {
@@ -68,7 +79,42 @@ export function MapView({ center, route, driverLocation, isNavigating, followDri
           }
         })
       }
+    } catch (e) {
+      // Retry after style fully loaded
+      setTimeout(() => {
+        try {
+          if (!map.getSource('route')) {
+            map.addSource('route', { type: 'geojson', data: geo as any })
+            map.addLayer({
+              id: 'route-line',
+              type: 'line',
+              source: 'route',
+              paint: { 'line-color': '#00d181', 'line-width': 7, 'line-opacity': 0.95 }
+            })
+          }
+        } catch {}
+      }, 300)
     }
+  }
+
+  useEffect(() => {
+    if (!mapRef.current ||!followDriver ||!driverLocation) return
+    mapRef.current.easeTo({
+      center: driverLocation,
+      bearing: isNavigating? bearing : 0,
+      pitch: isNavigating? 55 : 0,
+      zoom: isNavigating? 17 : 13,
+      duration: 1000
+    })
+  }, [driverLocation, followDriver, bearing, isNavigating])
+
+  useEffect(() => {
+    if (!mapRef.current ||!route) return
+    routeCacheRef.current = route
+    const map = mapRef.current
+
+    const doAdd = () => addRouteToMap(route)
+
     if (!map.isStyleLoaded()) map.once('load', doAdd)
     else doAdd()
   }, [route])
@@ -98,5 +144,5 @@ export function MapView({ center, route, driverLocation, isNavigating, followDri
     }
   }, [driverLocation, bearing])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: theme === 'light'? '#f5f5f7' : '#0e0e10' }} />
 }
