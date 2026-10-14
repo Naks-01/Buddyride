@@ -2,11 +2,13 @@ import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-export function OsmMapView({ center, route, driverLocation }: any) {
+export function OsmMapView({ center, route, driverLocation, availableCars }: any) {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const routeLineRef = useRef<L.Polyline | null>(null)
   const driverMarkerRef = useRef<L.Marker | null>(null)
+  // ADDED FOR CARS
+  const carsRef = useRef<Map<string, L.Marker>>(new Map())
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -83,6 +85,39 @@ export function OsmMapView({ center, route, driverLocation }: any) {
       driverMarkerRef.current.setLatLng(latLng)
     }
   }, [driverLocation])
+
+  // ADDED FOR CARS - shows available cars BEFORE ride starts
+  useEffect(() => {
+    if (!mapRef.current) return
+    if (!availableCars) return
+
+    const currentIds = new Set(availableCars.map((c:any)=> c.driver_id))
+
+    // Remove offline cars
+    carsRef.current.forEach((marker, id) => {
+      if (!currentIds.has(id)) {
+        mapRef.current?.removeLayer(marker)
+        carsRef.current.delete(id)
+      }
+    })
+
+    // Add / update online cars
+    availableCars.forEach((car:any) => {
+      const latLng: any = [car.lat, car.lng]
+      const existing = carsRef.current.get(car.driver_id)
+      if (existing) {
+        existing.setLatLng(latLng)
+      } else {
+        const icon = L.divIcon({
+          html: '<div style="background:white;width:36px;height:36px;border-radius:18px;border:2px solid #ff7a00;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.4);font-size:20px">🚗</div>',
+          className: '',
+          iconSize: [36, 36],
+        })
+        const m = L.marker(latLng, { icon }).addTo(mapRef.current!)
+        carsRef.current.set(car.driver_id, m)
+      }
+    })
+  }, [availableCars])
 
   return <div ref={containerRef} style={{ width: '100%', height: '100vh', background: '#e5e7eb', zIndex: 0 }} />
 }
