@@ -166,9 +166,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     supabase.from('driver_status').select('*').eq('is_online', true)
-    .then(({data}) => { if(data) setNearbyCars(data) })
+   .then(({data}) => { if(data) setNearbyCars(data) })
     const ch = supabase.channel('buddyride-cars-live')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' },
+   .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' },
         (payload) => {
           const car = payload.new as any
           if (!car) return
@@ -225,6 +225,15 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (fare > 350) fare = 350
     return Math.ceil(fare / 5) * 5
   }
+
+  function getDistKm(lon1: number, lat1: number, lon2: number, lat2: number) {
+    const R = 6371
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  }
+
   async function searchPlaces(query: string, setter: any, setShow: any) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
     const lower = query.toLowerCase()
@@ -232,12 +241,30 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     try {
       let osm: any[] = []
       try { osm = await geocodeOSM(query) } catch {}
+      osm = osm.filter((p:any) => {
+        if (!p.center) return false
+        const d = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], p.center[0], p.center[1])
+        return d < 120
+      }).sort((a:any,b:any) => {
+        const da = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], a.center[0], a.center[1])
+        const db = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], b.center[0], b.center[1])
+        return da - db
+      })
       let mb: any[] = []
-      try { const r = await geocode(query) as any; mb = (r?.features || r || []).slice(0,5).map((p:any)=>({ center: p.center || p.geometry?.coordinates, place_name: p.place_name, text: p.text })) } catch {}
+      try {
+        const r = await geocode(query) as any
+        mb = (r?.features || r || []).slice(0,10).map((p:any)=>({ center: p.center || p.geometry?.coordinates, place_name: p.place_name, text: p.text }))
+        mb = mb.filter((p:any) => {
+          if (!p.center) return true
+          const d = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], p.center[0], p.center[1])
+          return d < 120
+        })
+      } catch {}
       const merged = [...localMatches,...osm,...mb].filter((v,i,a)=> a.findIndex((t:any)=>t.place_name===v.place_name)===i).slice(0,8)
       setter(merged); setShow(merged.length>0)
     } catch { setter(localMatches); setShow(localMatches.length>0) }
   }
+
   function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 250) }
   function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 250) }
   function selectPickupSuggestion(item: any) { setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setShowPickupSug(false) }
