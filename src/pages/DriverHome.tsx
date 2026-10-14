@@ -28,6 +28,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [showDriverCancelReason, setShowDriverCancelReason] = useState(false)
   const [driverCancelReason, setDriverCancelReason] = useState('')
   const [rideToCancel, setRideToCancel] = useState<Ride | null>(null)
+  const [showCollected, setShowCollected] = useState<number | null>(null)
 
   const isDark = theme === 'dark'
   const bg = isDark? '#0e0e10' : '#f5f5f7'
@@ -76,23 +77,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [profile.id])
   useEffect(() => {
     const ch = supabase.channel(`driver-${profile.id}`)
-   .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
+  .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
         const newRide = p.new as Ride
         if (!newRide) return
-        console.log('Driver ride update:', newRide.status)
         if (['completed','cancelled','rated'].includes(newRide.status as any)) {
-          setIsNavigating(false);
-          setZoom(13);
-          setRide(null);
-          setRoute(undefined);
-          setRouteData(null);
-          setSearchingRides([]);
-          return
+          setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); return
         }
         setRide(newRide)
         if (['accepted','arrived','picked_up'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
       })
-   .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides', filter: `offered_driver_id=eq.${profile.id}` }, p => {
+  .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides', filter: `offered_driver_id=eq.${profile.id}` }, p => {
         const newRide = p.new as Ride
         if (!newRide) return
         if (newRide.status === 'cancelled') {
@@ -145,7 +139,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [ride?.id, ride?.status, location])
 
   async function toggleOnline() {
-    if (!isTestDriver && docStatus!== 'approved') { alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d)).join(', ')}. Upload 6 docs and wait for approval.`); return }
+    if (!isTestDriver && docStatus!== 'approved') { alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d)).join(', ')}`); return }
     const next =!isOnline; setIsOnline(next)
     await supabase.from('profiles').update({ is_online: next } as any).eq('id', profile.id)
     try {
@@ -167,6 +161,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!ride) return
     const rideId = ride.id
     const fare = (ride as any).fare || 0
+    // SHOW ORANGE POPUP ONLY NOW - after pressing Complete
+    setShowCollected(fare)
+    setTimeout(() => setShowCollected(null), 3500)
     setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13)
     await supabase.from('rides').update({ status: 'completed' as any, ended_at: new Date().toISOString() }).eq('id', rideId)
     const commission = fare * 0.20
@@ -275,15 +272,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
       {ride && (ride.status as any) === 'picked_up' && (
         <>
-          <div style={{background:'linear-gradient(135deg,#ff7a00,#ff9500)', borderRadius:'16px', padding:'16px', marginBottom:'12px', textAlign:'center', boxShadow:'0 4px 16px rgba(255,122,0,0.4)'}}>
-            <div style={{color:'white', fontSize:'14px', fontWeight:'bold', letterSpacing:'1px'}}>💰 COLLECT NOW</div>
-            <div style={{color:'white', fontSize:'32px', fontWeight:'900', marginTop:'4px'}}>R {ride.fare} CASH</div>
-            <div style={{color:'white', fontSize:'12px', marginTop:'4px', opacity:0.9}}>Payment: {(ride as any).payment_method || 'cash'} • Fare includes 20% commission</div>
-          </div>
           <h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]} • R {ride.fare}</h3>
+          <p style={{margin:'0 0 10px', fontSize:'12px', color:subText}}>Passenger in car - navigate to dropoff</p>
           <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
             <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigating...</button>
-            <button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00c853', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip ✓ Collected</button>
+            <button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip ✓ R {ride.fare}</button>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
             <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${ride.dropoff_lat},${ride.dropoff_lng}`, '_blank')} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#4285F4', color: 'white', border: 'none', fontWeight: 'bold' }}>🗺️ Google</button>
@@ -314,6 +307,18 @@ export function DriverHome({ profile }: { profile: Profile }) {
       )}
 
     </section>
+
+    {showCollected!== null && (
+      <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}>
+        <div style={{background:'linear-gradient(135deg,#ff7a00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px', boxShadow:'0 20px 40px rgba(0,0,0,0.4)'}}>
+          <div style={{fontSize:'48px', marginBottom:'8px'}}>💰</div>
+          <div style={{color:'white', fontSize:'14px', fontWeight:'bold', letterSpacing:'1px'}}>FARE COLLECTED</div>
+          <div style={{color:'white', fontSize:'42px', fontWeight:'900', marginTop:'6px'}}>R {showCollected} CASH</div>
+          <div style={{color:'white', fontSize:'12px', marginTop:'8px', opacity:0.9}}>Trip completed • 20% commission deducted</div>
+          <button onClick={() => setShowCollected(null)} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#ff7a00', border:'none', fontWeight:'900'}}>DONE ✓</button>
+        </div>
+      </div>
+    )}
 
     {showDriverCancelReason && (
       <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}>
