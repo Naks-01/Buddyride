@@ -138,9 +138,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [selectedCat, setSelectedCat] = useState('buddy_go')
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
   const [rating, setRating] = useState(0)
-  // ADDED FOR CARS - START
+  const [showCancelReason, setShowCancelReason] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
   const [nearbyCars, setNearbyCars] = useState<any[]>([])
-  // ADDED FOR CARS - END
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
   const prevStatus = useRef<string>('')
@@ -164,13 +164,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     loadActiveRide()
   }, [profile.id])
 
-  // ADDED FOR CARS - START (shows cars before request like his video)
   useEffect(() => {
     supabase.from('driver_status').select('*').eq('is_online', true)
-     .then(({data}) => { if(data) setNearbyCars(data) })
-
+    .then(({data}) => { if(data) setNearbyCars(data) })
     const ch = supabase.channel('buddyride-cars-live')
-     .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' },
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' },
         (payload) => {
           const car = payload.new as any
           if (!car) return
@@ -184,10 +182,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           }
         }
       ).subscribe()
-
     return () => { supabase.removeChannel(ch) }
   }, [])
-  // ADDED FOR CARS - END
 
   useEffect(() => {
     if (ride?.driver_id) { supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) }) }
@@ -297,13 +293,28 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
     setLoading(false)
   }
+
   async function cancelRide() {
     if (!ride) return
+    if (!cancelReason) {
+      setShowCancelReason(true)
+      return
+    }
+    const rideId = ride.id
+    setShowCancelReason(false)
     setRoute(undefined)
     setDriverProfile(null)
     setShowEstimate(false)
-    await supabase.from('rides').update({ status: 'cancelled' as any }).eq('id', ride.id)
     setRide(null)
+    await supabase.from('rides').update({
+      status: 'cancelled',
+      cancel_reason: cancelReason,
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: 'passenger',
+      offered_driver_id: null,
+      offer_expires_at: null
+    } as any).eq('id', rideId)
+    setCancelReason('')
   }
 
   async function finishTrip() {
@@ -331,7 +342,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       </div>
     </header>
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
-      {/* ADDED availableCars prop */}
       <OsmMapView
         center={pickupCoords || location}
         route={route}
@@ -370,9 +380,51 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2, border: `1px solid ${border}` }}><span style={{ fontSize: '13px' }}>{distance.toFixed(1)} km • {CATEGORIES.find(c=>c.id===selectedCat)?.name}</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
-      {ride && ride.status === 'searching' && (<><h3>Searching Buddy driver... ●</h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button></>)}
-      {ride && (ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👨</div><div><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div><div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div><div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? 'Buddy arrived' : 'Buddy coming'}</div></div></div><button onClick={cancelRide} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, fontWeight: 'bold' }}>Cancel</button></>)}
+      {ride && ride.status === 'searching' && (<><h3>Searching Buddy driver... ●</h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p><button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button></>)}
+      {ride && (ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👨</div><div><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div><div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div><div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? 'Buddy arrived' : 'Buddy coming'}</div></div></div><button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, fontWeight: 'bold' }}>Cancel</button></>)}
       {ride && ride.status === 'completed' && (<><div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2>Trip Completed! R {ride.fare}</h2><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '12px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '40px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}</div></div><button onClick={finishTrip} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{rating? `Rate ${rating}★` : 'Finish'}</button></>)}
     </section>
+
+    {showCancelReason && (
+      <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}>
+        <div style={{background: isDark? '#18181b':'white', width:'100%', borderTopLeftRadius:'24px', borderTopRightRadius:'24px', padding:'20px', color: text, maxHeight:'80vh', overflowY:'auto'}}>
+          <h3 style={{margin:'0 0 6px', fontSize:'18px'}}>Why are you cancelling?</h3>
+          <p style={{fontSize:'13px', color:'#999', margin:'0 0 16px'}}>Help us improve BuddyRide</p>
+          {[
+            'Driver too far',
+            'Waiting too long',
+            'Changed my mind',
+            'Booked by mistake',
+            'Driver asked to cancel',
+            'Price too high',
+            'Other'
+          ].map(reason => (
+            <button key={reason} onClick={() => setCancelReason(reason)}
+              style={{
+                width:'100%', textAlign:'left', padding:'14px',
+                borderRadius:'12px', marginBottom:'8px',
+                background: cancelReason===reason? '#00d181':'#242428',
+                color: cancelReason===reason? 'white': text,
+                border: `1px solid ${cancelReason===reason? '#00d181': border}`,
+                fontWeight: cancelReason===reason? 'bold':'normal',
+                fontSize:'14px'
+              }}>
+              {reason} {cancelReason===reason? '✓':''}
+            </button>
+          ))}
+          <div style={{display:'flex', gap:'8px', marginTop:'16px'}}>
+            <button onClick={() => { setShowCancelReason(false); setCancelReason('') }}
+              style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>
+              Back
+            </button>
+            <button onClick={cancelRide}
+              style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold', opacity: cancelReason? 1:0.5}}
+              disabled={!cancelReason}>
+              Confirm Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   </div>
 }
