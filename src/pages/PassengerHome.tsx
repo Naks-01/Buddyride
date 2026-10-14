@@ -138,6 +138,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [selectedCat, setSelectedCat] = useState('buddy_go')
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
   const [rating, setRating] = useState(0)
+  // ADDED FOR CARS - START
+  const [nearbyCars, setNearbyCars] = useState<any[]>([])
+  // ADDED FOR CARS - END
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
   const prevStatus = useRef<string>('')
@@ -161,12 +164,36 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     loadActiveRide()
   }, [profile.id])
 
+  // ADDED FOR CARS - START (shows cars before request like his video)
+  useEffect(() => {
+    supabase.from('driver_status').select('*').eq('is_online', true)
+     .then(({data}) => { if(data) setNearbyCars(data) })
+
+    const ch = supabase.channel('buddyride-cars-live')
+     .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' },
+        (payload) => {
+          const car = payload.new as any
+          if (!car) return
+          if (car.is_online) {
+            setNearbyCars(prev => {
+              const exists = prev.find(c => c.driver_id === car.driver_id)
+              return exists? prev.map(c => c.driver_id === car.driver_id? car : c) : [...prev, car]
+            })
+          } else {
+            setNearbyCars(prev => prev.filter(c => c.driver_id!== car.driver_id))
+          }
+        }
+      ).subscribe()
+
+    return () => { supabase.removeChannel(ch) }
+  }, [])
+  // ADDED FOR CARS - END
+
   useEffect(() => {
     if (ride?.driver_id) { supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) }) }
     else setDriverProfile(null)
   }, [ride?.driver_id])
 
-  // FIX: clear route instantly when ride completes/cancelled
   useEffect(() => {
     if (!ride) {
       setRoute(undefined)
@@ -304,7 +331,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       </div>
     </header>
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
-      <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} />
+      {/* ADDED availableCars prop */}
+      <OsmMapView
+        center={pickupCoords || location}
+        route={route}
+        driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined}
+        availableCars={nearbyCars as any}
+      />
       <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '20px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px', boxShadow: '0 2px 8px rgba(0,0,0,0.3)' }}>📍</button>
     </div>
     <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px', color: text, borderTop: `1px solid ${border}`, maxHeight: ride? '34vh' : '58vh', overflowY: 'auto' }}>

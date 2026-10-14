@@ -55,6 +55,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
     async function loadStatus() {
       const { data } = await supabase.from('profiles').select('is_online').eq('id', profile.id).single()
       if (data) setIsOnline((data as any).is_online || false)
+      // ADDED: also check driver_status
+      const { data: statusData } = await supabase.from('driver_status').select('is_online').eq('driver_id', profile.id).single()
+      if (statusData) setIsOnline(statusData.is_online)
     }
     loadStatus()
     navigator.geolocation.getCurrentPosition(p => {
@@ -136,7 +139,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
         if (nowTs - lastSupabaseUpdate.current > 3000) {
           lastSupabaseUpdate.current = nowTs
           if (ride) supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
-          if (isOnline) supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
+          if (isOnline) {
+            supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
+            // ADDED: update driver_status so passenger sees moving car
+            supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: true, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' }).then(()=>{})
+          }
         }
       }, err => console.log(err), { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
     ) as any
@@ -159,6 +166,25 @@ export function DriverHome({ profile }: { profile: Profile }) {
     }
     const next =!isOnline; setIsOnline(next)
     await supabase.from('profiles').update({ is_online: next } as any).eq('id', profile.id)
+    // ADDED: THIS IS THE FIX FOR PASSENGER TO SEE CAR - like his video 0:18
+    try {
+      const pos = lastLocation.current
+      await supabase.from('driver_status').upsert({
+        driver_id: profile.id,
+        is_online: next,
+        lat: pos[1]!== undefined? pos[1] : -23.9045,
+        lng: pos[0]!== undefined? pos[0] : 29.4689,
+        updated_at: new Date().toISOString()
+      } as any, { onConflict: 'driver_id' })
+    } catch(e) {
+      // fallback without coords
+      await supabase.from('driver_status').upsert({
+        driver_id: profile.id,
+        is_online: next,
+        lat: -23.9045,
+        lng: 29.4689
+      } as any, { onConflict: 'driver_id' })
+    }
   }
   async function acceptRide(rideId: string) {
     await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted', started_at: new Date().toISOString() } as any).eq('id', rideId)
