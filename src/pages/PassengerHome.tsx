@@ -64,6 +64,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const prevStatusRef = useRef<string>('')
   const isDark = theme === 'dark'
   const bg = isDark? '#121212' : '#ffffff'
   const bg2 = isDark? '#1e1e1e' : '#f2f2f2'
@@ -76,6 +78,41 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   function toggleSheet() { if (sheetHeight > 40) setSheetHeight(18); else setSheetHeight(62) }
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
+
+  useEffect(() => {
+    audioRef.current = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3')
+    audioRef.current.volume = 1.0
+    audioRef.current.preload = 'auto'
+  }, [])
+
+  function playSound(type: 'accept'|'arrived'|'start'|'complete'|'cancel' = 'accept') {
+    const sounds: any = {
+      accept: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3',
+      arrived: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-2-269292.mp3',
+      start: 'https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3',
+      complete: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3',
+      cancel: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3'
+    }
+    try {
+      const audio = new Audio(sounds[type])
+      audio.volume = 1.0
+      audio.play().catch(() => {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.frequency.value = type === 'arrived'? 880 : type === 'cancel'? 220 : 660
+        gain.gain.value = 0.6
+        osc.connect(gain); gain.connect(ctx.destination)
+        osc.start(); setTimeout(() => { osc.stop(); ctx.close() }, 500)
+      })
+    } catch {}
+    if ('vibrate' in navigator) {
+      if (type === 'arrived') navigator.vibrate([200,100,200,100,400])
+      else if (type === 'cancel') navigator.vibrate([500,200,500])
+      else navigator.vibrate(300)
+    }
+  }
+
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
@@ -84,7 +121,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     })
     async function loadActiveRide() {
       const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
-      if (data) { setRide(data as Ride); setSheetHeight(38) }
+      if (data) { setRide(data as Ride); setSheetHeight(38); prevStatusRef.current = (data as any).status }
     }
     loadActiveRide()
   }, [profile.id])
@@ -107,12 +144,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!ride) return
     const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
       const newR = p.new as any; if (!newR) return
-      if (newR.status === 'cancelled' && newR.cancelled_by === 'driver') {
+      const oldStatus = prevStatusRef.current
+      const newStatus = newR.status
+
+      if (newStatus === 'cancelled' && newR.cancelled_by === 'driver') {
+        playSound('cancel')
         setCancelledNotification(`Driver cancelled: ${newR.cancel_reason || 'No reason'}`)
         setTimeout(() => { setCancelledNotification(null); setRide(null); setRoute(undefined); setDriverProfile(null); setShowChat(false); setSheetHeight(58) }, 5000)
+      } else {
+        if (oldStatus!== newStatus) {
+          if (newStatus === 'accepted') playSound('accept')
+          else if (newStatus === 'arrived') playSound('arrived')
+          else if (['picked_up','in_progress','en_route'].includes(newStatus)) playSound('start')
+          else if (newStatus === 'completed') playSound('complete')
+        }
       }
+      prevStatusRef.current = newStatus
       setRide(newR as Ride)
-      // Auto update route when driver starts trip
       if (['picked_up','in_progress','en_route'].includes(newR.status)) { setSheetHeight(62) }
     }).subscribe()
     return () => { supabase.removeChannel(ch) }
@@ -178,7 +226,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     let finalFare = price || calcFareForCategory(selectedCat, 3); let finalKm = distance || 2.5
     try { const r = await getOSMRoute(pCoords, dCoords); finalKm = r.distanceKm; finalFare = calcFareForCategory(selectedCat, r.distanceKm) } catch {}
     const { data } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
-    if (data) { setRide(data as Ride); setSheetHeight(35); try { await supabase.functions.invoke('dispatch', { body: { ride_id: (data as any).id } }) } catch {} }
+    if (data) { setRide(data as Ride); setSheetHeight(35); prevStatusRef.current = 'searching'; try { await supabase.functions.invoke('dispatch', { body: { ride_id: (data as any).id } }) } catch {} }
     setLoading(false)
   }
 
@@ -191,7 +239,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function finishTrip() {
-    if (!ride) return; await supabase.from('rides').update({ status: 'rated' as any }).eq('id', ride.id); setRide(null); setShowChat(false); setRoute(undefined); setSheetHeight(58)
+    if (!ride) return
+    const rideId = ride.id
+    const driverId = ride.driver_id
+    if (rating > 0 && driverId) {
+      await supabase.from('rides').update({ status: 'rated' as any, rating: rating } as any).eq('id', rideId)
+      try {
+        const { data: driver } = await supabase.from('profiles').select('rating, trips_completed').eq('id', driverId).single() as any
+        if (driver) {
+          const cur = driver.rating || 5.0; const trips = driver.trips_completed || 0
+          const newAvg = ((cur * trips) + rating) / (trips + 1)
+          await supabase.from('profiles').update({ rating: newAvg } as any).eq('id', driverId)
+        }
+      } catch {}
+    } else {
+      await supabase.from('rides').update({ status: 'rated' as any }).eq('id', rideId)
+    }
+    setRide(null); setShowChat(false); setRoute(undefined); setSheetHeight(58); setRating(0)
   }
 
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
@@ -258,7 +322,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👨</div>
-                <div><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div><div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div><div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? 'Arrived at pickup' : 'Coming • 2 min'}</div></div>
+                <div><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div><div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div><div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? '📍 Arrived at pickup - Ding!' : '🚗 Coming • 2 min - Driver on way!'}</div></div>
               </div>
               <button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button>
             </div>
@@ -279,7 +343,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           </>
         )}
 
-        {ride && ride.status === 'completed' && (<><div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2>R {ride.fare}</h2><div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '40px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}</div></div><button onClick={finishTrip} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>Finish</button></>)}
+        {ride && ride.status === 'completed' && (
+          <>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '48px' }}>✅</div>
+              <h2 style={{ margin: '8px 0' }}>Trip Completed! R {ride.fare}</h2>
+              <p style={{ color: '#888', fontSize: '13px' }}>Rate your driver</p>
+              <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>
+                {[1,2,3,4,5].map(s => (
+                  <button key={s} onClick={() => setRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>
+                ))}
+              </div>
+            </div>
+            <button onClick={finishTrip} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: rating === 0? '#666' : '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{rating === 0? 'Select stars' : `Finish • ${rating}★`}</button>
+          </>
+        )}
       </div>
     </section>
 
