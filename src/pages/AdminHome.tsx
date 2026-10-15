@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
-import { NavigationMenu } from '../NavigationMenu'
+import { NavigationMenu } from '../components/NavigationMenu'
 
 type Doc = {
   id: string

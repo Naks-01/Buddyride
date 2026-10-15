@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
-import { OsmMapView } from '../lib/OsmMapView'
-import { NavigationMenu } from '../NavigationMenu'
-import { getOSMRoute, reverseOSM, geocodeOSM } from '../lib/osm'
-import { geocode } from '../lib/mapbox'
+import { OsmMapView } from '../components/OsmMapView'
+import { NavigationMenu } from '../components/NavigationMenu'
+import { RideChat } from '../components/RideChat'
+import { getOSMRoute, reverseOSM } from '../lib/osm'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
@@ -34,88 +34,35 @@ const LOCAL_PLACES = [
   { text: 'Limpopo Mall', place_name: 'Limpopo Mall, Polokwane CBD', center: [29.4589, -23.9045] as [number, number] },
   { text: 'Makro Polokwane', place_name: 'Makro, Polokwane', center: [29.4521, -23.9145] as [number, number] },
   { text: 'Polokwane Airport', place_name: 'Polokwane International Airport', center: [29.4524, -23.8580] as [number, number] },
+  { text: 'Peter Mokaba Stadium', place_name: 'Peter Mokaba Stadium, Magazyn Street, Polokwane', center: [29.4687, -23.9244] as [number, number] },
   { text: 'Seshego', place_name: 'Seshego, Polokwane', center: [29.3900, -23.8600] as [number, number] },
   { text: 'Seshego Zone 1', place_name: 'Seshego Zone 1', center: [29.3850, -23.8520] as [number, number] },
   { text: 'Seshego Zone 2', place_name: 'Seshego Zone 2', center: [29.3880, -23.8550] as [number, number] },
   { text: 'Seshego Zone 3', place_name: 'Seshego Zone 3', center: [29.3920, -23.8580] as [number, number] },
   { text: 'Seshego Zone 4', place_name: 'Seshego Zone 4', center: [29.3900, -23.8600] as [number, number] },
-  { text: 'Seshego Zone 5', place_name: 'Seshego Zone 5', center: [29.3950, -23.8620] as [number, number] },
-  { text: 'Seshego Zone 6', place_name: 'Seshego Zone 6', center: [29.3850, -23.8650] as [number, number] },
-  { text: 'Seshego Zone 7', place_name: 'Seshego Zone 7', center: [29.3900, -23.8680] as [number, number] },
-  { text: 'Seshego Zone 8', place_name: 'Seshego Zone 8', center: [29.4000, -23.8550] as [number, number] },
-  { text: 'Seshego Zone 9', place_name: 'Seshego Zone 9, Luthuli', center: [29.4100, -23.8600] as [number, number] },
-  { text: 'Seshego Hospital', place_name: 'Seshego Hospital, Zone 1', center: [29.3950, -23.8520] as [number, number] },
-  { text: 'Seshego Circle', place_name: 'Seshego Circle Mall', center: [29.3930, -23.8570] as [number, number] },
   { text: 'Moletji', place_name: 'Moletji / Moletsi, Polokwane', center: [29.3200, -23.7800] as [number, number] },
-  { text: 'Moletsi', place_name: 'Moletsi / Moletji, Polokwane', center: [29.3200, -23.7800] as [number, number] },
-  { text: 'Moletjie', place_name: 'Moletjie / Moletji, R521', center: [29.3200, -23.7800] as [number, number] },
-  { text: 'Ga-Kolopo', place_name: 'Ga-Kolopo, Moletji / Moletsi', center: [29.3200, -23.7800] as [number, number] },
-  { text: 'Ga-Mokgokong', place_name: 'Ga-Mokgokong, Moletji', center: [29.3100, -23.7700] as [number, number] },
-  { text: 'Ga-Rapitsi', place_name: 'Ga-Rapitsi, Moletji / Moletsi', center: [29.3000, -23.7600] as [number, number] },
-  { text: 'Ga-Molepo Moletji', place_name: 'Ga-Molepo, Moletjie', center: [29.3300, -23.8000] as [number, number] },
-  { text: 'Ga-Sebotse', place_name: 'Ga-Sebotse, Moletji', center: [29.3150, -23.7900] as [number, number] },
-  { text: 'Ga-Sechaba', place_name: 'Ga-Sechaba, Moletji', center: [29.3050, -23.7850] as [number, number] },
-  { text: 'Ga-Makibelo', place_name: 'Ga-Makibelo, Moletji / Moletsi', center: [29.3250, -23.7750] as [number, number] },
-  { text: 'Ga-Madikana', place_name: 'Ga-Madikana, Moletji', center: [29.2950, -23.7650] as [number, number] },
-  { text: 'Ga-Mahopo', place_name: 'Ga-Mahopo, Moletji', center: [29.3150, -23.7750] as [number, number] },
-  { text: 'Ga-Phasa', place_name: 'Ga-Phasa, Moletji', center: [29.3080, -23.7680] as [number, number] },
-  { text: 'Ga-Mphahlele Moletji', place_name: 'Ga-Mphahlele, Moletji', center: [29.3350, -23.7950] as [number, number] },
-  { text: 'Ga-Matamanyane', place_name: 'Ga-Matamanyane, Moletji', center: [29.2900, -23.7550] as [number, number] },
-  { text: 'Ga-Ramokgopa', place_name: 'Ga-Ramokgopa, Moletji', center: [29.3400, -23.8100] as [number, number] },
-  { text: 'Ga-Mothiba Moletji', place_name: 'Ga-Mothiba, Moletji', center: [29.3500, -23.8200] as [number, number] },
-  { text: 'Chebeng', place_name: 'Chebeng, Moletji', center: [29.3100, -23.8000] as [number, number] },
-  { text: 'Moletji Clinic', place_name: 'Moletji Clinic, Moletsi', center: [29.3180, -23.7780] as [number, number] },
-  { text: 'Moletji Road R521', place_name: 'Moletjie Road, R521 to Polokwane', center: [29.3500, -23.8000] as [number, number] },
+  { text: 'Ga-Kolopo', place_name: 'Ga-Kolopo, Moletji', center: [29.3200, -23.7800] as [number, number] },
   { text: 'Mankweng', place_name: 'Mankweng Township, Polokwane', center: [29.7200, -23.8850] as [number, number] },
-  { text: 'Mankweng Unit A', place_name: 'Mankweng Unit A', center: [29.7180, -23.8820] as [number, number] },
-  { text: 'Mankweng Unit B', place_name: 'Mankweng Unit B', center: [29.7220, -23.8840] as [number, number] },
-  { text: 'Mankweng Unit C', place_name: 'Mankweng Unit C, Turfloop', center: [29.7250, -23.8860] as [number, number] },
-  { text: 'Mankweng Unit D', place_name: 'Mankweng Unit D', center: [29.7280, -23.8880] as [number, number] },
-  { text: 'Mankweng Hospital', place_name: 'Mankweng Hospital, Turfloop', center: [29.7300, -23.8830] as [number, number] },
   { text: 'University of Limpopo', place_name: 'University of Limpopo, Turfloop', center: [29.7400, -23.8800] as [number, number] },
   { text: 'Turfloop', place_name: 'Turfloop, Mankweng', center: [29.7350, -23.8850] as [number, number] },
-  { text: 'Ga-Mamabolo', place_name: 'Ga-Mamabolo, Mankweng', center: [29.7100, -23.8700] as [number, number] },
-  { text: 'Ga-Mothiba Turfloop', place_name: 'Ga-Mothiba, Mankweng', center: [29.7000, -23.8600] as [number, number] },
-  { text: 'Ga-Magowa', place_name: 'Ga-Magowa, Mankweng', center: [29.7500, -23.8700] as [number, number] },
-  { text: 'Ga-Mothapo', place_name: 'Ga-Mothapo, Mankweng', center: [29.7600, -23.8900] as [number, number] },
-  { text: 'Mentz', place_name: 'Mentz, Mankweng', center: [29.7800, -23.9000] as [number, number] },
-  { text: 'Paledi Mall', place_name: 'Paledi Mall, Mankweng', center: [29.7150, -23.8880] as [number, number] },
-  { text: 'Boyne', place_name: 'Boyne, Mankweng Road', center: [29.6800, -23.9000] as [number, number] },
-  { text: 'Ga-Thaba', place_name: 'Ga-Thaba, Mankweng', center: [29.7350, -23.8650] as [number, number] },
-  { text: 'Ga-Matlala', place_name: 'Ga-Matlala, Polokwane', center: [29.3500, -23.6500] as [number, number] },
-  { text: 'Tibane', place_name: 'Tibane, Ga-Matlala', center: [29.3400, -23.6400] as [number, number] },
-  { text: 'Mabokelele', place_name: 'Mabokelele, Ga-Matlala', center: [29.3300, -23.6600] as [number, number] },
-  { text: 'Sebayeng', place_name: 'Sebayeng, Polokwane', center: [29.5200, -23.8200] as [number, number] },
-  { text: 'Ga-Mashashane', place_name: 'Ga-Mashashane, Polokwane', center: [29.4800, -23.7800] as [number, number] },
-  { text: 'Ga-Molepo', place_name: 'Ga-Molepo Village, Sebayeng', center: [29.5300, -23.8300] as [number, number] },
   { text: 'Lebowakgomo', place_name: 'Lebowakgomo, Limpopo', center: [29.5600, -24.3000] as [number, number] },
-  { text: 'Lebowakgomo Zone A', place_name: 'Lebowakgomo Zone A', center: [29.5580, -24.2950] as [number, number] },
-  { text: 'Lebowakgomo Zone B', place_name: 'Lebowakgomo Zone B', center: [29.5620, -24.3000] as [number, number] },
-  { text: 'Lebowakgomo Zone F', place_name: 'Lebowakgomo Zone F', center: [29.5650, -24.3050] as [number, number] },
-  { text: 'Lebowakgomo Zone S', place_name: 'Lebowakgomo Zone S', center: [29.5700, -24.3100] as [number, number] },
-  { text: 'Lebowakgomo Mall', place_name: 'Lebowakgomo Mall', center: [29.5620, -24.3020] as [number, number] },
+  // EXTRA LIMPOPO - REAL
+  { text: 'Thohoyandou', place_name: 'Thohoyandou, Vhembe', center: [30.4550, -22.9770] as [number, number] },
+  { text: 'Tzaneen', place_name: 'Tzaneen, Mopani', center: [30.1633, -23.8333] as [number, number] },
+  { text: 'Giyani', place_name: 'Giyani, Limpopo', center: [30.6921, -23.3022] as [number, number] },
+  { text: 'Bela-Bela', place_name: 'Bela-Bela, Waterberg', center: [28.2857, -24.8833] as [number, number] },
+  { text: 'Mokopane', place_name: 'Mokopane, Mogalakwena', center: [29.0100, -24.1944] as [number, number] },
+  { text: 'Lephalale', place_name: 'Lephalale, Waterberg', center: [27.7419, -23.6667] as [number, number] },
+  { text: 'Musina', place_name: 'Musina, Vhembe', center: [30.0385, -22.3396] as [number, number] },
+  { text: 'Louis Trichardt', place_name: 'Louis Trichardt, Makhado', center: [29.9058, -23.0422] as [number, number] },
+  { text: 'Phalaborwa', place_name: 'Phalaborwa, Mopani', center: [31.1416, -23.9426] as [number, number] },
+  { text: 'Burgersfort', place_name: 'Burgersfort, Sekhukhune', center: [30.3200, -24.6670] as [number, number] },
 ]
 
-const SOUNDS = {
-  accepted: 'https://cdn.pixabay.com/audio/2021/08/04/audio_0625c8b9d0.mp3',
-  arrived: 'https://cdn.pixabay.com/audio/2022/03/10/audio_5a4fe0f4f1.mp3',
-}
-function playTone(f1: number, f2: number = 0, d = 0.8) {
-  try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-    const o = ctx.createOscillator(); const o2 = ctx.createOscillator(); const g = ctx.createGain()
-    o.connect(g); o2.connect(g); g.connect(ctx.destination)
-    o.frequency.value = f1; o2.frequency.value = f2 || f1 * 1.5
-    g.gain.setValueAtTime(0.8, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + d)
-    o.start(); o2.start(); o.stop(ctx.currentTime + d); o2.stop(ctx.currentTime + d)
-    if (navigator.vibrate) navigator.vibrate([300, 100, 300])
-  } catch {}
-}
-
 const CATEGORIES = [
-  { id: 'buddy_go', name: 'Go', icon: '🚗', base: 15, perKm: 7.5, min: 35, seats: 2, mult: 1 },
-  { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 20, perKm: 9, min: 45, seats: 3, mult: 1.2 },
-  { id: 'buddy_xl', name: 'XL', icon: '🚐', base: 28, perKm: 11, min: 60, seats: 6, mult: 1.5 },
+  { id: 'buddy_go', name: 'Go', icon: '🚗', base: 15, perKm: 7.5, min: 35 },
+  { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 20, perKm: 9, min: 45 },
+  { id: 'buddy_xl', name: 'XL', icon: '🚐', base: 28, perKm: 11, min: 60 },
 ]
 
 export function PassengerHome({ profile }: { profile: Profile }) {
@@ -141,14 +88,46 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [showCancelReason, setShowCancelReason] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [nearbyCars, setNearbyCars] = useState<any[]>([])
+  const [showChat, setShowChat] = useState(false)
+  const [sheetHeight, setSheetHeight] = useState(58)
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartY = useRef(0)
+  const dragStartH = useRef(58)
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
-  const prevStatus = useRef<string>('')
+  const [cancelledNotification, setCancelledNotification] = useState<string | null>(null)
   const isDark = theme === 'dark'
   const bg = isDark? '#121212' : '#ffffff'
   const bg2 = isDark? '#1e1e1e' : '#f2f2f2'
   const text = isDark? 'white' : 'black'
   const border = isDark? '#333' : '#ddd'
+
+  function onDragStart(e: any) {
+    setIsDragging(true)
+    dragStartY.current = e.touches? e.touches[0].clientY : e.clientY
+    dragStartH.current = sheetHeight
+  }
+  function onDragMove(e: any) {
+    if (!isDragging) return
+    const y = e.touches? e.touches[0].clientY : e.clientY
+    const deltaY = y - dragStartY.current
+    const deltaVh = (deltaY / window.innerHeight) * 100
+    let newH = dragStartH.current - deltaVh
+    if (newH < 18) newH = 18
+    if (newH > 75) newH = 75
+    setSheetHeight(newH)
+  }
+  function onDragEnd() {
+    setIsDragging(false)
+    dragStartY.current = 0
+    if (sheetHeight < 28) setSheetHeight(18)
+    else if (sheetHeight < 52) setSheetHeight(38)
+    else setSheetHeight(62)
+  }
+  function toggleSheet() {
+    if (sheetHeight > 40) setSheetHeight(18)
+    else setSheetHeight(62)
+  }
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => {
@@ -159,17 +138,15 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     })
     async function loadActiveRide() {
       const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
-      if (data) { setRide(data as Ride); prevStatus.current = (data as any).status }
+      if (data) { setRide(data as Ride); setSheetHeight(38) }
     }
     loadActiveRide()
   }, [profile.id])
 
   useEffect(() => {
-    supabase.from('driver_status').select('*').eq('is_online', true)
-   .then(({data}) => { if(data) setNearbyCars(data) })
+    supabase.from('driver_status').select('*').eq('is_online', true).then(({data}) => { if(data) setNearbyCars(data) })
     const ch = supabase.channel('buddyride-cars-live')
-   .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' },
-        (payload) => {
+.on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, (payload) => {
           const car = payload.new as any
           if (!car) return
           if (car.is_online) {
@@ -186,34 +163,22 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }, [])
 
   useEffect(() => {
-    if (ride?.driver_id) { supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) }) }
+    if (ride?.driver_id) supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) })
     else setDriverProfile(null)
   }, [ride?.driver_id])
 
   useEffect(() => {
-    if (!ride) {
-      setRoute(undefined)
-      setDriverProfile(null)
-      return
-    }
-    if (['completed','cancelled','rated'].includes(ride.status as any)) {
-      setRoute(undefined)
-    }
-  }, [ride?.status])
-
-  useEffect(() => {
     if (!ride) return
-    const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
-      const newRide = p.new as Ride
-      if (prevStatus.current!== newRide.status) {
-        if (newRide.status === 'accepted') playTone(600, 900, 1.0)
-        if (newRide.status === 'arrived') playTone(900, 1200, 1.2)
-        if (['completed','cancelled'].includes(newRide.status as any)) {
-          setRoute(undefined)
-          setDriverProfile(null)
+    const ch = supabase.channel(`passenger-${ride.id}`)
+   .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
+        const newR = p.new as any
+        if (!newR) return
+        // REAL: Driver cancelled notification
+        if (newR.status === 'cancelled' && newR.cancelled_by === 'driver') {
+          setCancelledNotification(`Driver cancelled: ${newR.cancel_reason || 'No reason'} - R${newR.fare} trip cancelled`)
+          setTimeout(() => { setCancelledNotification(null); setRide(null); setRoute(undefined); setDriverProfile(null); setShowChat(false); setSheetHeight(58) }, 5000)
         }
-      }
-      prevStatus.current = newRide.status; setRide(newRide)
+        setRide(newR as Ride)
     }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
@@ -226,69 +191,56 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return Math.ceil(fare / 5) * 5
   }
 
-  function getDistKm(lon1: number, lat1: number, lon2: number, lat2: number) {
-    const R = 6371
-    const dLat = (lat2 - lat1) * Math.PI / 180
-    const dLon = (lon2 - lon1) * Math.PI / 180
-    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-  }
-
+  // REAL LIMPOPO SEARCH - local + live OSM
   async function searchPlaces(query: string, setter: any, setShow: any) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
     const lower = query.toLowerCase()
-    const localMatches = LOCAL_PLACES.filter((p:any) => p.text.toLowerCase().includes(lower) || lower.includes(p.text.toLowerCase()) || p.place_name.toLowerCase().includes(lower))
+    let localMatches = LOCAL_PLACES.filter((p:any) => p.text.toLowerCase().includes(lower) || p.place_name.toLowerCase().includes(lower))
+
+    // Show local immediately for fast autocomplete
+    if (localMatches.length > 0) {
+      setter(localMatches.slice(0,8))
+      setShow(true)
+    }
+
+    // REAL: Also search OpenStreetMap for ALL Limpopo live
     try {
-      let osm: any[] = []
-      try { osm = await geocodeOSM(query) } catch {}
-      osm = osm.filter((p:any) => {
-        if (!p.center) return false
-        const d = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], p.center[0], p.center[1])
-        return d < 120
-      }).sort((a:any,b:any) => {
-        const da = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], a.center[0], a.center[1])
-        const db = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], b.center[0], b.center[1])
-        return da - db
-      })
-      let mb: any[] = []
-      try {
-        const r = await geocode(query) as any
-        mb = (r?.features || r || []).slice(0,10).map((p:any)=>({ center: p.center || p.geometry?.coordinates, place_name: p.place_name, text: p.text }))
-        mb = mb.filter((p:any) => {
-          if (!p.center) return true
-          const d = getDistKm(POLOKWANE_CENTER[0], POLOKWANE_CENTER[1], p.center[0], p.center[1])
-          return d < 120
-        })
-      } catch {}
-      const merged = [...localMatches,...osm,...mb].filter((v,i,a)=> a.findIndex((t:any)=>t.place_name===v.place_name)===i).slice(0,8)
-      setter(merged); setShow(merged.length>0)
-    } catch { setter(localMatches); setShow(localMatches.length>0) }
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=za&viewbox=21,-26,32,-22&bounded=0&limit=8&addressdetails=1`)
+      const osmData = await res.json()
+      const osmPlaces = osmData.map((o:any) => ({
+        text: o.display_name.split(',')[0],
+        place_name: o.display_name,
+        center: [parseFloat(o.lon), parseFloat(o.lat)] as [number, number],
+        isOSM: true
+      }))
+      // Merge local + OSM, remove duplicates
+      const merged = [...localMatches,...osmPlaces]
+      const unique = Array.from(new Map(merged.map((m:any) => [m.place_name, m])).values())
+      setter(unique.slice(0,10))
+      setShow(unique.length > 0)
+    } catch (e) {
+      if (localMatches.length === 0) { setter([]); setShow(false) }
+    }
   }
 
-  function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 250) }
-  function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 250) }
+  function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 300) }
+  function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
   function selectPickupSuggestion(item: any) { setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setShowPickupSug(false) }
-  function selectDropoffSuggestion(item: any) { setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setShowDropoffSug(false) }
+  function selectDropoffSuggestion(item: any) { setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setShowDropoffSug(false); setSheetHeight(62) }
+
   async function ensureCoords() {
     let pCoords = pickupCoords; let dCoords = dropoffCoords
     const findLocal = (name: string) => {
       if (!name) return null; const l = name.toLowerCase()
       return LOCAL_PLACES.find((p:any) => l.includes(p.text.toLowerCase()) || p.text.toLowerCase().includes(l))
     }
-    if (!pCoords && pickup) {
-      const local = findLocal(pickup)
-      if (local) pCoords = local.center
-      else { try { const r = await geocodeOSM(pickup); if (r[0]) pCoords = r[0].center } catch {} }
-    }
+    if (!pCoords && pickup) { const local = findLocal(pickup); if (local) pCoords = local.center }
     if (!pCoords) pCoords = location
-    if (!dCoords && dropoff) {
-      const local = findLocal(dropoff)
-      if (local) dCoords = local.center
-      else { try { const r = await geocodeOSM(dropoff); if (r[0]) dCoords = r[0].center } catch {} }
-    }
+    if (!dCoords && dropoff) { const local = findLocal(dropoff); if (local) dCoords = local.center }
     if (!dCoords && dropoff) dCoords = [pCoords![0] + 0.018, pCoords![1] + 0.018] as any
     return { pCoords, dCoords }
   }
+
   async function calculateEstimate() {
     if (!dropoff) { alert('Enter destination'); return }
     const { pCoords, dCoords } = await ensureCoords()
@@ -296,6 +248,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     setPickupCoords(pCoords); setDropoffCoords(dCoords!)
     try { const r = await getOSMRoute(pCoords, dCoords!); setRoute(r.geometry); setDistance(r.distanceKm); setPrice(calcFareForCategory(selectedCat, r.distanceKm)); setShowEstimate(true) } catch { setDistance(2.5); setPrice(calcFareForCategory(selectedCat, 2.5)); setShowEstimate(true) }
   }
+
   async function useMyLocation() {
     navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
@@ -303,6 +256,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const real = await reverseOSM(p); setPickup(real)
     })
   }
+
   async function requestRide() {
     setLoading(true)
     const { pCoords, dCoords } = await ensureCoords()
@@ -310,145 +264,144 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     let finalFare = price || calcFareForCategory(selectedCat, 3)
     let finalKm = distance || 2.5
     try { const r = await getOSMRoute(pCoords, dCoords); finalKm = r.distanceKm; finalFare = calcFareForCategory(selectedCat, r.distanceKm) } catch {}
-    let realPickup = pickup
-    if (!pickup || pickup.toLowerCase().includes('my location')) { try { realPickup = await reverseOSM(pCoords) } catch { realPickup = 'Polokwane' } }
-    const { data, error } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: realPickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
-    if (!error && data) {
-      setRide(data as Ride)
-      const { data: drivers } = await supabase.from('profiles').select('id').eq('role','driver').eq('is_online', true).limit(20)
-      if (drivers?.length) { await supabase.from('rides').update({ offered_driver_id: drivers[0].id, offer_expires_at: new Date(Date.now()+12000).toISOString() } as any).eq('id', data.id) }
+    const { data } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
+    if (data) {
+      setRide(data as Ride); setSheetHeight(35)
+      try { await supabase.functions.invoke('dispatch', { body: { ride_id: (data as any).id } }) } catch {}
     }
     setLoading(false)
   }
 
   async function cancelRide() {
     if (!ride) return
-    if (!cancelReason) {
-      setShowCancelReason(true)
-      return
-    }
+    if (!cancelReason) { setShowCancelReason(true); return }
     const rideId = ride.id
-    setShowCancelReason(false)
-    setRoute(undefined)
-    setDriverProfile(null)
-    setShowEstimate(false)
-    setRide(null)
-    await supabase.from('rides').update({
-      status: 'cancelled',
-      cancel_reason: cancelReason,
-      cancelled_at: new Date().toISOString(),
-      cancelled_by: 'passenger',
-      offered_driver_id: null,
-      offer_expires_at: null
-    } as any).eq('id', rideId)
+    setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetHeight(58)
+    await supabase.from('rides').update({ status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).eq('id', rideId)
     setCancelReason('')
   }
 
   async function finishTrip() {
     if (!ride) return
-    setRoute(undefined)
-    setDriverProfile(null)
-    setShowEstimate(false)
-    setDropoff('')
-    setDropoffCoords(null)
-    setDistance(null)
-    setPrice(null)
     await supabase.from('rides').update({ status: 'rated' as any }).eq('id', ride.id)
-    setRide(null)
+    setRide(null); setShowChat(false); setRoute(undefined); setSheetHeight(58)
   }
 
-  const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' })
+  const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
+
   return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <header style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide1</strong>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
         <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        <button onClick={() => void supabase.auth.signOut()} style={{ background: bg2, color: text, border: `1px solid ${border}`, padding: '8px 14px', borderRadius: '20px', fontWeight: 'bold', fontSize: '13px' }}>Logout</button>
       </div>
     </header>
+
+    {/* CANCELLATION NOTIFICATION - DRIVER CANCELLED */}
+    {cancelledNotification && (
+      <div style={{position:'fixed', top:'70px', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
+        <div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div>
+        <div style={{flex:1}}><div style={{color:'white', fontWeight:'900', fontSize:'15px'}}>Driver Cancelled Trip!</div><div style={{color:'white', fontSize:'13px', opacity:0.9}}>{cancelledNotification}</div></div>
+        <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
+      </div>
+    )}
+
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
-      <OsmMapView
-        center={pickupCoords || location}
-        route={route}
-        driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined}
-        availableCars={nearbyCars as any}
-      />
-      <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '20px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px', boxShadow: '0 2px 8px rgba(0,0,0,0.3)' }}>📍</button>
+      <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} availableCars={nearbyCars as any} />
+      <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px' }}>📍</button>
     </div>
-    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px', color: text, borderTop: `1px solid ${border}`, maxHeight: ride? '34vh' : '58vh', overflowY: 'auto' }}>
-      {!ride && (<>
-          <div style={{ width: '40px', height: '4px', background: '#555', borderRadius: '2px', margin: '0 auto 12px' }} />
-          <h2 style={{ margin: '0 0 12px', fontSize: '20px', fontWeight: 'bold' }}>Where are you going?</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ position: 'relative' }}>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input value={pickup} onChange={e => onPickupChange(e.target.value)} onFocus={() => pickupSuggestions.length && setShowPickupSug(true)} placeholder="Pickup - My Location" style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text }} />
-                <button onClick={useMyLocation} style={{ width: '52px', borderRadius: '14px', background: '#ff7a00', border: 'none', fontSize: '20px' }}>📍</button>
+
+    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', color: text, borderTop: `1px solid ${border}`, height: `${sheetHeight}vh`, overflowY: 'auto', transition: isDragging? 'none' : 'height 0.28s ease' }}>
+      <div
+        onClick={toggleSheet}
+        onTouchStart={onDragStart}
+        onTouchMove={onDragMove}
+        onTouchEnd={onDragEnd}
+        onMouseDown={onDragStart}
+        onMouseMove={(e:any) => e.buttons===1 && onDragMove(e)}
+        onMouseUp={onDragEnd}
+        style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '14px 0 8px 0', cursor: 'grab', touchAction: 'none', position: 'sticky', top: 0, background: bg, zIndex: 5 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+          <div style={{ width: '48px', height: '6px', background: sheetHeight > 40? '#ff7a00' : '#666', borderRadius: '3px' }} />
+          <span style={{ fontSize: '10px', color: '#888' }}>{sheetHeight > 45? '▼ Slide down for map' : '▲ Slide up for ride'}</span>
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 20px 16px' }}>
+        {!ride && (<>
+            <h2 style={{ margin: '0 0 12px', fontSize: '20px', fontWeight: 'bold' }}>Where are you going?</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ position: 'relative' }}>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input value={pickup} onChange={e => onPickupChange(e.target.value)} placeholder="Pickup - My Location" style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text }} />
+                  <button onClick={useMyLocation} style={{ width: '52px', borderRadius: '14px', background: '#ff7a00', border: 'none', fontSize: '20px' }}>📍</button>
+                </div>
+                {showPickupSug && <div style={sugStyle(isDark) as any}>{pickupSuggestions.map((s,i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name}</div>))}</div>}
               </div>
-              {showPickupSug && <div style={sugStyle(isDark) as any}>{pickupSuggestions.map((s,i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name}</div>))}</div>}
+              <div style={{ position: 'relative' }}>
+                <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} placeholder="Destination - Moletji, Mankweng, Seshego, Tzaneen..." style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, boxSizing: 'border-box' }} />
+                {showDropoffSug && <div style={sugStyle(isDark) as any}>{dropoffSuggestions.map((s,i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name} {s.isOSM? '🌍' : ''}</div>))}</div>}
+              </div>
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
+                {CATEGORIES.map(cat => {
+                  const fare = distance? calcFareForCategory(cat.id, distance) : null
+                  const isSel = selectedCat === cat.id
+                  return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); if (distance) setPrice(calcFareForCategory(cat.id, distance)) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, textAlign: 'left' }}><div style={{ fontSize: '20px' }}>{cat.icon}</div><div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>{fare && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px' }}>R {fare}</div>}</button>
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={calculateEstimate} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
+                <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '14px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold' }}>{loading? 'Finding...' : 'Request Buddy'}</button>
+              </div>
+              {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
             </div>
-            <div style={{ position: 'relative' }}>
-              <input value={dropoff} onChange={e => onDropoffChange(e.target.value)} onFocus={() => dropoffSuggestions.length && setShowDropoffSug(true)} placeholder="Destination - Church Street, Mall, Moletji, Mankweng" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, boxSizing: 'border-box' }} />
-              {showDropoffSug && <div style={sugStyle(isDark) as any}>{dropoffSuggestions.map((s,i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name}</div>))}</div>}
+          </>)}
+        {ride && ride.status === 'searching' && (<><h3>Searching driver... ●</h3><p style={{ fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button></>)}
+        {ride && (ride.status === 'accepted' || ride.status === 'arrived' || (ride.status as any) === 'picked_up') && driverProfile && (
+          <>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👨</div>
+                <div>
+                  <div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div>
+                  <div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div>
+                  <div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? 'Arrived' : 'Coming'}</div>
+                </div>
+              </div>
+              <button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button>
             </div>
-            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
-              {CATEGORIES.map(cat => {
-                const fare = distance? calcFareForCategory(cat.id, distance) : null
-                const isSel = selectedCat === cat.id
-                return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); if (distance) setPrice(calcFareForCategory(cat.id, distance)) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, textAlign: 'left' }}><div style={{ fontSize: '20px' }}>{cat.icon}</div><div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>{fare && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px' }}>R {fare}</div>}</button>
-              })}
-            </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={calculateEstimate} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '14px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold' }}>{loading? 'Finding...' : 'Request Buddy'}</button>
-            </div>
-            {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2, border: `1px solid ${border}` }}><span style={{ fontSize: '13px' }}>{distance.toFixed(1)} km • {CATEGORIES.find(c=>c.id===selectedCat)?.name}</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
-          </div>
-        </>)}
-      {ride && ride.status === 'searching' && (<><h3>Searching Buddy driver... ●</h3><p style={{ opacity: 0.7, fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><p style={{ fontWeight: 'bold' }}>R {ride.fare}</p><button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button></>)}
-      {ride && (ride.status === 'accepted' || ride.status === 'arrived') && driverProfile && (<><div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👨</div><div><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div><div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div><div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? 'Buddy arrived' : 'Buddy coming'}</div></div></div><button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, fontWeight: 'bold' }}>Cancel</button></>)}
-      {ride && ride.status === 'completed' && (<><div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2>Trip Completed! R {ride.fare}</h2><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '12px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '40px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}</div></div><button onClick={finishTrip} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{rating? `Rate ${rating}★` : 'Finish'}</button></>)}
+            <button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
+          </>
+        )}
+        {ride && ride.status === 'completed' && (<><div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2>R {ride.fare}</h2><div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '40px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}</div></div><button onClick={finishTrip} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>Finish</button></>)}
+      </div>
     </section>
+
+    {showChat && ride && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}>
+        <div style={{ background: bg, width: '100%', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', height: '75vh', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div><div style={{ fontWeight: 'bold', color: text }}>{driverProfile?.full_name}</div><div style={{ fontSize: '11px', color: '#999' }}>Chat disappears after trip</div></div>
+            <button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button>
+          </div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <RideChat rideId={ride.id} myId={profile.id} />
+          </div>
+        </div>
+      </div>
+    )}
 
     {showCancelReason && (
       <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}>
-        <div style={{background: isDark? '#18181b':'white', width:'100%', borderTopLeftRadius:'24px', borderTopRightRadius:'24px', padding:'20px', color: text, maxHeight:'80vh', overflowY:'auto'}}>
-          <h3 style={{margin:'0 0 6px', fontSize:'18px'}}>Why are you cancelling?</h3>
-          <p style={{fontSize:'13px', color:'#999', margin:'0 0 16px'}}>Help us improve BuddyRide</p>
-          {[
-            'Driver too far',
-            'Waiting too long',
-            'Changed my mind',
-            'Booked by mistake',
-            'Driver asked to cancel',
-            'Price too high',
-            'Other'
-          ].map(reason => (
-            <button key={reason} onClick={() => setCancelReason(reason)}
-              style={{
-                width:'100%', textAlign:'left', padding:'14px',
-                borderRadius:'12px', marginBottom:'8px',
-                background: cancelReason===reason? '#00d181':'#242428',
-                color: cancelReason===reason? 'white': text,
-                border: `1px solid ${cancelReason===reason? '#00d181': border}`,
-                fontWeight: cancelReason===reason? 'bold':'normal',
-                fontSize:'14px'
-              }}>
-              {reason} {cancelReason===reason? '✓':''}
-            </button>
+        <div style={{background: isDark? '#18181b':'white', width:'100%', borderTopLeftRadius:'24px', borderTopRightRadius:'24px', padding:'20px', color: text}}>
+          {['Driver too far','Waiting too long','Changed my mind','Other'].map(reason => (
+            <button key={reason} onClick={() => setCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: cancelReason===reason? '#00d181':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {cancelReason===reason? '✓':''}</button>
           ))}
           <div style={{display:'flex', gap:'8px', marginTop:'16px'}}>
-            <button onClick={() => { setShowCancelReason(false); setCancelReason('') }}
-              style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>
-              Back
-            </button>
-            <button onClick={cancelRide}
-              style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold', opacity: cancelReason? 1:0.5}}
-              disabled={!cancelReason}>
-              Confirm Cancel
-            </button>
+            <button onClick={() => setShowCancelReason(false)} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button>
+            <button onClick={cancelRide} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!cancelReason}>Confirm Cancel</button>
           </div>
         </div>
       </div>

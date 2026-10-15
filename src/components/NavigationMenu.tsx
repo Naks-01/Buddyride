@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Bell, CarFront, ChevronRight, CircleHelp, CreditCard, FileText, History, LogOut, MapPin, Menu, Navigation, Settings, ShieldCheck, UserRound, Wallet, X } from 'lucide-react'
-import { supabase, type Profile, type Ride } from './lib/supabase'
+import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 type Section = 'home' | 'profile' | 'trips' | 'earnings' | 'saved' | 'payments' | 'safety' | 'help' | 'settings' | 'navigation' | 'documents'
 
@@ -56,7 +56,7 @@ export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSig
         { id: 'help', label: 'Help and support', icon: CircleHelp },
       ]
     : isDriver
-  ? [
+ ? [
           { id: 'profile', label: 'My driver profile', icon: UserRound },
           { id: 'documents', label: 'My documents', icon: FileText },
           { id: 'trips', label: 'Trip history', icon: History },
@@ -106,7 +106,6 @@ export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSig
           </div>
         </div>
       )
-    //... keep all your other sections same as before (profile, documents, trips, etc) - paste your old renderSection code here if needed
     if (section === 'documents')
       return <div className="menu-content"><h2>My Documents</h2><p className="muted">Upload CRC, License, Disk</p></div>
     if (section === 'profile')
@@ -118,7 +117,6 @@ export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSig
 
   return (
     <>
-      {/* FIXED: High zIndex so it stays on top of map */}
       <button className="menu-trigger" onClick={() => { setOpen(true); setSection('home') }} style={{position:'relative', zIndex:9999, pointerEvents:'auto'}}><Menu size={23} /><span>Menu</span></button>
       {open && (
         <div className="menu-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(false) }} style={{position:'fixed', inset:0, zIndex:99999, background:'rgba(0,0,0,0.6)', display:'flex'}}>

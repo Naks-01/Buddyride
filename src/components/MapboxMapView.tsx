@@ -19,7 +19,8 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
       bearing: -10,
       antialias: true
     })
-    map.addControl(new mapboxgl.NavigationControl(), 'bottom-right')
+    // FIX: top-right so it's not hidden by bottom sheet
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right')
     mapRef.current = map
 
     const addRouteLayer = () => {
@@ -32,6 +33,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
             id: 'route-line',
             type: 'line',
             source: 'route',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
             paint: { 'line-color': '#1E90FF', 'line-width': 6, 'line-opacity': 0.95 }
           })
         }
@@ -90,5 +92,25 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     try { mapRef.current.setStyle(mapStyle) } catch {}
   }, [mapStyle])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+  return (
+    <>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <style>{`
+       .mapboxgl-ctrl-top-right {
+          top: 75px!important;
+          right: 12px!important;
+          z-index: 500!important;
+        }
+       .mapboxgl-ctrl-group {
+          background: white!important;
+          border-radius: 12px!important;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.35)!important;
+        }
+       .mapboxgl-ctrl-group button {
+          width: 42px!important;
+          height: 42px!important;
+        }
+      `}</style>
+    </>
+  )
 }
