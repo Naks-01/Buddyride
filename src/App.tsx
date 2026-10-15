@@ -4,12 +4,14 @@ import { DriverHome } from './pages/DriverHome'
 import { PassengerHome } from './pages/PassengerHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
 import { getProfile } from './lib/auth'
+import { DriverDocuments } from './pages/DriverDocuments'
+import { PassengerDocuments } from './pages/PassengerDocuments'
+import { AdminDocuments } from './pages/AdminDocuments'
 
 const logoCandidates = ['/buddyride-logo-main.jpg', '/buddyridelogo.jpg', '/logos/app-icon.png', '/favicon.png']
-
 function Brand({ compact = false }: { compact?: boolean }) {
   const [index, setIndex] = useState(0)
-  return <div className={`brand ${compact ? 'brand-compact' : ''}`}>
+  return <div className={`brand ${compact? 'brand-compact' : ''}`}>
     <img src={logoCandidates[index]} onError={() => setIndex((current) => Math.min(current + 1, logoCandidates.length - 1))} alt="BuddyRide logo" />
     <div><strong>BuddyRide1</strong><span>Limpopo eHailing</span></div>
   </div>
@@ -27,24 +29,22 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [page, setPage] = useState<'home'|'driver-docs'|'passenger-docs'|'admin-docs'>('home')
 
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     try {
       let result = await getProfile(userId)
       if (!result) {
         const { data, error } = await supabase.from('profiles').upsert({
-          id: userId,
-          email: userEmail,
-          role: preferredRole ?? 'passenger',
-          full_name: fullNameValue ?? null,
-          phone: phoneValue ?? null,
+          id: userId, email: userEmail, role: preferredRole?? 'passenger',
+          full_name: fullNameValue?? null, phone: phoneValue?? null,
         }, { onConflict: 'id' }).select('*').single()
         if (error) throw error
         result = data as Profile
       }
       setProfile(result)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not load your profile. Check your Supabase tables and policies.')
+      setMessage(error instanceof Error? error.message : 'Could not load your profile.')
       setProfile(null)
     }
   }, [])
@@ -59,93 +59,61 @@ export default function App() {
     supabase.auth.getSession().then(async ({ data, error }) => {
       if (!active) return
       if (error) setMessage(error.message)
-      if (data.session?.user) await loadProfile(data.session.user.id, data.session.user.email ?? null, data.session.user.user_metadata?.role === 'driver' || data.session.user.user_metadata?.role === 'admin' ? data.session.user.user_metadata.role : 'passenger', typeof data.session.user.user_metadata?.full_name === 'string' ? data.session.user.user_metadata.full_name : undefined, typeof data.session.user.user_metadata?.phone === 'string' ? data.session.user.user_metadata.phone : undefined)
+      if (data.session?.user) await loadProfile(data.session.user.id, data.session.user.email?? null, data.session.user.user_metadata?.role as Role?? 'passenger', data.session.user.user_metadata?.full_name, data.session.user.user_metadata?.phone)
       if (active) setLoading(false)
-    }).catch((error: unknown) => {
-      if (active) {
-        setMessage(error instanceof Error ? error.message : 'Unable to connect to Supabase.')
-        setLoading(false)
-      }
     })
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!active) return
-      if (!session?.user) {
-        setProfile(null)
-        setLoading(false)
-      } else {
-        window.setTimeout(() => { void loadProfile(session.user.id, session.user.email ?? null, session.user.user_metadata?.role === 'driver' || session.user.user_metadata?.role === 'admin' ? session.user.user_metadata.role : 'passenger', typeof session.user.user_metadata?.full_name === 'string' ? session.user.user_metadata.full_name : undefined, typeof session.user.user_metadata?.phone === 'string' ? session.user.user_metadata.phone : undefined) }, 0)
-      }
+      if (!session?.user) { setProfile(null); setLoading(false) }
+      else { void loadProfile(session.user.id, session.user.email?? null) }
     })
     return () => { active = false; listener.subscription.unsubscribe() }
   }, [loadProfile])
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setBusy(true)
-    setMessage('')
+    event.preventDefault(); setBusy(true); setMessage('')
     try {
       if (mode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim().toLowerCase(),
-          password,
-          options: { data: { role, full_name: fullName.trim(), phone: phone.trim() } },
-        })
+        const { data, error } = await supabase.auth.signUp({ email: email.trim().toLowerCase(), password, options: { data: { role, full_name: fullName.trim(), phone: phone.trim() } } })
         if (error) throw error
-        if (data.session && data.user) {
-          await loadProfile(data.user.id, data.user.email ?? null, role, fullName.trim(), phone.trim())
-        } else {
-          setMessage('Account created. Check your email to confirm your account, then log in.')
-          setMode('login')
-        }
+        if (data.session && data.user) await loadProfile(data.user.id, data.user.email?? null, role, fullName.trim(), phone.trim())
+        else { setMessage('Account created. Check email then log in.'); setMode('login') }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
-        if (error) throw error
-        if (data.user) await loadProfile(data.user.id, data.user.email ?? null)
+        if (error) throw error; if (data.user) await loadProfile(data.user.id, data.user.email?? null)
       }
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Authentication failed. Please try again.')
-    } finally {
-      setBusy(false)
-    }
+    } catch (error) { setMessage(error instanceof Error? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
 
-  async function signOut() {
-    const { error } = await supabase.auth.signOut()
-    if (error) setMessage(error.message)
-    else { setProfile(null); setPassword(''); setMessage('') }
-  }
-
-  if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide1</h1><p>{loading ? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
+  if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide1</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
-    if (profile.role === 'driver') return <DriverHome profile={profile} />
-    if (profile.role === 'admin') return <AdminHome profile={profile} />
-    return <PassengerHome profile={profile} />
+    if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
+    if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
+    if (page === 'admin-docs') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
+
+    const DocsButton = () => (
+      <div style={{ position:'fixed', bottom:'80px', left:'16px', right:'16px', zIndex:999 }}>
+        {profile.role==='driver' && <button onClick={()=> setPage('driver-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#ff7a00', color:'white', fontWeight:'bold', border:'none' }}>📄 My Documents (6)</button>}
+        {profile.role==='passenger' && <button onClick={()=> setPage('passenger-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#ff7a00', color:'white', fontWeight:'bold', border:'none' }}>🛡️ Verify ID</button>}
+        {profile.role==='admin' && <button onClick={()=> setPage('admin-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#000', color:'white', fontWeight:'bold', border:'none' }}>👑 Approve Documents</button>}
+      </div>
+    )
+
+    if (profile.role === 'driver') return <><DriverHome profile={profile} /><DocsButton /></>
+    if (profile.role === 'admin') return <><AdminHome profile={profile} /><DocsButton /></>
+    return <><PassengerHome profile={profile} /><DocsButton /></>
   }
 
   return <main className="auth-page">
-    <section className="auth-card">
-      <Brand />
-      <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
-      <p className="muted">{mode === 'login' ? 'Log in to continue your journey.' : 'Join your local ride community.'}</p>
-      <div className="role-row" aria-label="Choose account type">
-        <button type="button" className={role === 'passenger' ? 'selected passenger-role' : ''} onClick={() => setRole('passenger')}>👤 Passenger</button>
-        <button type="button" className={role === 'driver' ? 'selected driver-role' : ''} onClick={() => setRole('driver')}>🚗 Driver</button>
-      </div>
+    <section className="auth-card"><Brand /><h1>{mode === 'login'? 'Welcome back' : 'Create your account'}</h1>
+      <div className="role-row"><button type="button" className={role === 'passenger'? 'selected passenger-role' : ''} onClick={() => setRole('passenger')}>👤 Passenger</button><button type="button" className={role === 'driver'? 'selected driver-role' : ''} onClick={() => setRole('driver')}>🚗 Driver</button></div>
       <form onSubmit={submit}>
-        {mode === 'signup' && <>
-          <label>Full name<input autoComplete="name" value={fullName} onChange={e => setFullName(e.target.value)} required placeholder="Your full name" /></label>
-          <label>Phone number<input autoComplete="tel" value={phone} onChange={e => setPhone(e.target.value)} required placeholder="e.g. 071 234 5678" /></label>
-        </>}
-        <label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@example.com" /></label>
-        <label>Password<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={6} value={password} onChange={e => setPassword(e.target.value)} required placeholder="At least 6 characters" /></label>
-        <button className="primary full-width" disabled={busy} type="submit">{busy ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}</button>
+        {mode === 'signup' && <><label>Full name<input value={fullName} onChange={e => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={e => setPhone(e.target.value)} required /></label></>}
+        <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
+        <button className="primary full-width" disabled={busy} type="submit">{busy? 'Wait…' : mode === 'login'? 'Log in' : 'Create account'}</button>
       </form>
-      <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setMessage('') }}>
-        {mode === 'login' ? 'No account? Sign up' : 'Already registered? Log in'}
-      </button>
-      {message && <div className="notice" role="status">{message}</div>}
-      <p className="auth-foot">Your community connection · Limpopo, South Africa</p>
+      <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login'? 'signup' : 'login'); setMessage('') }}>{mode === 'login'? 'No account? Sign up' : 'Already registered? Log in'}</button>
+      {message && <div className="notice">{message}</div>}
     </section>
   </main>
 }

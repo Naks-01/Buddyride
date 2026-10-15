@@ -1,0 +1,10 @@
+import { useEffect, useState } from 'react'
+import { supabase, type Profile } from '../lib/supabase'
+const DOCS=[{ id:'id', label:'SA ID / Passport', icon:'🪪' },{ id:'selfie', label:'Selfie with ID', icon:'🤳' }] as const
+export function PassengerDocuments({ profile, onBack }: { profile: Profile, onBack: ()=>void }){
+  const [docs,setDocs]=useState<any[]>([]); const [up,setUp]=useState<string|null>(null)
+  useEffect(()=>{ load() },[]); async function load(){ const {data}= await supabase.from('passenger_documents').select('*').eq('passenger_id', profile.id); if(data) setDocs(data) }
+  const getDoc=(t:string)=> docs.find((d:any)=>d.doc_type===t)
+  async function upload(type:string, file:File){ setUp(type); try{ const name=`${profile.id}/${type}_${Date.now()}_${file.name}`; await supabase.storage.from('passenger_docs').upload(name,file,{upsert:true}); const {data:s}= await supabase.storage.from('passenger_docs').createSignedUrl(name,31536000); await supabase.from('passenger_documents').upsert({ passenger_id: profile.id, doc_type:type, file_url:s?.signedUrl||name, status:'pending' } as any, {onConflict:'passenger_id,doc_type'}); await load() }catch(e:any){ alert(e.message) } finally{ setUp(null) } }
+  return <div style={{ padding:'16px' }}><button onClick={onBack}>⬅ Back</button><h2>🛡️ Verify Identity</h2>{DOCS.map(d=>{ const ex=getDoc(d.id); return <div key={d.id} style={{ border:'1px solid #333', borderRadius:'12px', padding:'12px', marginBottom:'10px', background:'#1e1e1e', color:'white' }}><b>{d.icon} {d.label}</b> - {ex?.status||'missing'}<br/><label style={{ display:'block', background:'#ff7a00', color:'white', padding:'10px', borderRadius:'8px', textAlign:'center', marginTop:'8px' }}>{up===d.id?'Uploading...':'Upload'}<input type="file" hidden accept="image/*" onChange={e=> e.target.files?.[0] && upload(d.id, e.target.files[0])} /></label></div>})}</div>
+}
