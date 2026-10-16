@@ -10,12 +10,18 @@ import { AdminDocuments } from './pages/AdminDocuments'
 import LandingPage from './pages/LandingPage'
 
 const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com']
-const logoCandidates = ['/buddyride-logo-main.jpg', '/buddyridelogo.jpg', '/logos/app-icon.png', '/favicon.png']
+// JPG ONLY - your files
+const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
 
 function Brand({ compact = false }: { compact?: boolean }) {
   const [index, setIndex] = useState(0)
+  const [failed, setFailed] = useState(false)
+  if (failed) return <div className={`brand ${compact? 'brand-compact' : ''}`}><div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div></div>
   return <div className={`brand ${compact? 'brand-compact' : ''}`}>
-    <img src={logoCandidates[index]} onError={() => setIndex((current) => Math.min(current + 1, logoCandidates.length - 1))} alt="BuddyRide logo" />
+    <img src={logoCandidates[index]} onError={() => {
+      if (index < logoCandidates.length - 1) setIndex(i => i+1)
+      else setFailed(true)
+    }} alt="BuddyRide logo" />
     <div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div>
   </div>
 }
@@ -66,7 +72,6 @@ export default function App() {
       setShowLanding(false)
       const canPass = await checkSelfieLock(userId)
       if (!canPass) setShowSelfieCheck(true)
-
     } catch (error) {
       setMessage(error instanceof Error? error.message : 'Could not load your profile.')
       setProfile(null)
@@ -138,21 +143,17 @@ export default function App() {
           <section className="auth-card" style={{textAlign:'center'}}>
             <Brand />
             <h1>Monday / Saturday Check</h1>
-            <p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue. Required for drivers and passengers.</p>
+            <p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p>
             <input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />
             {selfieBusy && <p>Verifying...</p>}
             {message && <div className="notice">{message}</div>}
-            <p style={{fontSize:'11px', color:'#999', marginTop:'12px'}}>App is blocked until selfie is completed</p>
           </section>
         </main>
       )
     }
-
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
     if (page === 'admin-docs') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
-
-    // FINAL FIX: Verify ID removed for passengers - OPEN for requests
     const DocsButton = () => {
       if (profile.role === 'passenger') return null
       return (
@@ -161,21 +162,14 @@ export default function App() {
         </div>
       )
     }
-
     if (profile.role === 'driver') return <><DriverHome profile={profile} /><DocsButton /></>
     if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} />
     return <><PassengerHome profile={profile} /><DocsButton /></>
   }
 
+  // FIXED: Pass onLogin to LandingPage - fixes dark blank crash
   if (showLanding) {
-    return (
-      <div>
-        <LandingPage />
-        <div style={{position:'fixed', bottom:'20px', left:'50%', transform:'translateX(-50%)', zIndex:100}}>
-          <button onClick={()=> setShowLanding(false)} style={{padding:'12px 24px', borderRadius:'999px', background:'black', color:'white', fontWeight:'bold', border:'none'}}>Skip to Login →</button>
-        </div>
-      </div>
-    )
+    return <LandingPage onLogin={() => setShowLanding(false)} />
   }
 
   return <main className="auth-page">
@@ -189,7 +183,6 @@ export default function App() {
         <button type="button" onClick={() => setRole('passenger')} style={{padding:'10px', borderRadius:'10px', fontWeight:600, border: role==='passenger'? '2px solid black' : '1px solid #e5e7eb', background: role==='passenger'? '#111' : 'white', color: role==='passenger'? 'white' : 'black'}}>👤 Passenger</button>
         <button type="button" onClick={() => setRole('driver')} style={{padding:'10px', borderRadius:'10px', fontWeight:600, border: role==='driver'? '2px solid black' : '1px solid #e5e7eb', background: role==='driver'? '#111' : 'white', color: role==='driver'? 'white' : 'black'}}>🚗 Driver</button>
       </div>
-      {role==='admin' && <div style={{background:'#f3f4f6', border:'1px dashed #9ca3af', borderRadius:'8px', padding:'8px', marginBottom:'12px', fontSize:'11px', textAlign:'center'}}>{isAdminEmail? '👑 Owner mode active' : '⚠️ Only mokgalaka.nt@gmail.com can use admin'}</div>}
       <form onSubmit={submit}>
         {mode === 'signup' && <><label>Full name<input value={fullName} onChange={e => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={e => setPhone(e.target.value)} required /></label></>}
         <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
