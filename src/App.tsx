@@ -151,12 +151,17 @@ export default function App() {
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
     if (page === 'admin-docs') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
-    const DocsButton = () => (
-      <div style={{ position:'fixed', bottom:'80px', left:'16px', right:'16px', zIndex:999 }}>
-        {profile.role==='driver' && <button onClick={()=> setPage('driver-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#ff7a00', color:'white', fontWeight:'bold', border:'none' }}>📄 My Documents (6)</button>}
-        {profile.role==='passenger' && <button onClick={()=> setPage('passenger-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#ff7a00', color:'white', fontWeight:'bold', border:'none' }}>🛡️ Verify ID</button>}
-      </div>
-    )
+
+    // FINAL FIX: Verify ID removed for passengers - OPEN for requests
+    const DocsButton = () => {
+      if (profile.role === 'passenger') return null
+      return (
+        <div style={{ position:'fixed', bottom:'80px', left:'16px', right:'16px', zIndex:999 }}>
+          <button onClick={()=> setPage('driver-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#ff7a00', color:'white', fontWeight:'bold', border:'none' }}>📄 My Documents (6)</button>
+        </div>
+      )
+    }
+
     if (profile.role === 'driver') return <><DriverHome profile={profile} /><DocsButton /></>
     if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} />
     return <><PassengerHome profile={profile} /><DocsButton /></>
