@@ -9,12 +9,15 @@ import { PassengerDocuments } from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
 import LandingPage from './pages/LandingPage'
 
+// ONLY THESE EMAILS CAN BE ADMIN
+const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com']
+
 const logoCandidates = ['/buddyride-logo-main.jpg', '/buddyridelogo.jpg', '/logos/app-icon.png', '/favicon.png']
 function Brand({ compact = false }: { compact?: boolean }) {
   const [index, setIndex] = useState(0)
   return <div className={`brand ${compact? 'brand-compact' : ''}`}>
     <img src={logoCandidates[index]} onError={() => setIndex((current) => Math.min(current + 1, logoCandidates.length - 1))} alt="BuddyRide logo" />
-    <div><strong>BuddyRide1</strong><span>Limpopo eHailing</span></div>
+    <div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div>
   </div>
 }
 
@@ -33,12 +36,21 @@ export default function App() {
   const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'>('landing')
   const [showLanding, setShowLanding] = useState(true)
 
+  const isAdminEmail = ADMIN_EMAILS.includes(email.trim().toLowerCase())
+
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     try {
       let result = await getProfile(userId)
       if (!result) {
+        // SECURITY: Only allow admin role if email is in whitelist
+        let finalRole = preferredRole?? 'passenger'
+        if (finalRole === 'admin' && userEmail &&!ADMIN_EMAILS.includes(userEmail.toLowerCase())) {
+          // Check if they were added as staff in profiles
+          const { data: existing } = await supabase.from('profiles').select('role').eq('id', userId).single()
+          if (existing?.role!== 'admin') finalRole = 'passenger'
+        }
         const { data, error } = await supabase.from('profiles').upsert({
-          id: userId, email: userEmail, role: preferredRole?? 'passenger',
+          id: userId, email: userEmail, role: finalRole,
           full_name: fullNameValue?? null, phone: phoneValue?? null,
         }, { onConflict: 'id' }).select('*').single()
         if (error) throw error
@@ -75,6 +87,10 @@ export default function App() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setMessage('')
     try {
+      // BLOCK non-whitelisted admin signup
+      if (mode === 'signup' && role === 'admin' &&!isAdminEmail) {
+        throw new Error('Admin signup restricted. Only owner can create admin.')
+      }
       if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({ email: email.trim().toLowerCase(), password, options: { data: { role, full_name: fullName.trim(), phone: phone.trim() } } })
         if (error) throw error
@@ -87,7 +103,7 @@ export default function App() {
     } catch (error) { setMessage(error instanceof Error? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
 
-  if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide1</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
+  if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
@@ -107,7 +123,6 @@ export default function App() {
     return <><PassengerHome profile={profile} /><DocsButton /></>
   }
 
-  // SHOW LANDING PAGE FOR www.buddyride.co.za
   if (showLanding) {
     return (
       <div>
@@ -123,7 +138,13 @@ export default function App() {
     <section className="auth-card">
       <button onClick={()=> setShowLanding(true)} style={{marginBottom:'10px', background:'none', border:'none', cursor:'pointer', fontSize:'14px'}}>← Back to Home</button>
       <Brand /><h1>{mode === 'login'? 'Welcome back' : 'Create your account'}</h1>
-      <div className="role-row"><button type="button" className={role === 'passenger'? 'selected passenger-role' : ''} onClick={() => setRole('passenger')}>👤 Passenger</button><button type="button" className={role === 'driver'? 'selected driver-role' : ''} onClick={() => setRole('driver')}>🚗 Driver</button></div>
+
+      <div className="role-row" style={{display:'grid', gridTemplateColumns: isAdminEmail? '1fr 1fr 1fr' : '1fr 1fr', gap:'8px', marginBottom:'16px'}}>
+        <button type="button" onClick={() => setRole('passenger')} style={{padding:'10px', borderRadius:'10px', fontWeight:600, border: role==='passenger'? '2px solid black' : '1px solid #e5e7eb', background: role==='passenger'? '#111' : 'white', color: role==='passenger'? 'white' : 'black'}}>👤 Passenger</button>
+        <button type="button" onClick={() => setRole('driver')} style={{padding:'10px', borderRadius:'10px', fontWeight:600, border: role==='driver'? '2px solid black' : '1px solid #e5e7eb', background: role==='driver'? '#111' : 'white', color: role==='driver'? 'white' : 'black'}}>🚗 Driver</button>
+        {isAdminEmail && <button type="button" onClick={() => setRole('admin')} style={{padding:'10px', borderRadius:'10px', fontWeight:700, border: role==='admin'? '2px solid black' : '1px solid #e5e7eb', background: role==='admin'? '#111827' : 'white', color: role==='admin'? 'white' : 'black'}}>👑 Admin</button>}
+      </div>
+
       <form onSubmit={submit}>
         {mode === 'signup' && <><label>Full name<input value={fullName} onChange={e => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={e => setPhone(e.target.value)} required /></label></>}
         <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
@@ -131,6 +152,7 @@ export default function App() {
       </form>
       <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login'? 'signup' : 'login'); setMessage('') }}>{mode === 'login'? 'No account? Sign up' : 'Already registered? Log in'}</button>
       {message && <div className="notice">{message}</div>}
+      {mode==='signup' && role==='admin' &&!isAdminEmail && <div style={{marginTop:'10px', color:'#dc2626', fontSize:'13px'}}>Admin is restricted to owner only</div>}
     </section>
   </main>
 }
