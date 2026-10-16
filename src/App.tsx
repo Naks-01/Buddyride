@@ -3,7 +3,7 @@ import { AdminHome } from './pages/AdminHome'
 import { DriverHome } from './pages/DriverHome'
 import { PassengerHome } from './pages/PassengerHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
-import { getProfile } from './lib/auth'
+import { getProfile, checkSelfieLock } from './lib/auth' // ADDED: checkSelfieLock
 import { DriverDocuments } from './pages/DriverDocuments'
 import { PassengerDocuments } from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
@@ -34,6 +34,9 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'>('landing')
   const [showLanding, setShowLanding] = useState(true)
+  // ADDED: Selfie Lock State
+  const [showSelfieCheck, setShowSelfieCheck] = useState(false)
+  const [selfieBusy, setSelfieBusy] = useState(false)
 
   const isAdminEmail = ADMIN_EMAILS.includes(email.trim().toLowerCase())
 
@@ -62,6 +65,10 @@ export default function App() {
       }
       setProfile(result)
       setShowLanding(false)
+      // ADDED: Check selfie lock for Monday & Saturday (driver + passenger)
+      const canPass = await checkSelfieLock(userId)
+      if (!canPass) setShowSelfieCheck(true)
+
     } catch (error) {
       setMessage(error instanceof Error? error.message : 'Could not load your profile.')
       setProfile(null)
@@ -105,9 +112,46 @@ export default function App() {
     } catch (error) { setMessage(error instanceof Error? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
 
+  // ADDED: Selfie upload handler
+  async function handleSelfieUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file ||!profile) return
+    setSelfieBusy(true)
+    try {
+      const fileName = `${profile.id}/${Date.now()}.jpg`
+      const { error: uploadError } = await supabase.storage.from('selfies').upload(fileName, file)
+      if (uploadError) throw uploadError
+      const { data: { publicUrl } } = supabase.storage.from('selfies').getPublicUrl(fileName)
+      const today = new Date().toISOString().split('T')[0]
+      await supabase.from('profiles').update({ last_selfie_date: today, last_selfie_url: publicUrl } as any).eq('id', profile.id)
+      setShowSelfieCheck(false)
+    } catch (err) {
+      setMessage(err instanceof Error? err.message : 'Selfie upload failed')
+    } finally {
+      setSelfieBusy(false)
+    }
+  }
+
   if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
+    // ADDED: Monday/Saturday Selfie Gate for drivers AND passengers
+    if (showSelfieCheck) {
+      return (
+        <main className="auth-page">
+          <section className="auth-card" style={{textAlign:'center'}}>
+            <Brand />
+            <h1>Monday / Saturday Check</h1>
+            <p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue. Required for drivers and passengers.</p>
+            <input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />
+            {selfieBusy && <p>Verifying...</p>}
+            {message && <div className="notice">{message}</div>}
+            <p style={{fontSize:'11px', color:'#999', marginTop:'12px'}}>App is blocked until selfie is completed</p>
+          </section>
+        </main>
+      )
+    }
+
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
     if (page === 'admin-docs') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
