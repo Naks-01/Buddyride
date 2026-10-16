@@ -21,7 +21,7 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
       <div style={{ display: "flex", flexWrap: "wrap", flex: 1 }}>
         <div style={{ background: "#ff7a00", flex: "1 1 320px", padding: 24, color: "white" }}>
           <h2 style={{ fontWeight: 900, fontSize: 26 }}>Passenger<br />Need a ride?</h2>
-          <div style={{ marginTop: 16, background: "white", borderRadius: 12, padding: 12, color: "black", textAlign: "center", fontWeight: 700 }}>Polokwane CBD 📍</div>
+          <div style={{ marginTop: 16, background: "white", borderRadius: 12, padding: 12, color: "black", textAlign: "center", fontWeight: 700 }}>Limpopo 📍</div>
           <button onClick={onLogin} style={{ marginTop: 20, width: "100%", background: "#1e3a8a", color: "white", padding: 14, borderRadius: 999, fontWeight: 700, border: "none" }}>Request Buddy</button>
         </div>
         <div style={{ background: "#121212", flex: "1 1 320px", padding: 24, color: "white" }}>
