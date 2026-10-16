@@ -72,6 +72,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const text = isDark? 'white' : 'black'
   const border = isDark? '#333' : '#ddd'
 
+  // FIX: Check if passenger is verified
+  const isVerified = (profile as any).is_verified === true || (profile as any).is_verified === 1
+
   function onDragStart(e: any) { setIsDragging(true); dragStartY.current = e.touches? e.touches[0].clientY : e.clientY; dragStartH.current = sheetHeight }
   function onDragMove(e: any) { if (!isDragging) return; const y = e.touches? e.touches[0].clientY : e.clientY; const deltaY = y - dragStartY.current; const deltaVh = (deltaY / window.innerHeight) * 100; let newH = dragStartH.current - deltaVh; if (newH < 18) newH = 18; if (newH > 75) newH = 75; setSheetHeight(newH) }
   function onDragEnd() { setIsDragging(false); dragStartY.current = 0; if (sheetHeight < 28) setSheetHeight(18); else if (sheetHeight < 52) setSheetHeight(38); else setSheetHeight(62) }
@@ -221,6 +224,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function requestRide() {
+    if (!isVerified) { alert('Please verify your ID first. Admin must approve you.'); return; }
     setLoading(true)
     const { pCoords, dCoords } = await ensureCoords(); if (!pCoords ||!dCoords) { setLoading(false); return }
     let finalFare = price || calcFareForCategory(selectedCat, 3); let finalKm = distance || 2.5
@@ -289,6 +293,14 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <div style={{ padding: '0 16px 20px 16px' }}>
         {!ride && (<>
           <h2 style={{ margin: '0 0 12px' }}>Where are you going?</h2>
+
+          {/* VERIFICATION WARNING - NEW */}
+          {!isVerified && (
+            <div style={{padding:'12px', background:'#ff7a00', borderRadius:'12px', textAlign:'center', fontWeight:'bold', color:'white', marginBottom:'12px', fontSize:'14px'}}>
+              🛡️ Your ID is pending approval. You can enter destination but cannot request until Admin approves.
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ position: 'relative' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
@@ -309,13 +321,22 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={calculateEstimate} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={requestRide} disabled={loading} style={{ flex: 1.5, padding: '14px', borderRadius: '14px', border: 'none', background: '#ff7a00', color: 'white', fontWeight: 'bold' }}>{loading? 'Finding...' : 'Request Buddy'}</button>
+              <button onClick={requestRide} disabled={loading ||!isVerified} style={{ flex: 1.5, padding: '14px', borderRadius: '14px', border: 'none', background:!isVerified? '#555' : '#ff7a00', color: 'white', fontWeight: 'bold', opacity:!isVerified? 0.6 : 1 }}>
+                {!isVerified? 'Pending Approval' : loading? 'Finding...' : 'Request Buddy'}
+              </button>
             </div>
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
 
-        {ride && ride.status === 'searching' && (<><h3>Searching driver... ●</h3><p style={{ fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p><button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button></>)}
+        {ride && ride.status === 'searching' && (
+          <>
+            <h3>Searching driver... ●</h3>
+            <p style={{ fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
+            {/* FIXED: ONLY Cancel button, NO Verify ID button overlapping */}
+            <button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
+          </>
+        )}
 
         {ride && ['accepted','arrived'].includes(ride.status as any) && driverProfile && (
           <>
