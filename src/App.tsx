@@ -44,7 +44,6 @@ export default function App() {
 
       if (!result) {
         let finalRole = preferredRole?? 'passenger'
-        // Only owner can be admin at signup
         if (finalRole === 'admin' &&!isOwner) finalRole = 'passenger'
         const { data, error } = await supabase.from('profiles').upsert({
           id: userId, email: userEmail, role: finalRole,
@@ -53,16 +52,13 @@ export default function App() {
         if (error) throw error
         result = data as Profile
       } else {
-        // OWNER FIX: Respect which button owner clicked at login
         if (isOwner && preferredRole) {
           if (preferredRole === 'admin') {
-            // Owner wants Admin - ensure DB is admin
             if (result.role!== 'admin') {
               await supabase.from('profiles').update({ role: 'admin' }).eq('id', userId)
             }
             result.role = 'admin'
           } else {
-            // Owner wants to TEST as passenger/driver - temporary, don't save to DB
             result = {...result, role: preferredRole } as Profile
           }
         }
@@ -105,7 +101,6 @@ export default function App() {
         if (data.session && data.user) await loadProfile(data.user.id, data.user.email?? null, role, fullName.trim(), phone.trim())
         else { setMessage('Account created. Check email then log in.'); setMode('login') }
       } else {
-        // FIX: Pass the role button that was clicked
         const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
         if (error) throw error;
         if (data.user) await loadProfile(data.user.id, data.user.email?? null, role)
@@ -119,15 +114,16 @@ export default function App() {
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
     if (page === 'admin-docs') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
+
+    // FIXED: No floating button for admin - admin has its own buttons inside AdminHome
     const DocsButton = () => (
       <div style={{ position:'fixed', bottom:'80px', left:'16px', right:'16px', zIndex:999 }}>
         {profile.role==='driver' && <button onClick={()=> setPage('driver-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#ff7a00', color:'white', fontWeight:'bold', border:'none' }}>📄 My Documents (6)</button>}
         {profile.role==='passenger' && <button onClick={()=> setPage('passenger-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#ff7a00', color:'white', fontWeight:'bold', border:'none' }}>🛡️ Verify ID</button>}
-        {profile.role==='admin' && <button onClick={()=> setPage('admin-docs')} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'#000', color:'white', fontWeight:'bold', border:'none' }}>👑 Approve Documents</button>}
       </div>
     )
     if (profile.role === 'driver') return <><DriverHome profile={profile} /><DocsButton /></>
-    if (profile.role === 'admin') return <><AdminHome profile={profile} /><DocsButton /></>
+    if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} />
     return <><PassengerHome profile={profile} /><DocsButton /></>
   }
 
@@ -144,7 +140,6 @@ export default function App() {
 
   return <main className="auth-page">
     <section className="auth-card" style={{position:'relative'}}>
-      {/* GREEN LINE ADMIN - Top right small */}
       <div style={{position:'absolute', top:'0px', right:'0px', display:'flex', alignItems:'center', gap:'6px'}}>
         <button
           onClick={() => setRole(role==='admin'? 'passenger' : 'admin')}
