@@ -7,6 +7,7 @@ import { getProfile } from './lib/auth'
 import { DriverDocuments } from './pages/DriverDocuments'
 import { PassengerDocuments } from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
+import LandingPage from './pages/LandingPage'
 
 const logoCandidates = ['/buddyride-logo-main.jpg', '/buddyridelogo.jpg', '/logos/app-icon.png', '/favicon.png']
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -29,7 +30,8 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [page, setPage] = useState<'home'|'driver-docs'|'passenger-docs'|'admin-docs'>('home')
+  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'>('landing')
+  const [showLanding, setShowLanding] = useState(true)
 
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     try {
@@ -43,6 +45,7 @@ export default function App() {
         result = data as Profile
       }
       setProfile(result)
+      setShowLanding(false)
     } catch (error) {
       setMessage(error instanceof Error? error.message : 'Could not load your profile.')
       setProfile(null)
@@ -104,8 +107,22 @@ export default function App() {
     return <><PassengerHome profile={profile} /><DocsButton /></>
   }
 
+  // SHOW LANDING PAGE FOR www.buddyride.co.za
+  if (showLanding) {
+    return (
+      <div>
+        <LandingPage />
+        <div style={{position:'fixed', bottom:'20px', left:'50%', transform:'translateX(-50%)', zIndex:100, display:'flex', gap:'10px'}}>
+          <button onClick={()=> setShowLanding(false)} style={{padding:'12px 24px', borderRadius:'999px', background:'black', color:'white', fontWeight:'bold', border:'none', cursor:'pointer'}}>Skip to Login →</button>
+        </div>
+      </div>
+    )
+  }
+
   return <main className="auth-page">
-    <section className="auth-card"><Brand /><h1>{mode === 'login'? 'Welcome back' : 'Create your account'}</h1>
+    <section className="auth-card">
+      <button onClick={()=> setShowLanding(true)} style={{marginBottom:'10px', background:'none', border:'none', cursor:'pointer', fontSize:'14px'}}>← Back to Home</button>
+      <Brand /><h1>{mode === 'login'? 'Welcome back' : 'Create your account'}</h1>
       <div className="role-row"><button type="button" className={role === 'passenger'? 'selected passenger-role' : ''} onClick={() => setRole('passenger')}>👤 Passenger</button><button type="button" className={role === 'driver'? 'selected driver-role' : ''} onClick={() => setRole('driver')}>🚗 Driver</button></div>
       <form onSubmit={submit}>
         {mode === 'signup' && <><label>Full name<input value={fullName} onChange={e => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={e => setPhone(e.target.value)} required /></label></>}
