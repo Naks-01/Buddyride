@@ -3,9 +3,9 @@ import { AdminHome } from './pages/AdminHome'
 import { DriverHome } from './pages/DriverHome'
 import { PassengerHome } from './pages/PassengerHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
-import { getProfile, checkSelfieLock } from './lib/auth' // ADDED: checkSelfieLock
+import { getProfile, checkSelfieLock } from './lib/auth'
 import { DriverDocuments } from './pages/DriverDocuments'
-import { PassengerDocuments } from './pages/PassengerDocuments'
+import PassengerDocuments from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
 import LandingPage from './pages/LandingPage'
 
@@ -34,7 +34,6 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'>('landing')
   const [showLanding, setShowLanding] = useState(true)
-  // ADDED: Selfie Lock State
   const [showSelfieCheck, setShowSelfieCheck] = useState(false)
   const [selfieBusy, setSelfieBusy] = useState(false)
 
@@ -65,7 +64,6 @@ export default function App() {
       }
       setProfile(result)
       setShowLanding(false)
-      // ADDED: Check selfie lock for Monday & Saturday (driver + passenger)
       const canPass = await checkSelfieLock(userId)
       if (!canPass) setShowSelfieCheck(true)
 
@@ -112,7 +110,6 @@ export default function App() {
     } catch (error) { setMessage(error instanceof Error? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
 
-  // ADDED: Selfie upload handler
   async function handleSelfieUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file ||!profile) return
@@ -135,7 +132,6 @@ export default function App() {
   if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
-    // ADDED: Monday/Saturday Selfie Gate for drivers AND passengers
     if (showSelfieCheck) {
       return (
         <main className="auth-page">
