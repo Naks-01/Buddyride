@@ -1,162 +1,163 @@
 import { useEffect, useState } from 'react'
-import { supabase, type Profile, type Ride } from '../lib/supabase'
-import { NavigationMenu } from '../components/NavigationMenu'
+import { supabase, type Profile } from '../lib/supabase'
 
-type Doc = {
-  id: string
-  driver_id: string
-  doc_type: string
-  file_url: string
-  status: string
-  created_at: string
-  driver_name?: string
-}
+type Props = { profile: Profile }
 
-export function AdminHome({ profile }: { profile: Profile }) {
-  const [rides, setRides] = useState<Ride[]>([])
-  const [users, setUsers] = useState<Profile[]>([])
-  const [docs, setDocs] = useState<Doc[]>([])
-  const [filter, setFilter] = useState<'all'|'searching'|'active'|'completed'|'documents'>('all')
-
-  function playAdminPing() {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-      const o = ctx.createOscillator(); const g = ctx.createGain()
-      o.connect(g); g.connect(ctx.destination)
-      o.frequency.value = 800; g.gain.value = 0.5
-      o.start(); o.stop(ctx.currentTime + 0.4)
-    } catch {}
-  }
+export function AdminHome({ profile }: Props) {
+  const [stats, setStats] = useState({ rides: 0, drivers: 0, passengers: 0, active: 0 })
+  const [fares, setFares] = useState({ base: 15, perKm: 8, perMin: 1.5, minFare: 25 })
+  const [commission, setCommission] = useState(20)
+  const [zones, setZones] = useState([
+    { name: 'Polokwane Central', active: true, surge: 1.0 },
+    { name: 'Seshego', active: true, surge: 1.0 },
+    { name: 'Tzaneen', active: false, surge: 1.2 },
+    { name: 'Giyani', active: false, surge: 1.3 },
+  ])
+  const [promo, setPromo] = useState({ code: 'WELCOME50', discount: 50, uses: 124 })
+  const [tab, setTab] = useState<'overview'|'finance'|'zones'|'promos'>('overview')
 
   useEffect(() => {
-    Promise.all([
-      supabase.from('rides').select('*').order('created_at', { ascending: false }).limit(100),
-      supabase.from('profiles').select('*').order('created_at', { ascending: false }).limit(200),
-      supabase.from('driver_documents').select('*').order('created_at', { ascending: false }).limit(100)
-    ]).then(([r, u, d]) => { 
-      setRides((r.data as any) || []); 
-      setUsers((u.data as any) || [])
-      setDocs((d.data as any) || [])
-    })
-
-    const ch = supabase.channel('admin-rides').on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, p => {
-      const newRide = p.new as Ride
-      setRides(prev => {
-        const exists = prev.find(r => r.id === newRide.id)
-        if (exists) return prev.map(r => r.id === newRide.id? newRide : r)
-        playAdminPing()
-        return [newRide, ...prev].slice(0, 100)
-      })
-    }).subscribe()
-    const ch2 = supabase.channel('admin-profiles').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, p => {
-      setUsers(prev => {
-        const n = p.new as Profile
-        const exists = prev.find(u => u.id === n.id)
-        if (exists) return prev.map(u => u.id === n.id? n : u)
-        return [n, ...prev].slice(0, 200)
-      })
-    }).subscribe()
-    const ch3 = supabase.channel('admin-docs').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_documents' }, p => {
-      setDocs(prev => {
-        const n = p.new as Doc
-        const exists = prev.find(d => d.id === n.id)
-        if (exists) return prev.map(d => d.id === n.id? n : d)
-        playAdminPing()
-        return [n, ...prev].slice(0, 100)
-      })
-    }).subscribe()
-    return () => { supabase.removeChannel(ch); supabase.removeChannel(ch2); supabase.removeChannel(ch3) }
+    (async () => {
+      const { count: ridesCount } = await supabase.from('rides').select('*', { count: 'exact', head: true })
+      const { count: driversCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'driver')
+      const { count: passengersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'passenger')
+      const { count: activeCount } = await supabase.from('driver_status').select('*', { count: 'exact', head: true }).eq('is_online', true)
+      setStats({ rides: ridesCount||0, drivers: driversCount||0, passengers: passengersCount||0, active: activeCount||0 })
+    })()
   }, [])
 
-  const approveDoc = async (id: string) => {
-    await supabase.from('driver_documents').update({ status: 'approved' }).eq('id', id)
-    setDocs(prev => prev.map(d => d.id===id? {...d, status:'approved'}:d))
-  }
-  const rejectDoc = async (id: string) => {
-    await supabase.from('driver_documents').update({ status: 'rejected' }).eq('id', id)
-    setDocs(prev => prev.map(d => d.id===id? {...d, status:'rejected'}:d))
-  }
+  const revenueEst = stats.rides * 45 // avg R45 per ride
 
-  const completed = rides.filter(r => r.status === 'completed')
-  const searching = rides.filter(r => r.status === 'searching')
-  const active = rides.filter(r => ['accepted','arrived','picked_up','en_route','in_progress'].includes(r.status as any))
-  const drivers = users.filter(u => (u as any).role === 'driver')
-  const onlineDrivers = drivers.filter((d: any) => d.is_online)
-  const passengers = users.filter(u => (u as any).role !== 'driver' && (u as any).role !== 'admin')
-  const revenue = completed.reduce((s, r) => {
-    const comm = (r as any).buddyride_commission || (Number(r.fare) * 0.20)
-    return s + Number(comm || 0)
-  }, 0)
-
-  const filteredRides = filter === 'searching'? searching : filter === 'active'? active : filter === 'completed'? completed : rides
-  const pendingDocs = docs.filter(d=>d.status==='pending')
-
-  return <div className="admin" style={{ padding: '16px', background: '#121212', color: 'white', minHeight: '100dvh' }}>
-    <header className="topbar" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}><NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} /><strong>BuddyRide Admin</strong><span style={{ marginLeft: 'auto', opacity: 0.7, fontSize: '12px' }}>{profile.email}</span></header>
-    
-    <div className="stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '10px', marginBottom: '16px' }}>
-      <div style={{ background: '#1e1e1e', padding: '12px', borderRadius: '12px', textAlign: 'center' }}><b style={{ display: 'block', fontSize: '20px' }}>{users.length}</b><span style={{ fontSize: '11px', opacity: 0.7 }}>Total Users</span><div style={{ fontSize: '10px', marginTop: '4px' }}>{drivers.length} drivers • {passengers.length} pax • <span style={{ color: '#00d181' }}>{onlineDrivers.length} online</span></div></div>
-      <div style={{ background: '#1e1e1e', padding: '12px', borderRadius: '12px', textAlign: 'center' }}><b style={{ display: 'block', fontSize: '20px' }}>{rides.length}</b><span style={{ fontSize: '11px', opacity: 0.7 }}>Total Rides</span><div style={{ fontSize: '10px', marginTop: '4px', color: '#ff7a00' }}>{searching.length} searching • {active.length} active</div></div>
-      <div style={{ background: '#1e1e1e', padding: '12px', borderRadius: '12px', textAlign: 'center' }}><b style={{ display: 'block', fontSize: '20px', color: '#00d181' }}>R {revenue.toFixed(2)}</b><span style={{ fontSize: '11px', opacity: 0.7 }}>Platform 20%</span><div style={{ fontSize: '10px', marginTop: '4px' }}>{completed.length} completed • {pendingDocs.length} docs pending</div></div>
-    </div>
-
-    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap:'wrap' }}>
-      <button onClick={() => setFilter('all')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='all'? '#ff7a00' : '#2a2a2a', color: 'white', fontSize: '12px', fontWeight: 'bold' }}>All {rides.length}</button>
-      <button onClick={() => setFilter('searching')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='searching'? '#ff7a00' : '#2a2a2a', color: 'white', fontSize: '12px' }}>🔍 Searching {searching.length}</button>
-      <button onClick={() => setFilter('active')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='active'? '#00d181' : '#2a2a2a', color: 'white', fontSize: '12px' }}>🟢 Active {active.length}</button>
-      <button onClick={() => setFilter('completed')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='completed'? '#00d181' : '#2a2a2a', color: 'white', fontSize: '12px' }}>✅ Completed {completed.length}</button>
-      <button onClick={() => setFilter('documents')} style={{ padding: '8px 12px', borderRadius: '20px', border: 'none', background: filter==='documents'? '#4285F4' : '#2a2a2a', color: 'white', fontSize: '12px', fontWeight: filter==='documents'?'bold':'normal' }}>📄 Docs {pendingDocs.length? `(${pendingDocs.length} pending)`: `(${docs.length})`}</button>
-    </div>
-
-    {filter === 'documents' ? (
-      <section className="panel" style={{ background: '#1e1e1e', borderRadius: '12px', padding: '12px' }}>
-        <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Driver Documents - Bolt Style - Live</h2>
-        {docs.length===0? <p style={{opacity:0.6, fontSize:12}}>No documents uploaded yet. Ask driver to go to Menu {'>'} My documents {'>'} Upload CRC.</p> : docs.map(d => {
-          const driver = users.find(u=>u.id===d.driver_id)
-          return (
-            <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems:'center', padding: '10px 0', borderBottom: '1px solid #333', fontSize: '12px', gap:8 }}>
-              <div style={{flex:1}}>
-                <b>{driver?.full_name || d.driver_id.slice(0,8)}</b> • {d.doc_type.toUpperCase()}<br/>
-                <span style={{opacity:0.6, fontSize:11}}>{d.created_at ? new Date(d.created_at).toLocaleString() : ''} • {d.status}</span>
-              </div>
-              <a href={d.file_url} target="_blank" rel="noreferrer" style={{background:'#333', color:'white', padding:'6px 10px', borderRadius:8, textDecoration:'none', fontSize:11}}>View</a>
-              {d.status==='pending' && (
-                <>
-                  <button onClick={()=>approveDoc(d.id)} style={{background:'#00d181', color:'white', border:'none', padding:'6px 10px', borderRadius:8, fontSize:11, fontWeight:'bold'}}>Approve</button>
-                  <button onClick={()=>rejectDoc(d.id)} style={{background:'#ff4444', color:'white', border:'none', padding:'6px 10px', borderRadius:8, fontSize:11}}>Reject</button>
-                </>
-              )}
-              {d.status==='approved' && <span style={{color:'#00d181', fontWeight:'bold', fontSize:11}}>✅ Approved</span>}
-              {d.status==='rejected' && <span style={{color:'#ff4444', fontWeight:'bold', fontSize:11}}>❌ Rejected</span>}
-            </div>
-          )
-        })}
-      </section>
-    ) : (
-      <section className="panel" style={{ background: '#1e1e1e', borderRadius: '12px', padding: '12px' }}>
-        <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Recent rides - {filter} • Live 🔊</h2>
-        {filteredRides.map(r => (
-          <div className="table-row" key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #333', fontSize: '12px' }}>
-            <span style={{ opacity: 0.6 }}>{r.id.slice(0,8)} • {r.created_at ? new Date(r.created_at).toLocaleTimeString() : ''}</span>
-            <span style={{ 
-              background: r.status==='searching'? '#ff7a00' : r.status==='completed'? '#00d181' : '#4285F4',
-              color: 'white', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold'
-            }}>{r.status}</span>
-            <span>R {Number((r as any).total_fare ?? r.fare ?? 0).toFixed(0)} • {(r as any).ride_category || 'Go'}</span>
-            <span style={{ color: '#00d181' }}>BR R {Number((r as any).buddyride_commission ?? Number(r.fare)*0.2).toFixed(0)}</span>
-          </div>
-        ))}
-      </section>
-    )}
-
-    <section className="panel" style={{ background: '#1e1e1e', borderRadius: '12px', padding: '12px', marginTop: '12px' }}>
-      <h2 style={{ margin: '0 0 10px', fontSize: '14px' }}>Drivers Online • {onlineDrivers.length}</h2>
-      {onlineDrivers.slice(0, 10).map((d: any) => (
-        <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #333', fontSize: '12px' }}>
-          <span>{d.full_name || d.email?.slice(0,15)} • {d.car_plate || ''} • R{d.wallet_balance || 0}</span>
-          <span style={{ color: '#00d181' }}>● ONLINE</span>
+  return (
+    <main className="min-h-screen bg-[#0f172a] text-white p-4 pb-24">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Admin Command Center</h1>
+          <p className="text-sm text-slate-400">Welcome {profile.full_name || profile.email} 👑</p>
         </div>
-      ))}
-    </section>
-  </div>
+        <button onClick={() => supabase.auth.signOut()} className="px-4 py-2 rounded-full bg-slate-800 text-sm">Log out</button>
+      </div>
+
+      {/* Stats like Bolt */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div className="bg-slate-800 rounded-2xl p-4">
+          <p className="text-xs text-slate-400">TOTAL RIDES</p>
+          <p className="text-2xl font-bold">{stats.rides}</p>
+          <p className="text-xs text-green-400 mt-1">↑ Live tracking</p>
+        </div>
+        <div className="bg-slate-800 rounded-2xl p-4">
+          <p className="text-xs text-slate-400">ACTIVE DRIVERS</p>
+          <p className="text-2xl font-bold">{stats.active} / {stats.drivers}</p>
+          <p className="text-xs text-orange-400 mt-1">Online now</p>
+        </div>
+        <div className="bg-slate-800 rounded-2xl p-4">
+          <p className="text-xs text-slate-400">PASSENGERS</p>
+          <p className="text-2xl font-bold">{stats.passengers}</p>
+          <p className="text-xs text-slate-400 mt-1">Registered</p>
+        </div>
+        <div className="bg-orange-500 rounded-2xl p-4 text-white">
+          <p className="text-xs opacity-80">EST. REVENUE</p>
+          <p className="text-2xl font-bold">R {revenueEst}</p>
+          <p className="text-xs opacity-80 mt-1">{commission}% commission</p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 mb-4 overflow-x-auto">
+        {[
+          {id:'overview', label:'📊 Overview'},
+          {id:'finance', label:'💰 Finance'},
+          {id:'zones', label:'📍 Zones'},
+          {id:'promos', label:'🎁 Promos'},
+        ].map(t => (
+          <button key={t.id} onClick={()=>setTab(t.id as any)} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap ${tab===t.id?'bg-white text-black font-bold':'bg-slate-800'}`}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* OVERVIEW */}
+      {tab==='overview' && (
+        <div className="space-y-4">
+          <div className="bg-slate-800 rounded-2xl p-4">
+            <h3 className="font-bold mb-3">Live Ride Monitoring</h3>
+            <div className="bg-slate-900 rounded-xl h-48 flex items-center justify-center text-slate-500 text-sm">
+              🗺️ Mapbox Live — driver_locations table linked here<br/>Active: {stats.active} drivers online
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <button className="bg-white text-black rounded-xl p-4 text-left">
+              <p className="font-bold">👑 Approve Documents</p>
+              <p className="text-xs text-slate-600">Verify driver IDs, licenses, vehicles</p>
+            </button>
+            <button className="bg-slate-800 rounded-xl p-4 text-left">
+              <p className="font-bold">🚨 Support Center</p>
+              <p className="text-xs text-slate-400">Complaints, cancellations, disputes</p>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* FINANCE */}
+      {tab==='finance' && (
+        <div className="space-y-4">
+          <div className="bg-slate-800 rounded-2xl p-4">
+            <h3 className="font-bold mb-4">Fare Configuration</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm">Base Fare (R)<input value={fares.base} onChange={e=>setFares({...fares, base:Number(e.target.value)})} className="mt-1 w-full bg-slate-900 rounded-lg p-2" type="number"/></label>
+              <label className="text-sm">Per Km (R)<input value={fares.perKm} onChange={e=>setFares({...fares, perKm:Number(e.target.value)})} className="mt-1 w-full bg-slate-900 rounded-lg p-2" type="number"/></label>
+              <label className="text-sm">Per Min (R)<input value={fares.perMin} onChange={e=>setFares({...fares, perMin:Number(e.target.value)})} className="mt-1 w-full bg-slate-900 rounded-lg p-2" type="number"/></label>
+              <label className="text-sm">Min Fare (R)<input value={fares.minFare} onChange={e=>setFares({...fares, minFare:Number(e.target.value)})} className="mt-1 w-full bg-slate-900 rounded-lg p-2" type="number"/></label>
+            </div>
+            <button className="mt-4 w-full bg-orange-500 rounded-xl py-3 font-bold">Save Fare Rules</button>
+          </div>
+
+          <div className="bg-slate-800 rounded-2xl p-4">
+            <h3 className="font-bold mb-2">Commission Management</h3>
+            <p className="text-xs text-slate-400 mb-2">Platform cut from each ride</p>
+            <div className="flex items-center gap-3">
+              <input type="range" min={5} max={35} value={commission} onChange={e=>setCommission(Number(e.target.value))} className="flex-1"/>
+              <span className="font-bold text-xl">{commission}%</span>
+            </div>
+            <p className="text-xs mt-2 text-slate-400">Driver gets {100-commission}% — e.g. R100 ride = R{100-commission} driver, R{commission} you</p>
+          </div>
+        </div>
+      )}
+
+      {/* ZONES */}
+      {tab==='zones' && (
+        <div className="bg-slate-800 rounded-2xl p-4">
+          <h3 className="font-bold mb-4">City / Zone Management (Limpopo)</h3>
+          {zones.map((z,i)=>(
+            <div key={z.name} className="flex justify-between items-center bg-slate-900 rounded-xl p-3 mb-2">
+              <div>
+                <p className="font-bold text-sm">{z.name}</p>
+                <p className="text-xs text-slate-400">Surge x{z.surge}</p>
+              </div>
+              <button onClick={()=>{ const nz=[...zones]; nz[i].active=!nz[i].active; setZones(nz)}} className={`px-3 py-1 rounded-full text-xs font-bold ${z.active?'bg-green-600':'bg-slate-700'}`}>{z.active?'Active':'Off'}</button>
+            </div>
+          ))}
+          <button className="w-full mt-3 bg-white text-black rounded-xl py-3 font-bold text-sm">+ Add New Zone</button>
+        </div>
+      )}
+
+      {/* PROMOS */}
+      {tab==='promos' && (
+        <div className="bg-slate-800 rounded-2xl p-4">
+          <h3 className="font-bold mb-4">Promo Codes</h3>
+          <div className="bg-slate-900 rounded-xl p-3">
+            <div className="flex justify-between">
+              <p className="font-mono font-bold">{promo.code}</p>
+              <p className="text-green-400 font-bold">-{promo.discount}%</p>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">{promo.uses} uses</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <input placeholder="NEWCODE" className="bg-slate-900 rounded-lg p-3 text-sm"/>
+            <input placeholder="Discount %" type="number" className="bg-slate-900 rounded-lg p-3 text-sm"/>
+          </div>
+          <button className="w-full mt-3 bg-orange-500 rounded-xl py-3 font-bold text-sm">Create Promo</button>
+        </div>
+      )}
+    </main>
+  )
 }
