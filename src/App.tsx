@@ -40,18 +40,32 @@ export default function App() {
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     try {
       let result = await getProfile(userId)
+      const isOwner = userEmail? ADMIN_EMAILS.includes(userEmail.toLowerCase()) : false
+
       if (!result) {
         let finalRole = preferredRole?? 'passenger'
-        if (finalRole === 'admin' && userEmail &&!ADMIN_EMAILS.includes(userEmail.toLowerCase())) {
-          const { data: existing } = await supabase.from('profiles').select('role').eq('id', userId).single()
-          if (existing?.role!== 'admin') finalRole = 'passenger'
-        }
+        // Only owner can be admin at signup
+        if (finalRole === 'admin' &&!isOwner) finalRole = 'passenger'
         const { data, error } = await supabase.from('profiles').upsert({
           id: userId, email: userEmail, role: finalRole,
           full_name: fullNameValue?? null, phone: phoneValue?? null,
         }, { onConflict: 'id' }).select('*').single()
         if (error) throw error
         result = data as Profile
+      } else {
+        // OWNER FIX: Respect which button owner clicked at login
+        if (isOwner && preferredRole) {
+          if (preferredRole === 'admin') {
+            // Owner wants Admin - ensure DB is admin
+            if (result.role!== 'admin') {
+              await supabase.from('profiles').update({ role: 'admin' }).eq('id', userId)
+            }
+            result.role = 'admin'
+          } else {
+            // Owner wants to TEST as passenger/driver - temporary, don't save to DB
+            result = {...result, role: preferredRole } as Profile
+          }
+        }
       }
       setProfile(result)
       setShowLanding(false)
@@ -71,7 +85,7 @@ export default function App() {
     supabase.auth.getSession().then(async ({ data, error }) => {
       if (!active) return
       if (error) setMessage(error.message)
-      if (data.session?.user) await loadProfile(data.session.user.id, data.session.user.email?? null, data.session.user.user_metadata?.role as Role?? 'passenger', data.session.user.user_metadata?.full_name, data.session.user.user_metadata?.phone)
+      if (data.session?.user) await loadProfile(data.session.user.id, data.session.user.email?? null)
       if (active) setLoading(false)
     })
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -91,8 +105,10 @@ export default function App() {
         if (data.session && data.user) await loadProfile(data.user.id, data.user.email?? null, role, fullName.trim(), phone.trim())
         else { setMessage('Account created. Check email then log in.'); setMode('login') }
       } else {
+        // FIX: Pass the role button that was clicked
         const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
-        if (error) throw error; if (data.user) await loadProfile(data.user.id, data.user.email?? null)
+        if (error) throw error;
+        if (data.user) await loadProfile(data.user.id, data.user.email?? null, role)
       }
     } catch (error) { setMessage(error instanceof Error? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
