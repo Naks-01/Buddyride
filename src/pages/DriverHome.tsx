@@ -123,7 +123,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     checkDocs()
   }, [profile.id, isTestDriver])
 
-  // FIXED: Don't auto-load completed rides - this was causing the R155 loop
   useEffect(() => {
     async function loadRide() {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
@@ -219,7 +218,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isNavigating, isOnline, ride?.id, profile.id])
 
+  // FIXED NAV: auto re-route every 15s while driving
   useEffect(() => {
+    let interval: any
     async function buildRoute() {
       if (!ride) return
       const from = lastLocation.current[0]!== 0? lastLocation.current : location
@@ -228,7 +229,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
       try { const r = await getRoute(from, target); setRoute(r.geometry); setRouteData(r) } catch {}
     }
     buildRoute()
-  }, [ride?.id, ride?.status, location])
+    if (isNavigating) {
+      interval = setInterval(buildRoute, 15000)
+    }
+    return () => clearInterval(interval)
+  }, [ride?.id, ride?.status, location, isNavigating])
 
   async function toggleOnline() {
     if (!isTestDriver && docStatus!== 'approved') { alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d)).join(', ')}`); return }
@@ -265,7 +270,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!ride) return
     const rideId = ride.id
     const fare = (ride as any).fare || 0
-    // FIXED: update DB first, then show UI
     await supabase.from('rides').update({ status: 'completed' as any } as any).eq('id', rideId)
     const commission = fare * 0.20
     const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
@@ -310,8 +314,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
     await supabase.from('rides').update({ status: 'cancelled', cancel_reason: driverCancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'driver', offered_driver_id: null, offer_expires_at: null } as any).eq('id', rideId)
     setDriverCancelReason('')
   }
-  const instruction = routeData?.steps?.[0]?.instruction || 'Drive southeast.'
-  const distText = routeData? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min •` : '0.0km • 0 min •'
+
+  // FIXED NAV: real turn instruction, not "Drive southeast"
+  const curStep = (() => {
+    if (!routeData?.steps?.length) return null
+    return routeData.steps.find((s:any)=> s.distance > 30) || routeData.steps[0]
+  })()
+  const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
+  const distText = curStep ? `${(curStep.distance/1000).toFixed(1)}km • ${Math.ceil(curStep.duration/60)} min •` : routeData? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min •` : '0.0km • 0 min •'
+
   const showTopBanner =!isTestDriver && docStatus!== 'approved' || isTestDriver
   const topBannerHeight = showTopBanner? 42 : 0
 
