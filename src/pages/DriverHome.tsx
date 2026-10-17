@@ -6,7 +6,8 @@ import { getRoute } from '../lib/mapbox'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
-const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie'] as const
+// FIXED: Added huru = 7 docs total
+const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie','huru'] as const
 const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com']
 
 export function DriverHome({ profile }: { profile: Profile }) {
@@ -218,7 +219,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isNavigating, isOnline, ride?.id, profile.id])
 
-  // FIXED NAV: auto re-route every 15s while driving
   useEffect(() => {
     let interval: any
     async function buildRoute() {
@@ -315,7 +315,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setDriverCancelReason('')
   }
 
-  // FIXED NAV: real turn instruction, not "Drive southeast"
   const curStep = (() => {
     if (!routeData?.steps?.length) return null
     return routeData.steps.find((s:any)=> s.distance > 30) || routeData.steps[0]
@@ -340,7 +339,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     </header>
     {showTopBanner && (
       <div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: isTestDriver? '#00d181' : docStatus==='missing'? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>
-        {isTestDriver? `✅ Test mode: ${profile.email} - bypass docs` : docStatus==='missing'? `⚠️ Upload 6 docs: ${approvedDocs.length}/6` : `⏳ Pending: ${approvedDocs.length}/6 approved`}
+        {isTestDriver? `✅ Test mode: ${profile.email} - bypass docs` : docStatus==='missing'? `⚠️ Upload 7 docs: ${approvedDocs.length}/7` : `⏳ Pending: ${approvedDocs.length}/7 approved`}
       </div>
     )}
     {isNavigating && ride && (
@@ -459,8 +458,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
               </div>
             </div>
           )})}
-          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{!isOnline && docStatus!=='approved' &&!isTestDriver? `⛔ Blocked - Docs: ${approvedDocs.length}/6` : isTestDriver? '✅ Test mode 🔊 Sound ON' : isOnline? '✅ Waiting for Buddy requests... 🔊' : 'You are offline'}</div>
-          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: docStatus!=='approved' &&!isTestDriver? '#666' : isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{docStatus!=='approved' &&!isTestDriver? `NEED DOCS (${approvedDocs.length}/6)` : isOnline? 'GO OFFLINE' : 'GO ONLINE 🔊'}</button>
+          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{!isOnline && docStatus!=='approved' &&!isTestDriver? `⛔ Blocked - Docs: ${approvedDocs.length}/7` : isTestDriver? '✅ Test mode 🔊 Sound ON' : isOnline? '✅ Waiting for Buddy requests... 🔊' : 'You are offline'}</div>
+          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: docStatus!=='approved' &&!isTestDriver? '#666' : isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{docStatus!=='approved' &&!isTestDriver? `NEED DOCS (${approvedDocs.length}/7)` : isOnline? 'GO OFFLINE' : 'GO ONLINE 🔊'}</button>
         </div>
       )}
     </section>

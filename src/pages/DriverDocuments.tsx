@@ -8,7 +8,7 @@ const REQ = [
   { k: 'car_papers', label: 'Car Papers', hasExpiry: false },
   { k: 'disc', label: 'Disc', hasExpiry: true },
   { k: 'selfie', label: 'Selfie', hasExpiry: false },
-  { k: 'huru', label: 'HURU Criminal Check', hasExpiry: true }, // 30 days validity like Bolt
+  { k: 'huru', label: 'HURU Criminal Check', hasExpiry: true },
 ]
 
 function isExpired(expiryDate: string | null | undefined) {
@@ -31,26 +31,54 @@ function daysLeft(expiryDate: string) {
 export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack: () => void }) {
   const [docs, setDocs] = useState<any[]>([])
   const [up, setUp] = useState<string|null>(null)
+  const [expiryMap, setExpiryMap] = useState<Record<string,string>>({})
 
   async function load(){
     const {data}=await supabase.from('driver_documents').select('*').eq('driver_id',driverId);
     setDocs(data||[])
+    // init expiry map from loaded docs
+    const map: Record<string,string> = {}
+    ;(data||[]).forEach((d:any)=>{
+      if(d.expiry_date) map[d.doc_type] = d.expiry_date.split('T')[0]
+    })
+    setExpiryMap(map)
   }
   useEffect(()=>{ load() },[])
 
-  async function doUpload(k:string, f:File, expiry?: string){
+  async function doUpload(k:string, f:File){
+    const expiry = expiryMap[k] || undefined
+    // Validate expiry if required
+    if (REQ.find(r=>r.k===k)?.hasExpiry && !expiry) {
+      alert(`Please select expiry date for ${k} first`)
+      return
+    }
     setUp(k)
-    const path=`${driverId}/${k}_${Date.now()}.jpg`
-    const {error}=await supabase.storage.from('driver-documents').upload(path,f)
-    if(error){alert(error.message); setUp(null); return}
+    const ext = f.name.split('.').pop() || 'jpg'
+    const path=`${driverId}/${k}_${Date.now()}.${ext}`
+    
+    const {error}=await supabase.storage.from('driver-documents').upload(path,f, {
+      upsert: true,
+      contentType: f.type
+    })
+    if(error){
+      console.error(error)
+      alert('Upload failed: ' + error.message)
+      setUp(null); return
+    }
     const {data:u}=supabase.storage.from('driver-documents').getPublicUrl(path)
-    await supabase.from('driver_documents').upsert({
+    
+    const {error: dbError}=await supabase.from('driver_documents').upsert({
       driver_id: driverId,
       doc_type: k,
       file_url: u.publicUrl,
       status: 'pending',
       expiry_date: expiry || null
     } as any,{onConflict:'driver_id,doc_type'})
+    
+    if(dbError){
+      console.error(dbError)
+      alert('DB save failed: ' + dbError.message)
+    }
     setUp(null); load()
   }
 
@@ -96,8 +124,8 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
             {r.hasExpiry && (
               <input
                 type="date"
-                id={`exp-${r.k}`}
-                defaultValue={d?.expiry_date?.split('T')[0] || ''}
+                value={expiryMap[r.k] || ''}
+                onChange={e=> setExpiryMap(prev=> ({...prev, [r.k]: e.target.value}))}
                 style={{fontSize:'11px', background:'#242428', color:'white', border:'1px solid #333', borderRadius:'6px', padding:'4px'}}
               />
             )}
@@ -105,9 +133,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
               {up===r.k?'...': d?'Replace':'Upload'}
               <input hidden type="file" accept="image/*,.pdf" onChange={e=> {
                 if (!e.target.files?.[0]) return
-                const expInput = document.getElementById(`exp-${r.k}`) as HTMLInputElement
-                const expVal = expInput?.value || undefined
-                doUpload(r.k, e.target.files[0], expVal)
+                doUpload(r.k, e.target.files[0])
               }}/>
             </label>
           </div>
