@@ -123,12 +123,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
     checkDocs()
   }, [profile.id, isTestDriver])
 
+  // FIXED: Don't auto-load completed rides - this was causing the R155 loop
   useEffect(() => {
     async function loadRide() {
-      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress','completed'] as any).order('created_at', { ascending: false }).limit(1).single()
+      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
       if (data) {
-        if ((data as any).status === 'completed') { setRide(data); setShowCollected((data as any).fare || 0) }
-        else { setRide(data); setIsNavigating(true); setZoom(17) }
+        setRide(data); setIsNavigating(true); setZoom(17)
       }
     }
     loadRide()
@@ -265,13 +265,14 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!ride) return
     const rideId = ride.id
     const fare = (ride as any).fare || 0
-    setShowCollected(fare)
-    setTimeout(() => { setShowCollected(null); setShowDriverRating(true) }, 1200)
+    // FIXED: update DB first, then show UI
     await supabase.from('rides').update({ status: 'completed' as any } as any).eq('id', rideId)
     const commission = fare * 0.20
     const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
     const newBal = (prof?.wallet_balance || 0) - commission
     await supabase.from('profiles').update({ wallet_balance: newBal, trips_completed: (prof?.trips_completed || 0) + 1 } as any).eq('id', profile.id)
+    setShowCollected(fare)
+    setTimeout(() => { setShowCollected(null); setShowDriverRating(true) }, 1200)
   }
   async function submitDriverRating() {
     if (!ride || driverRating === 0) return
@@ -285,6 +286,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
         await supabase.from('profiles').update({ rating: avg } as any).eq('id', ride.passenger_id)
       }
     } catch {}
+    setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setShowCollected(null)
+  }
+  async function skipRating() {
+    if (!ride) return
+    await supabase.from('rides').update({ status: 'rated' as any, driver_rating: 0 } as any).eq('id', ride.id)
     setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setShowCollected(null)
   }
   function openDriverCancel(targetRide: Ride | null) {
@@ -422,7 +428,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
             ))}
           </div>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button onClick={() => { setShowDriverRating(false); setRide(null); setRoute(undefined); setIsNavigating(false); setZoom(13); setDriverRating(0) }} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button>
+            <button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button>
             <button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button>
           </div>
         </div>
