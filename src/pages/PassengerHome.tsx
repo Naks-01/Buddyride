@@ -129,10 +129,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     loadActiveRide()
   }, [profile.id])
 
+  // FIXED ONLY THIS PART - hide ghost cars older than 5 min
   useEffect(() => {
-    supabase.from('driver_status').select('*').eq('is_online', true).then(({data}) => { if(data) setNearbyCars(data) })
+    const fiveMinAgo = new Date(Date.now() - 5*60*1000).toISOString()
+    supabase.from('driver_status').select('*').eq('is_online', true).gt('updated_at', fiveMinAgo).then(({data}) => { if(data) setNearbyCars(data) })
     const ch = supabase.channel('buddyride-cars-live').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, (payload) => {
       const car = payload.new as any; if (!car) return
+      if (car.updated_at && new Date(car.updated_at).getTime() < Date.now() - 5*60*1000) {
+        setNearbyCars(prev => prev.filter(c => c.driver_id!== car.driver_id))
+        return
+      }
       if (car.is_online) { setNearbyCars(prev => { const exists = prev.find(c => c.driver_id === car.driver_id); return exists? prev.map(c => c.driver_id === car.driver_id? car : c) : [...prev, car] }) } else { setNearbyCars(prev => prev.filter(c => c.driver_id!== car.driver_id)) }
     }).subscribe()
     return () => { supabase.removeChannel(ch) }
@@ -333,7 +339,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           <>
             <h3>Searching driver... ●</h3>
             <p style={{ fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
-            {/* FIXED: ONLY Cancel button, NO Verify ID button overlapping */}
             <button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
           </>
         )}

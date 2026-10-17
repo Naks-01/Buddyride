@@ -267,7 +267,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const fare = (ride as any).fare || 0
     setShowCollected(fare)
     setTimeout(() => { setShowCollected(null); setShowDriverRating(true) }, 1200)
-    await supabase.from('rides').update({ status: 'completed' as any, ended_at: new Date().toISOString() }).eq('id', rideId)
+    await supabase.from('rides').update({ status: 'completed' as any } as any).eq('id', rideId)
     const commission = fare * 0.20
     const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
     const newBal = (prof?.wallet_balance || 0) - commission
@@ -353,11 +353,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
           <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>{ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
             <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>{isNavigating? 'Navigating...' : 'Navigate'}</button>
-            {/* FIXED: Optimistic update - no more stuck */}
             <button onClick={async () => {
               const prevStatus = ride.status
-              setRide(r => r? {...r, status: 'arrived'} as any : r) // instant UI
-              const { error } = await supabase.from('rides').update({ status: 'arrived' as any, arrived_at: new Date().toISOString() } as any).eq('id', ride.id)
+              setRide(r => r? {...r, status: 'arrived'} as any : r)
+              const { error } = await supabase.from('rides').update({ status: 'arrived' as any } as any).eq('id', ride.id)
               if (error) {
                 console.error(error)
                 alert('Arrived failed: ' + error.message)
@@ -386,7 +385,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
               setRide(r => r? {...r, status: 'in_progress'} as any : r)
               const target: [number, number] = [ride.dropoff_lng, ride.dropoff_lat]
               try { const from = lastLocation.current[0]!== 0? lastLocation.current : location; const res = await getRoute(from, target); setRoute(res.geometry); setRouteData(res) } catch {}
-              const { error } = await supabase.from('rides').update({ status: 'in_progress' as any, picked_up_at: new Date().toISOString() } as any).eq('id', ride.id)
+              const { error } = await supabase.from('rides').update({ status: 'in_progress' as any } as any).eq('id', ride.id)
               if (error) {
                 alert('Start trip failed: ' + error.message)
                 setRide(r => r? {...r, status: prevStatus} as any : r)

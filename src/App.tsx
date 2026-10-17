@@ -142,7 +142,7 @@ export default function App() {
         <main className="auth-page">
           <section className="auth-card" style={{textAlign:'center'}}>
             <Brand />
-            <h1>Monday / Saturday Check</h1>
+            <h1>Safety Check</h1>
             <p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p>
             <input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />
             {selfieBusy && <p>Verifying...</p>}
