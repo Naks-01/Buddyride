@@ -28,6 +28,28 @@ function daysLeft(expiryDate: string) {
   return Math.ceil((exp.getTime() - today.getTime()) / (1000*60*60*24))
 }
 
+// NEW: compress image to < 1MB before upload
+async function compressImage(file: File): Promise<File> {
+  if (!file.type.startsWith('image/')) return file
+  if (file.size < 900 * 1024) return file // already small
+
+  try {
+    const bitmap = await createImageBitmap(file)
+    const canvas = document.createElement('canvas')
+    const max = 1600
+    let w = bitmap.width, h = bitmap.height
+    if (w > h && w > max) { h = h * max / w; w = max }
+    else if (h > max) { w = w * max / h; h = max }
+    canvas.width = w
+    canvas.height = h
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, w, h)
+    const blob = await new Promise<Blob>(res => canvas.toBlob(b => res(b!), 'image/jpeg', 0.75)!)
+    return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' })
+  } catch {
+    return file
+  }
+}
+
 export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack: () => void }) {
   const [docs, setDocs] = useState<any[]>([])
   const [up, setUp] = useState<string|null>(null)
@@ -36,7 +58,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
   async function load(){
     const {data}=await supabase.from('driver_documents').select('*').eq('driver_id',driverId);
     setDocs(data||[])
-    // init expiry map from loaded docs
     const map: Record<string,string> = {}
     ;(data||[]).forEach((d:any)=>{
       if(d.expiry_date) map[d.doc_type] = d.expiry_date.split('T')[0]
@@ -47,39 +68,42 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
   async function doUpload(k:string, f:File){
     const expiry = expiryMap[k] || undefined
-    // Validate expiry if required
     if (REQ.find(r=>r.k===k)?.hasExpiry && !expiry) {
       alert(`Please select expiry date for ${k} first`)
       return
     }
     setUp(k)
-    const ext = f.name.split('.').pop() || 'jpg'
-    const path=`${driverId}/${k}_${Date.now()}.${ext}`
-    
-    const {error}=await supabase.storage.from('driver-documents').upload(path,f, {
-      upsert: true,
-      contentType: f.type
-    })
-    if(error){
-      console.error(error)
-      alert('Upload failed: ' + error.message)
-      setUp(null); return
+    try {
+      const compressed = await compressImage(f)
+      const ext = compressed.name.split('.').pop() || 'jpg'
+      const path=`${driverId}/${k}_${Date.now()}.${ext}`
+      
+      const {error}=await supabase.storage.from('driver-documents').upload(path, compressed, {
+        upsert: true,
+        contentType: compressed.type,
+        cacheControl: '3600'
+      })
+      if(error) throw error
+      
+      const {data:u}=supabase.storage.from('driver-documents').getPublicUrl(path)
+      
+      const {error: dbError}=await supabase.from('driver_documents').upsert({
+        driver_id: driverId,
+        doc_type: k,
+        file_url: u.publicUrl,
+        status: 'pending',
+        expiry_date: expiry || null
+      } as any,{onConflict:'driver_id,doc_type'})
+      
+      if(dbError) throw dbError
+      
+      await load()
+    } catch (e: any) {
+      console.error('Upload failed full error:', e)
+      alert('Upload failed: ' + (e.message || 'Failed to fetch - try smaller image'))
+    } finally {
+      setUp(null)
     }
-    const {data:u}=supabase.storage.from('driver-documents').getPublicUrl(path)
-    
-    const {error: dbError}=await supabase.from('driver_documents').upsert({
-      driver_id: driverId,
-      doc_type: k,
-      file_url: u.publicUrl,
-      status: 'pending',
-      expiry_date: expiry || null
-    } as any,{onConflict:'driver_id,doc_type'})
-    
-    if(dbError){
-      console.error(dbError)
-      alert('DB save failed: ' + dbError.message)
-    }
-    setUp(null); load()
   }
 
   return <div style={{padding:'16px', background:'#0e0e10', minHeight:'100vh', color:'white'}}>
