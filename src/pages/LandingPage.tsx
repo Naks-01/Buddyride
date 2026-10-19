@@ -20,29 +20,41 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
         </p>
       </div>
 
-      {/* SPLIT - YOUR ORIGINAL */}
+      {/* SPLIT */}
       <div style={{ display: "flex", flexWrap: "wrap" }}>
         <div style={{ background: "#ff7a00", flex: "1 1 320px", padding: 32, color: "white" }}>
-          <h2 style={{ fontWeight: 900, fontSize: 26 }}>Passenger<br />Need a ride?</h2>
+          <h2 style={{ fontWeight: 900, fontSize: 26, color: "white" }}>Passenger<br />Need a ride?</h2>
           <div style={{ marginTop: 16, background: "white", borderRadius: 12, padding: 12, color: "black", textAlign: "center", fontWeight: 700 }}>Limpopo 📍</div>
           <button onClick={onLogin} style={{ marginTop: 20, width: "100%", background: "#1e3a8a", color: "white", padding: 14, borderRadius: 999, fontWeight: 700, border: "none", cursor: "pointer" }}>Request Buddy</button>
-          <p style={{ marginTop: 12, fontSize: 13, opacity: 0.9 }}>Safe, affordable rides in Polokwane, Mankweng & Seshego. Pay with card via Paystack.</p>
+          <p style={{ marginTop: 12, fontSize: 13, color: "white" }}>Safe, affordable rides in Polokwane, Mankweng & Seshego. Pay with card via Paystack.</p>
         </div>
         <div style={{ background: "#121212", flex: "1 1 320px", padding: 32, color: "white" }}>
           <div style={{ color: "#ff7a00", fontWeight: 900, fontSize: 26 }}>Driver</div>
-          <h2 style={{ fontWeight: 900, fontSize: 30 }}>Want to earn?<br /><span style={{ color: "#ff7a00" }}>Keep 80%</span></h2>
-          <p style={{ marginTop: 10 }}>You pocket 80% of every ride<br /><span style={{ color: "#aaa", fontSize: 13 }}>BuddyRide takes only 20% - lowest in SA</span></p>
+          <h2 style={{ fontWeight: 900, fontSize: 30, color: "white" }}>Want to earn?<br /><span style={{ color: "#ff7a00" }}>Keep 80%</span></h2>
+          <p style={{ marginTop: 10, color: "white" }}>You pocket 80% of every ride<br /><span style={{ color: "#aaa", fontSize: 13 }}>BuddyRide takes only 20% - lowest in SA</span></p>
           <button onClick={onLogin} style={{ marginTop: 20, width: "100%", background: "#ff7a00", color: "white", padding: 14, borderRadius: 999, fontWeight: 900, border: "none", cursor: "pointer" }}>Start Driving Today</button>
         </div>
       </div>
 
-      {/* HOW IT WORKS - NEW */}
+      {/* HOW IT WORKS - FIXED */}
       <div style={{ padding: "40px 20px", background: "white", textAlign: "center" }}>
-        <h2 style={{ fontWeight: 900, fontSize: 24 }}>How BuddyRide Works</h2>
+        <h2 style={{ fontWeight: 900, fontSize: 24, color: "#000" }}>How BuddyRide Works</h2>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "center", marginTop: 24, maxWidth: 900, marginLeft: "auto", marginRight: "auto" }}>
-          <div style={{ flex: "1 1 200px", padding: 16 }}><div style={{ fontSize: 30 }}>📍</div><h3>1. Request</h3><p style={{ fontSize: 14, color: "#555" }}>Enter pickup & destination in Limpopo</p></div>
-          <div style={{ flex: "1 1 200px", padding: 16 }}><div style={{ fontSize: 30 }}>🚗</div><h3>2. Get Matched</h3><p style={{ fontSize: 14, color: "#555" }}>Verified driver accepts in seconds</p></div>
-          <div style={{ flex: "1 1 200px", padding: 16 }}><div style={{ fontSize: 30 }}>💳</div><h3>3. Pay Securely</h3><p style={{ fontSize: 14, color: "#555" }}>Pay with card or cash. Powered by Paystack</p></div>
+          <div style={{ flex: "1 1 200px", padding: 16 }}>
+            <div style={{ fontSize: 36 }}>📍</div>
+            <h3 style={{ color: "#000", fontWeight: 800, margin: "10px 0 6px" }}>1. Request</h3>
+            <p style={{ fontSize: 14, color: "#555" }}>Enter pickup & destination in Limpopo</p>
+          </div>
+          <div style={{ flex: "1 1 200px", padding: 16 }}>
+            <div style={{ fontSize: 36 }}>🚗</div>
+            <h3 style={{ color: "#000", fontWeight: 800, margin: "10px 0 6px" }}>2. Get Matched</h3>
+            <p style={{ fontSize: 14, color: "#555" }}>Verified driver accepts in seconds</p>
+          </div>
+          <div style={{ flex: "1 1 200px", padding: 16 }}>
+            <div style={{ fontSize: 36 }}>💳</div>
+            <h3 style={{ color: "#000", fontWeight: 800, margin: "10px 0 6px" }}>3. Pay Securely</h3>
+            <p style={{ fontSize: 14, color: "#555" }}>Pay with card or cash. Powered by Paystack</p>
+          </div>
         </div>
       </div>
 
