@@ -6,9 +6,9 @@ import { getRoute } from '../lib/mapbox'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
-// FIXED: Added huru = 7 docs total
+// FIXED: Added huru = 7 docs total + TestDriver bypass for Paystack
 const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie','huru'] as const
-const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com']
+const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com', 'testdriver@buddyride.co.za', 'TestDriver@buddyride.co.za', 'test@buddyride.co.za']
 
 export function DriverHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
@@ -50,7 +50,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const subText = isDark? '#9ca3af' : '#6b7280'
   const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
   const mapStyleUrl = isDark? 'mapbox://styles/mapbox/navigation-night-v1' : 'mapbox://styles/mapbox/navigation-day-v1'
-  const isTestDriver = TEST_DRIVER_EMAILS.includes(profile.email || '') || (profile.full_name || '').toLowerCase().includes('mokgalaka') || (profile.full_name || '').toLowerCase().includes('mokgafaka')
+  const isTestDriver = TEST_DRIVER_EMAILS.map(e=>e.toLowerCase()).includes((profile.email || '').toLowerCase()) || (profile.full_name || '').toLowerCase().includes('mokgalaka') || (profile.full_name || '').toLowerCase().includes('mokgafaka') || (profile.email || '').toLowerCase().includes('testdriver') || (profile.email || '').toLowerCase().includes('buddyride')
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
