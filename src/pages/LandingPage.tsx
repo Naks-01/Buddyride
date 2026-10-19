@@ -10,30 +10,82 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
         <div style={{ fontSize: 11, color: "#3b82f6", letterSpacing: 2, fontWeight: 600 }}>Your Community Connection</div>
       </div>
 
-      {/* MISSION BANNER - FITS NICE */}
-      <div style={{ background: "#f2f2f2", padding: "20px 16px", textAlign: "center" }}>
-        <h1 style={{ fontWeight: 900, fontSize: 24, lineHeight: 1.15, color: "#000", margin: "0 auto", maxWidth: 800 }}>
+      {/* MISSION BANNER */}
+      <div style={{ background: "#f2f2f2", padding: "24px 16px", textAlign: "center" }}>
+        <h1 style={{ fontWeight: 900, fontSize: 26, lineHeight: 1.15, color: "#000", margin: "0 auto", maxWidth: 800 }}>
           We are restoring e-hailing services to normal<br />and ending driver exploitation.
         </h1>
+        <p style={{ maxWidth: 700, margin: "12px auto 0", color: "#444", fontSize: 15 }}>
+          BuddyRide is a South African e-hailing platform based in Limpopo. We connect passengers with verified local drivers. Drivers keep 80% of every trip.
+        </p>
       </div>
 
-      {/* SPLIT */}
-      <div style={{ display: "flex", flexWrap: "wrap", flex: 1 }}>
-        <div style={{ background: "#ff7a00", flex: "1 1 320px", padding: 24, color: "white" }}>
+      {/* SPLIT - YOUR ORIGINAL */}
+      <div style={{ display: "flex", flexWrap: "wrap" }}>
+        <div style={{ background: "#ff7a00", flex: "1 1 320px", padding: 32, color: "white" }}>
           <h2 style={{ fontWeight: 900, fontSize: 26 }}>Passenger<br />Need a ride?</h2>
           <div style={{ marginTop: 16, background: "white", borderRadius: 12, padding: 12, color: "black", textAlign: "center", fontWeight: 700 }}>Limpopo 📍</div>
-          <button onClick={onLogin} style={{ marginTop: 20, width: "100%", background: "#1e3a8a", color: "white", padding: 14, borderRadius: 999, fontWeight: 700, border: "none" }}>Request Buddy</button>
+          <button onClick={onLogin} style={{ marginTop: 20, width: "100%", background: "#1e3a8a", color: "white", padding: 14, borderRadius: 999, fontWeight: 700, border: "none", cursor: "pointer" }}>Request Buddy</button>
+          <p style={{ marginTop: 12, fontSize: 13, opacity: 0.9 }}>Safe, affordable rides in Polokwane, Mankweng & Seshego. Pay with card via Paystack.</p>
         </div>
-        <div style={{ background: "#121212", flex: "1 1 320px", padding: 24, color: "white" }}>
+        <div style={{ background: "#121212", flex: "1 1 320px", padding: 32, color: "white" }}>
           <div style={{ color: "#ff7a00", fontWeight: 900, fontSize: 26 }}>Driver</div>
           <h2 style={{ fontWeight: 900, fontSize: 30 }}>Want to earn?<br /><span style={{ color: "#ff7a00" }}>Keep 80%</span></h2>
-          <p style={{ marginTop: 10 }}>You pocket 80% of every ride<br /><span style={{ color: "#aaa", fontSize: 13 }}>BuddyRide takes only 20%</span></p>
-          <button onClick={onLogin} style={{ marginTop: 20, width: "100%", background: "#ff7a00", color: "white", padding: 14, borderRadius: 999, fontWeight: 900, border: "none" }}>Start Driving Today</button>
+          <p style={{ marginTop: 10 }}>You pocket 80% of every ride<br /><span style={{ color: "#aaa", fontSize: 13 }}>BuddyRide takes only 20% - lowest in SA</span></p>
+          <button onClick={onLogin} style={{ marginTop: 20, width: "100%", background: "#ff7a00", color: "white", padding: 14, borderRadius: 999, fontWeight: 900, border: "none", cursor: "pointer" }}>Start Driving Today</button>
         </div>
       </div>
 
-      <div style={{ background: "#1e3a8a", color: "white", padding: 14, textAlign: "center", fontSize: 13, fontWeight: 700 }}>
-        Trusted in Polokwane • Mankweng • Seshego
+      {/* HOW IT WORKS - NEW */}
+      <div style={{ padding: "40px 20px", background: "white", textAlign: "center" }}>
+        <h2 style={{ fontWeight: 900, fontSize: 24 }}>How BuddyRide Works</h2>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "center", marginTop: 24, maxWidth: 900, marginLeft: "auto", marginRight: "auto" }}>
+          <div style={{ flex: "1 1 200px", padding: 16 }}><div style={{ fontSize: 30 }}>📍</div><h3>1. Request</h3><p style={{ fontSize: 14, color: "#555" }}>Enter pickup & destination in Limpopo</p></div>
+          <div style={{ flex: "1 1 200px", padding: 16 }}><div style={{ fontSize: 30 }}>🚗</div><h3>2. Get Matched</h3><p style={{ fontSize: 14, color: "#555" }}>Verified driver accepts in seconds</p></div>
+          <div style={{ flex: "1 1 200px", padding: 16 }}><div style={{ fontSize: 30 }}>💳</div><h3>3. Pay Securely</h3><p style={{ fontSize: 14, color: "#555" }}>Pay with card or cash. Powered by Paystack</p></div>
+        </div>
+      </div>
+
+      {/* FOOTER - MANDATORY FOR PAYSTACK */}
+      <div style={{ background: "#0f172a", color: "white", padding: "32px 20px" }}>
+        <div style={{ maxWidth: 1000, margin: "0 auto", display: "flex", flexWrap: "wrap", gap: 30, justifyContent: "space-between" }}>
+          <div style={{ flex: "1 1 250px" }}>
+            <div style={{ fontWeight: 900, fontSize: 20 }}><span style={{ color: "#fff" }}>Buddy</span><span style={{ color: "#ff7a00" }}>Ride</span></div>
+            <p style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 1.5 }}>
+              BuddyRide (Pty) Ltd<br/>
+              E-hailing service in Limpopo, South Africa.<br/>
+              Trusted in Polokwane • Mankweng • Seshego
+            </p>
+          </div>
+          <div style={{ flex: "1 1 150px" }}>
+            <h4 style={{ fontWeight: 700, fontSize: 14 }}>Company</h4>
+            <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 2 }}>
+              <a href="/about" style={{ color: "#94a3b8", textDecoration: "none" }}>About Us</a><br/>
+              <a href="/how-it-works" style={{ color: "#94a3b8", textDecoration: "none" }}>How it Works</a><br/>
+              <a href="/driver" style={{ color: "#94a3b8", textDecoration: "none" }}>Drive With Us</a>
+            </div>
+          </div>
+          <div style={{ flex: "1 1 150px" }}>
+            <h4 style={{ fontWeight: 700, fontSize: 14 }}>Legal</h4>
+            <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 2 }}>
+              <a href="/terms" style={{ color: "#94a3b8", textDecoration: "none" }}>Terms & Conditions</a><br/>
+              <a href="/privacy" style={{ color: "#94a3b8", textDecoration: "none" }}>Privacy Policy</a><br/>
+              <a href="/refund" style={{ color: "#94a3b8", textDecoration: "none" }}>Refund Policy</a>
+            </div>
+          </div>
+          <div style={{ flex: "1 1 200px" }}>
+            <h4 style={{ fontWeight: 700, fontSize: 14 }}>Contact</h4>
+            <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 1.8 }}>
+              Email: mokgalaka.nt@gmail.com<br/>
+              Phone: 079 305 1213<br/>
+              Address: Polokwane, Limpopo, SA<br/>
+              Support: 8am - 8pm daily
+            </div>
+          </div>
+        </div>
+        <div style={{ borderTop: "1px solid #1e293b", marginTop: 24, paddingTop: 16, textAlign: "center", fontSize: 12, color: "#64748b" }}>
+          © {new Date().getFullYear()} BuddyRide Pty Ltd. All rights reserved. Payments secured by Paystack.
+        </div>
       </div>
     </div>
   )
