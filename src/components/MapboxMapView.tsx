@@ -24,7 +24,6 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right')
     mapRef.current = map
 
-    // FIX: Force resize after load
     map.on('load', () => {
       setTimeout(() => map.resize(), 100)
     })
@@ -40,7 +39,12 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
             type: 'line',
             source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#1E90FF', 'line-width': 20, 'line-opacity': 0.25, 'line-blur': 8 }
+            paint: { 
+              'line-color': '#FF6B00', // ORANGE - like your pictures
+              'line-width': 20, 
+              'line-opacity': 0.28, 
+              'line-blur': 12 
+            }
           } as any)
         }
         if (!map.getLayer('route-line')) {
@@ -49,7 +53,11 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
             type: 'line',
             source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#1E90FF', 'line-width': 6.5, 'line-opacity': 1 }
+            paint: { 
+              'line-color': '#FF6B00', // ORANGE - not blue
+              'line-width': 6.5, 
+              'line-opacity': 1 
+            }
           } as any)
         }
       } catch {}
@@ -61,10 +69,10 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     const driverEl = document.createElement('div')
     driverEl.style.width = '52px'
     driverEl.style.height = '52px'
-    driverEl.style.background = '#007AFF'
+    driverEl.style.background = '#FF6B00' // Orange driver
     driverEl.style.border = '4px solid white'
     driverEl.style.borderRadius = '26px'
-    driverEl.style.boxShadow = '0 4px 16px rgba(0,122,255,0.5)'
+    driverEl.style.boxShadow = '0 4px 16px rgba(255,107,0,0.5)'
     driverEl.style.display = 'flex'
     driverEl.style.alignItems = 'center'
     driverEl.style.justifyContent = 'center'
@@ -122,8 +130,9 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
 
   return (
     <>
-      <div ref={containerRef} style={{ width: '100%', height: '100vh', position: 'absolute', inset: 0 }} />
-      <style>{`.mapboxgl-ctrl-top-right{top:75px!important;right:12px!important;}.mapboxgl-ctrl-group{background:#121214!important;border-radius:12px!important;}`}</style>
+      {/* FIX: Not covering buttons - w-full h-full */}
+      <div ref={containerRef} className="w-full h-full" style={{ width: '100%', height: '100%' }} />
+      <style>{`.mapboxgl-ctrl-top-right{top:75px!important;right:12px!important;}.mapboxgl-ctrl-group{background:#121214!important;border-radius:12px!important;border:1px solid #222!important;}`}</style>
     </>
   )
 }
