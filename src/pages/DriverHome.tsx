@@ -9,13 +9,11 @@ const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie','huru'] as const
 const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com', 'testdriver@buddyride.co.za', 'TestDriver@buddyride.co.za', 'test@buddyride.co.za']
 
-// --- PRICING ONLY FIX ---
 const COMMISSION = 0.20
 const getEarnings = (fare: number) => {
   const f = fare || 0
   return { driverGets: Math.round(f * 0.8), platformGets: Math.round(f * 0.2) }
 }
-// --- END PRICING FIX ---
 
 export function DriverHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
@@ -49,6 +47,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const prevRideCountRef = useRef(0)
   const beepIntervalRef = useRef<any>(null)
   const [passengerProfile, setPassengerProfile] = useState<any>(null)
+  // --- SLIDE ONLY FIX ---
+  const [isMinimized, setIsMinimized] = useState(false)
 
   const isDark = theme === 'dark'
   const bg = isDark? '#0e0e10' : '#f5f5f7'
@@ -62,7 +62,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
-  useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false) } }, [ride, showDriverRating])
+  useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false); setIsMinimized(false) } }, [ride, showDriverRating])
   useEffect(() => {
     if (!ride?.passenger_id) { setPassengerProfile(null); return }
     supabase.from('profiles').select('full_name, rating, phone').eq('id', ride.passenger_id).single().then(({data}) => { if (data) setPassengerProfile(data) })
@@ -133,7 +133,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     async function loadRide() {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
-      if (data) { setRide(data); setIsNavigating(true); setZoom(17) }
+      if (data) { setRide(data); setIsNavigating(true); setZoom(17); setIsMinimized(true) }
     }
     loadRide()
   }, [profile.id])
@@ -254,7 +254,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       }
     } catch {}
     await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted', started_at: new Date().toISOString(), offered_driver_id: profile.id } as any).eq('id', rideId)
-    setSearchingRides([]); setIsNavigating(true); setZoom(17)
+    setSearchingRides([]); setIsNavigating(true); setZoom(17); setIsMinimized(true)
   }
   async function declineRide(rideId: string) {
     if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
@@ -344,7 +344,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div>
       </div>
     )}
-    <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: '260px', zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px' }}>🎯</button>
+    <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: isMinimized ? '180px' : '260px', zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px', transition: 'bottom 0.3s ease' }}>🎯</button>
     {cancelledNotification && (
       <div style={{position:'fixed', top:'90px', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
         <div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div>
@@ -352,11 +352,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
       </div>
     )}
-    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '32px', borderTopRightRadius: '32px', padding: '16px 16px 24px', color: text, borderTop: `1px solid ${border}`, maxHeight: '72vh', overflowY: 'auto', boxShadow: '0 -12px 40px rgba(0,0,0,0.6)' }}>
-      <div style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '0 auto 16px' }} />
+    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '32px', borderTopRightRadius: '32px', padding: '16px 16px 24px', color: text, borderTop: `1px solid ${border}`, maxHeight: isMinimized ? '32vh' : '72vh', overflowY: 'auto', boxShadow: '0 -12px 40px rgba(0,0,0,0.6)', transition: 'max-height 0.35s ease' }}>
+      <div onClick={() => setIsMinimized(!isMinimized)} style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.3)', borderRadius: '3px', margin: '0 auto 16px', cursor: 'pointer' }} />
       {ride && (ride.status as any) === 'accepted' && (
         <>
-          {passengerProfile && (
+          {!isMinimized && passengerProfile && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', background: bg2, borderRadius: '14px', padding: '10px 12px' }}>
               <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#FF6B00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900' }}>{passengerProfile.full_name?.[0] || 'T'}</div>
               <div style={{ flex: 1 }}>
@@ -366,10 +366,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
               <button onClick={() => setShowChat(true)} style={{ width: '40px', height: '40px', borderRadius: '20px', background: '#00d181', border: 'none', fontSize: '18px' }}>💬</button>
             </div>
           )}
-          <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-            <div><div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>FARE TO COLLECT (Passenger pays)</div><div style={{color:'white', fontSize:'20px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div><div style={{color:'#00d181', fontSize:'13px', fontWeight:'bold'}}>YOU GET R {getEarnings(ride.fare).driverGets} (80%) • Fee R {getEarnings(ride.fare).platformGets}</div></div>
-            <div style={{background:'#00d181', color:'white', padding:'6px 10px', borderRadius:'8px', fontSize:'12px', fontWeight:'bold'}}>CASH</div>
-          </div>
+          {!isMinimized && (
+            <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              <div><div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>FARE TO COLLECT (Passenger pays)</div><div style={{color:'white', fontSize:'20px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div><div style={{color:'#00d181', fontSize:'13px', fontWeight:'bold'}}>YOU GET R {getEarnings(ride.fare).driverGets} (80%) • Fee R {getEarnings(ride.fare).platformGets}</div></div>
+              <div style={{background:'#00d181', color:'white', padding:'6px 10px', borderRadius:'8px', fontSize:'12px', fontWeight:'bold'}}>CASH</div>
+            </div>
+          )}
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>Go to Pickup • You get R {getEarnings(ride.fare).driverGets}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
           <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>{ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>

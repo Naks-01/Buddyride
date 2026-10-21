@@ -8,21 +8,20 @@ export type FareEstimate = {
   price: number;
   bookingFee: number;
   booking_fee: number;
-  // NEW - your 20% breakdown
   driverGets: number;
   platformGets: number;
   breakdown: string;
   commission: number;
 };
 
-export const COMMISSION = 0.20 // BuddyRide takes 20%
+export const COMMISSION = 0.20 // Buddy takes 20% FROM the total fare
 
 const CATEGORY_RATES: Record<string, { base: number; perKm: number; perMin: number; min: number }> = {
-  // NEW CHEAPER POLOKWANE PRICING - undercuts Bolt 2026
-  buddy_go: { base: 8, perKm: 5.5, perMin: 0.5, min: 20 },
-  go: { base: 8, perKm: 5.5, perMin: 0.5, min: 20 },
-  buddy_comfort: { base: 12, perKm: 7.0, perMin: 0.7, min: 30 },
-  buddy_xl: { base: 18, perKm: 9.0, perMin: 1.0, min: 45 },
+  // FIXED FOR POLOKWANE - R27 MINIMUM
+  buddy_go: { base: 15, perKm: 8, perMin: 0.5, min: 27 },
+  go: { base: 15, perKm: 8, perMin: 0.5, min: 27 },
+  buddy_comfort: { base: 18, perKm: 10, perMin: 0.7, min: 35 },
+  buddy_xl: { base: 22, perKm: 12, perMin: 1.0, min: 50 },
 }
 
 export function calculateFare(distanceKm: number, durationMin: number = 5, category: string = 'buddy_go'): FareEstimate {
@@ -32,31 +31,32 @@ export function calculateFare(distanceKm: number, durationMin: number = 5, categ
 
   if (calcFare < rates.min) calcFare = rates.min
   if (calcFare > 350) calcFare = 350
-  calcFare = Math.round(calcFare) // No R5 rounding, exact pricing
+  calcFare = Math.round(calcFare)
 
   const bookingFee = 0
-  const total = calcFare
-  const driverGets = Math.round(calcFare * (1 - COMMISSION))
-  const platformGets = Math.round(calcFare * COMMISSION)
+  const total = calcFare // Passenger pays: R27
+  
+  // Buddy takes 20% FROM that R27
+  const platformGets = Math.round(total * COMMISSION) // R27 * 0.20 = R5
+  const driverGets = total - platformGets // R27 - R5 = R22
 
   return {
     distance: distanceKm,
     distanceKm,
     duration: durationMin * 60,
     durationMin,
-    fare: calcFare, // passenger pays
+    fare: calcFare,
     total,
     price: calcFare,
     bookingFee,
     booking_fee: bookingFee,
-    driverGets, // driver gets 80%
-    platformGets, // you get 20%
-    breakdown: `R${rates.base} + ${distanceKm.toFixed(1)}km×R${rates.perKm} + ${durationMin.toFixed(0)}min×R${rates.perMin}`,
+    driverGets,
+    platformGets,
+    breakdown: `Total R${total} = Driver R${driverGets} (80%) + Buddy R${platformGets} (20%)`,
     commission: COMMISSION
   };
 }
 
-// For PassengerHome compatibility
 export function calculateFareForCategory(catId: string, km: number, min: number = 5) {
   return calculateFare(km, min, catId)
 }
