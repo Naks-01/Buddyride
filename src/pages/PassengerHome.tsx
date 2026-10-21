@@ -27,14 +27,14 @@ const LOCAL_PLACES = [
   { text: 'Mokopane', place_name: 'Mokopane, Mogalakwena', center: [29.0100, -24.1944] as [number, number] },
 ]
 
-// --- PRICING ONLY FIX ---
+// --- FIXED PRICING R27 - Passenger pays R27, Driver R22, Buddy R5 ---
 const CATEGORIES = [
-  { id: 'buddy_go', name: 'Go', icon: '🚗', base: 8, perKm: 5.5, perMin: 0.5, min: 20 },
-  { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 12, perKm: 7.0, perMin: 0.7, min: 30 },
-  { id: 'buddy_xl', name: 'XL', icon: '🚐', base: 18, perKm: 9.0, perMin: 1.0, min: 45 },
+  { id: 'buddy_go', name: 'Go', icon: '🚗', base: 15, perKm: 8, perMin: 0.5, min: 27 },
+  { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 18, perKm: 10, perMin: 0.7, min: 35 },
+  { id: 'buddy_xl', name: 'XL', icon: '🚐', base: 22, perKm: 12, perMin: 1.0, min: 50 },
 ]
 const COMMISSION = 0.20
-// --- END PRICING FIX ---
+// --- END FIX ---
 
 export function PassengerHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
@@ -158,15 +158,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
-  // --- PRICING ONLY FIX ---
   function calcFareForCategory(catId: string, km: number) {
     const cat = CATEGORIES.find(c => c.id === catId) || CATEGORIES[0]
     let fare = cat.base + (km * cat.perKm)
-    if (fare < cat.min) fare = cat.min
+    if (fare < cat.min) fare = cat.min // R27 minimum fix
     if (fare > 350) fare = 350
-    return Math.round(fare) // No R5 rounding, exact
+    return Math.round(fare)
   }
-  // --- END FIX ---
 
   async function searchPlaces(query: string, setter: any, setShow: any) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
