@@ -9,6 +9,14 @@ const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie','huru'] as const
 const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com', 'testdriver@buddyride.co.za', 'TestDriver@buddyride.co.za', 'test@buddyride.co.za']
 
+// --- PRICING ONLY FIX ---
+const COMMISSION = 0.20
+const getEarnings = (fare: number) => {
+  const f = fare || 0
+  return { driverGets: Math.round(f * 0.8), platformGets: Math.round(f * 0.2) }
+}
+// --- END PRICING FIX ---
+
 export function DriverHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [ride, setRide] = useState<Ride | null>(null)
@@ -40,12 +48,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const prevRideCountRef = useRef(0)
   const beepIntervalRef = useRef<any>(null)
-  // BEAUTY ONLY: passenger name
   const [passengerProfile, setPassengerProfile] = useState<any>(null)
 
   const isDark = theme === 'dark'
   const bg = isDark? '#0e0e10' : '#f5f5f7'
-  const bgCard = isDark? '#121214' : '#ffffff' // BEAUTY: #121214 like your pics
+  const bgCard = isDark? '#121214' : '#ffffff'
   const bg2 = isDark? '#242428' : '#eeeeef'
   const text = isDark? 'white' : '#111827'
   const subText = isDark? '#9ca3af' : '#6b7280'
@@ -56,13 +63,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false) } }, [ride, showDriverRating])
-
-  // BEAUTY ONLY: fetch passenger name when ride changes
   useEffect(() => {
     if (!ride?.passenger_id) { setPassengerProfile(null); return }
     supabase.from('profiles').select('full_name, rating, phone').eq('id', ride.passenger_id).single().then(({data}) => { if (data) setPassengerProfile(data) })
   }, [ride?.passenger_id])
-
   useEffect(() => {
     audioRef.current = new Audio('https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3')
     audioRef.current.volume = 1.0
@@ -70,7 +74,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission()
     return () => { if (beepIntervalRef.current) clearInterval(beepIntervalRef.current) }
   }, [])
-
   function playBeep() {
     if (audioRef.current) {
       audioRef.current.currentTime = 0
@@ -90,7 +93,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     }
     if ('vibrate' in navigator) navigator.vibrate([300, 100, 300, 100, 500])
   }
-
   useEffect(() => {
     if (searchingRides.length > prevRideCountRef.current && searchingRides.length > 0 && isOnline &&!ride) {
       playBeep()
@@ -103,7 +105,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (searchingRides.length === 0 && beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
     prevRideCountRef.current = searchingRides.length
   }, [searchingRides, isOnline, ride])
-
   useEffect(() => {
     async function loadStatus() {
       const { data } = await supabase.from('profiles').select('is_online').eq('id', profile.id).single()
@@ -117,7 +118,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       setLocation(pos); lastLocation.current = pos
     })
   }, [profile.id])
-
   useEffect(() => {
     if (isTestDriver) { setDocStatus('approved'); setApprovedDocs([...REQUIRED_DOCS]); return }
     async function checkDocs() {
@@ -130,7 +130,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     }
     checkDocs()
   }, [profile.id, isTestDriver])
-
   useEffect(() => {
     async function loadRide() {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
@@ -138,7 +137,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     }
     loadRide()
   }, [profile.id])
-
   useEffect(() => {
     const ch = supabase.channel(`driver-${profile.id}`)
 .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
@@ -164,7 +162,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [profile.id])
-
   useEffect(() => {
     if (!isOnline || ride) { setSearchingRides([]); return }
     async function loadSearching() {
@@ -199,7 +196,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const interval = setInterval(loadSearching, 4000)
     return () => { supabase.removeChannel(ch2); clearInterval(interval) }
   }, [isOnline, ride, profile.id, isTestDriver, declinedIds])
-
   useEffect(() => {
     if (!isNavigating &&!isOnline) return
     watchId.current = navigator.geolocation.watchPosition(pos => {
@@ -223,7 +219,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     ) as any
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isNavigating, isOnline, ride?.id, profile.id])
-
   useEffect(() => {
     let interval: any
     async function buildRoute() {
@@ -237,7 +232,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (isNavigating) { interval = setInterval(buildRoute, 15000) }
     return () => clearInterval(interval)
   }, [ride?.id, ride?.status, location, isNavigating])
-
   async function toggleOnline() {
     if (!isTestDriver && docStatus!== 'approved') { alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d)).join(', ')}`); return }
     const next =!isOnline; setIsOnline(next)
@@ -274,7 +268,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const rideId = ride.id
     const fare = (ride as any).fare || 0
     await supabase.from('rides').update({ status: 'completed' as any } as any).eq('id', rideId)
-    const commission = fare * 0.20
+    const commission = fare * COMMISSION
     const { data: prof } = await supabase.from('profiles').select('wallet_balance, trips_completed').eq('id', profile.id).single() as any
     const newBal = (prof?.wallet_balance || 0) - commission
     await supabase.from('profiles').update({ wallet_balance: newBal, trips_completed: (prof?.trips_completed || 0) + 1 } as any).eq('id', profile.id)
@@ -324,7 +318,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   })()
   const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
   const distText = curStep ? `${(curStep.distance/1000).toFixed(1)}km • ${Math.ceil(curStep.duration/60)} min •` : routeData? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min •` : '0.0km • 0 min •'
-
   const showTopBanner =!isTestDriver && docStatus!== 'approved' || isTestDriver
   const topBannerHeight = showTopBanner? 42 : 0
 
@@ -352,7 +345,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       </div>
     )}
     <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: '260px', zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px' }}>🎯</button>
-
     {cancelledNotification && (
       <div style={{position:'fixed', top:'90px', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
         <div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div>
@@ -360,12 +352,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
       </div>
     )}
-
     <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '32px', borderTopRightRadius: '32px', padding: '16px 16px 24px', color: text, borderTop: `1px solid ${border}`, maxHeight: '72vh', overflowY: 'auto', boxShadow: '0 -12px 40px rgba(0,0,0,0.6)' }}>
       <div style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '0 auto 16px' }} />
       {ride && (ride.status as any) === 'accepted' && (
         <>
-          {/* BEAUTY: Passenger Name Card */}
           {passengerProfile && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', background: bg2, borderRadius: '14px', padding: '10px 12px' }}>
               <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#FF6B00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900' }}>{passengerProfile.full_name?.[0] || 'T'}</div>
@@ -377,10 +367,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
             </div>
           )}
           <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-            <div><div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>FARE TO COLLECT</div><div style={{color:'white', fontSize:'22px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div></div>
+            <div><div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>FARE TO COLLECT (Passenger pays)</div><div style={{color:'white', fontSize:'20px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div><div style={{color:'#00d181', fontSize:'13px', fontWeight:'bold'}}>YOU GET R {getEarnings(ride.fare).driverGets} (80%) • Fee R {getEarnings(ride.fare).platformGets}</div></div>
             <div style={{background:'#00d181', color:'white', padding:'6px 10px', borderRadius:'8px', fontSize:'12px', fontWeight:'bold'}}>CASH</div>
           </div>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>Go to Pickup • R {ride.fare}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>Go to Pickup • You get R {getEarnings(ride.fare).driverGets}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
           <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>{ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
             <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>{isNavigating? 'Navigating...' : 'Navigate'}</button>
@@ -402,9 +392,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <>
           <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', textAlign:'center'}}>
             <div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>PASSENGER IN CAR? START TRIP</div>
-            <div style={{color:'white', fontSize:'22px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div>
+            <div style={{color:'white', fontSize:'20px', fontWeight:'900'}}>Passenger R {ride.fare} • You get R {getEarnings(ride.fare).driverGets}</div>
           </div>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>You Have Arrived • R {ride.fare}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>You Have Arrived • You R {getEarnings(ride.fare).driverGets}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
           <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>Waiting at {ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
             <button onClick={async () => {
@@ -421,9 +411,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
       )}
       {ride && ((ride.status as any) === 'picked_up' || (ride.status as any) === 'in_progress' || (ride.status as any) === 'en_route') &&!showDriverRating && (
         <>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]} • R {ride.fare}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
-          <p style={{margin:'0 0 10px', fontSize:'12px', color:subText}}>Passenger in car</p>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}><button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigating...</button><button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip ✓ R {ride.fare}</button></div>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]} • You R {getEarnings(ride.fare).driverGets}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
+          <p style={{margin:'0 0 10px', fontSize:'12px', color:subText}}>Passenger in car • Passenger pays R{ride.fare}</p>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}><button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigating...</button><button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip ✓ You R {getEarnings(ride.fare).driverGets}</button></div>
         </>
       )}
       {ride && (ride.status as any) === 'completed' &&!showDriverRating && showCollected === null && (
@@ -431,6 +421,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
           <div style={{ fontSize: '48px' }}>✅</div>
           <h2 style={{ margin: '8px 0' }}>Trip Completed!</h2>
           <h1 style={{ color: '#00d181', margin: '4px 0' }}>R {ride.fare} CASH</h1>
+          <div style={{color:'#00d181', fontWeight:'bold'}}>You get R {getEarnings(ride.fare).driverGets} • Fee R {getEarnings(ride.fare).platformGets}</div>
           <p style={{ color: subText, fontSize: '13px' }}>Rate passenger to continue</p>
           <button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button>
         </div>
@@ -439,7 +430,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '48px' }}>⭐</div>
           <h2 style={{ margin: '8px 0' }}>Rate Passenger</h2>
-          <p style={{ color: subText, fontSize: '13px' }}>{ride.dropoff_address?.split(',')[0]} • R {ride.fare}</p>
+          <p style={{ color: subText, fontSize: '13px' }}>{ride.dropoff_address?.split(',')[0]} • Passenger R {ride.fare} / You R {getEarnings(ride.fare).driverGets}</p>
           <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '20px 0' }}>
             {[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '52px', background: 'none', border: 'none', color: driverRating >= s? '#FF6B00' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}
           </div>
@@ -454,13 +445,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
           {isOnline && searchingRides.map(r => {
             const expires = new Date((r as any).offer_expires_at || Date.now() + 12000).getTime()
             const secs = Math.max(0, Math.floor((expires - now)/1000))
+            const e = getEarnings(r.fare)
             return (
             <div key={r.id} style={{ background: isDark? '#1e1e22' : 'white', border: `2px solid #00d181`, borderRadius: '16px', padding: '14px', marginBottom: '12px', textAlign: 'left' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><p style={{ fontWeight: 'bold', margin: 0, color: '#00d181' }}>🔔 BUDDY REQUEST • R {r.fare}</p><span style={{ background: '#00d181', color: 'white', borderRadius: '12px', padding: '2px 8px', fontSize: '12px' }}>{secs}s</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><p style={{ fontWeight: 'bold', margin: 0, color: '#00d181' }}>🔔 BUDDY REQUEST • Passenger R {r.fare}</p><span style={{ background: '#00d181', color: 'white', borderRadius: '12px', padding: '2px 8px', fontSize: '12px' }}>{secs}s • You R{e.driverGets}</span></div>
+              <p style={{ margin: '6px 0', fontSize: '13px', color: subText }}>You get R{e.driverGets} (80%) • Fee R{e.platformGets} (20%) • {((r as any).distance_km||0).toFixed(1)}km</p>
               <p style={{ margin: '6px 0', fontSize: '13px' }}>📍 {r.pickup_address?.split(',')[0]} → {r.dropoff_address?.split(',')[0]}</p>
               <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                 <button onClick={() => declineRide(r.id)} style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>DECLINE</button>
-                <button onClick={() => acceptRide(r.id)} style={{ flex: 1.5, padding: '12px', borderRadius: '10px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>ACCEPT R {r.fare}</button>
+                <button onClick={() => acceptRide(r.id)} style={{ flex: 1.5, padding: '12px', borderRadius: '10px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>ACCEPT R {e.driverGets}</button>
               </div>
             </div>
           )})}
@@ -470,7 +463,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       )}
     </section>
     {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bgCard, width: '100%', borderTopLeftRadius: '32px', borderTopRightRadius: '32px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><div style={{ fontWeight: 'bold', color: text }}>Chat with Passenger</div><div style={{ fontSize: '11px', color: '#999' }}>Messages disappear after trip</div></div><button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
-    {showCollected!== null && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}><div style={{background:'linear-gradient(135deg,#FF6B00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px'}}><div style={{fontSize:'48px'}}>💰</div><div style={{color:'white', fontSize:'14px', fontWeight:'bold'}}>FARE COLLECTED</div><div style={{color:'white', fontSize:'42px', fontWeight:'900'}}>R {showCollected} CASH</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#FF6B00', border:'none', fontWeight:'900'}}>Rate Passenger →</button></div></div>)}
+    {showCollected!== null && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}><div style={{background:'linear-gradient(135deg,#FF6B00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px'}}><div style={{fontSize:'48px'}}>💰</div><div style={{color:'white', fontSize:'14px', fontWeight:'bold'}}>FARE COLLECTED</div><div style={{color:'white', fontSize:'20px'}}>Passenger R {showCollected}</div><div style={{color:'white', fontSize:'32px', fontWeight:'900'}}>You get R {getEarnings(showCollected).driverGets}</div><div style={{color:'white', fontSize:'14px', opacity:0.8}}>Fee R {getEarnings(showCollected).platformGets} (20%)</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#FF6B00', border:'none', fontWeight:'900'}}>Rate Passenger →</button></div></div>)}
     {showDriverCancelReason && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}><div style={{background: isDark? '#121214':'white', width:'100%', borderTopLeftRadius:'32px', borderTopRightRadius:'32px', padding:'20px', color: text}}><div style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '0 auto 14px' }} /><h3>Why cancel?</h3>{['Passenger no-show','Passenger asked to cancel','Wrong pickup','Vehicle issue','Other'].map(reason => (<button key={reason} onClick={() => setDriverCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: driverCancelReason===reason? '#ff3b30':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {driverCancelReason===reason? '✓':''}</button>))}<div style={{display:'flex', gap:'8px', marginTop:'16px'}}><button onClick={() => { setShowDriverCancelReason(false); setDriverCancelReason(''); setRideToCancel(null) }} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button><button onClick={executeDriverCancel} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!driverCancelReason}>Confirm Cancel</button></div></div></div>)}
   </div>
 }

@@ -27,11 +27,14 @@ const LOCAL_PLACES = [
   { text: 'Mokopane', place_name: 'Mokopane, Mogalakwena', center: [29.0100, -24.1944] as [number, number] },
 ]
 
+// --- PRICING ONLY FIX ---
 const CATEGORIES = [
-  { id: 'buddy_go', name: 'Go', icon: '🚗', base: 15, perKm: 7.5, min: 35 },
-  { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 20, perKm: 9, min: 45 },
-  { id: 'buddy_xl', name: 'XL', icon: '🚐', base: 28, perKm: 11, min: 60 },
+  { id: 'buddy_go', name: 'Go', icon: '🚗', base: 8, perKm: 5.5, perMin: 0.5, min: 20 },
+  { id: 'buddy_comfort', name: 'Comfort', icon: '✨', base: 12, perKm: 7.0, perMin: 0.7, min: 30 },
+  { id: 'buddy_xl', name: 'XL', icon: '🚐', base: 18, perKm: 9.0, perMin: 1.0, min: 45 },
 ]
+const COMMISSION = 0.20
+// --- END PRICING FIX ---
 
 export function PassengerHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
@@ -71,23 +74,17 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const bg2 = isDark? '#1e1e1e' : '#f2f2f2'
   const text = isDark? 'white' : 'black'
   const border = isDark? '#333' : '#ddd'
-
-  // FIX: Check if passenger is verified
   const isVerified = (profile as any).is_verified === true || (profile as any).is_verified === 1
-
   function onDragStart(e: any) { setIsDragging(true); dragStartY.current = e.touches? e.touches[0].clientY : e.clientY; dragStartH.current = sheetHeight }
   function onDragMove(e: any) { if (!isDragging) return; const y = e.touches? e.touches[0].clientY : e.clientY; const deltaY = y - dragStartY.current; const deltaVh = (deltaY / window.innerHeight) * 100; let newH = dragStartH.current - deltaVh; if (newH < 18) newH = 18; if (newH > 75) newH = 75; setSheetHeight(newH) }
   function onDragEnd() { setIsDragging(false); dragStartY.current = 0; if (sheetHeight < 28) setSheetHeight(18); else if (sheetHeight < 52) setSheetHeight(38); else setSheetHeight(62) }
   function toggleSheet() { if (sheetHeight > 40) setSheetHeight(18); else setSheetHeight(62) }
-
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
-
   useEffect(() => {
     audioRef.current = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3')
     audioRef.current.volume = 1.0
     audioRef.current.preload = 'auto'
   }, [])
-
   function playSound(type: 'accept'|'arrived'|'start'|'complete'|'cancel' = 'accept') {
     const sounds: any = {
       accept: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3',
@@ -99,15 +96,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     try {
       const audio = new Audio(sounds[type])
       audio.volume = 1.0
-      audio.play().catch(() => {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.frequency.value = type === 'arrived'? 880 : type === 'cancel'? 220 : 660
-        gain.gain.value = 0.6
-        osc.connect(gain); gain.connect(ctx.destination)
-        osc.start(); setTimeout(() => { osc.stop(); ctx.close() }, 500)
-      })
+      audio.play().catch(() => {})
     } catch {}
     if ('vibrate' in navigator) {
       if (type === 'arrived') navigator.vibrate([200,100,200,100,400])
@@ -115,7 +104,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       else navigator.vibrate(300)
     }
   }
-
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
@@ -128,8 +116,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
     loadActiveRide()
   }, [profile.id])
-
-  // FIXED ONLY THIS PART - hide ghost cars older than 5 min
   useEffect(() => {
     const fiveMinAgo = new Date(Date.now() - 5*60*1000).toISOString()
     supabase.from('driver_status').select('*').eq('is_online', true).gt('updated_at', fiveMinAgo).then(({data}) => { if(data) setNearbyCars(data) })
@@ -143,19 +129,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [])
-
   useEffect(() => {
     if (ride?.driver_id) supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) })
     else setDriverProfile(null)
   }, [ride?.driver_id])
-
   useEffect(() => {
     if (!ride) return
     const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
       const newR = p.new as any; if (!newR) return
       const oldStatus = prevStatusRef.current
       const newStatus = newR.status
-
       if (newStatus === 'cancelled' && newR.cancelled_by === 'driver') {
         playSound('cancel')
         setCancelledNotification(`Driver cancelled: ${newR.cancel_reason || 'No reason'}`)
@@ -175,11 +158,15 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
+  // --- PRICING ONLY FIX ---
   function calcFareForCategory(catId: string, km: number) {
     const cat = CATEGORIES.find(c => c.id === catId) || CATEGORIES[0]
-    let fare = cat.base + (km * cat.perKm); if (fare < cat.min) fare = cat.min; if (fare > 350) fare = 350
-    return Math.ceil(fare / 5) * 5
+    let fare = cat.base + (km * cat.perKm)
+    if (fare < cat.min) fare = cat.min
+    if (fare > 350) fare = 350
+    return Math.round(fare) // No R5 rounding, exact
   }
+  // --- END FIX ---
 
   async function searchPlaces(query: string, setter: any, setShow: any) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
@@ -199,12 +186,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       if (unique.length > 0) { setter(unique.slice(0,10)); setShow(true) }
     } catch {}
   }
-
   function onPickupChange(val: string) { setPickup(val); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 300) }
   function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
   function selectPickupSuggestion(item: any) { setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setShowPickupSug(false) }
   function selectDropoffSuggestion(item: any) { setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setShowDropoffSug(false); setSheetHeight(62) }
-
   async function ensureCoords() {
     let pCoords = pickupCoords; let dCoords = dropoffCoords
     const findLocal = (name: string) => { if (!name) return null; const l = name.toLowerCase(); return LOCAL_PLACES.find((p:any) => l.includes(p.text.toLowerCase()) || p.text.toLowerCase().includes(l)) }
@@ -214,21 +199,18 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!dCoords && dropoff) dCoords = [pCoords![0] + 0.018, pCoords![1] + 0.018] as any
     return { pCoords, dCoords }
   }
-
   async function calculateEstimate() {
     if (!dropoff) { alert('Enter destination'); return }
     const { pCoords, dCoords } = await ensureCoords(); if (!pCoords ||!dCoords) return
     setPickupCoords(pCoords); setDropoffCoords(dCoords!)
     try { const r = await getOSMRoute(pCoords, dCoords!); setRoute(r.geometry); setDistance(r.distanceKm); setPrice(calcFareForCategory(selectedCat, r.distanceKm)); setShowEstimate(true) } catch { setDistance(2.5); setPrice(calcFareForCategory(selectedCat, 2.5)); setShowEstimate(true) }
   }
-
   async function useMyLocation() {
     navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
       setLocation(p); setPickupCoords(p); const real = await reverseOSM(p); setPickup(real)
     })
   }
-
   async function requestRide() {
     if (!isVerified) { alert('Please verify your ID first. Admin must approve you.'); return; }
     setLoading(true)
@@ -239,7 +221,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (data) { setRide(data as Ride); setSheetHeight(35); prevStatusRef.current = 'searching'; try { await supabase.functions.invoke('dispatch', { body: { ride_id: (data as any).id } }) } catch {} }
     setLoading(false)
   }
-
   async function cancelRide() {
     if (!ride) return; if (!cancelReason) { setShowCancelReason(true); return }
     const rideId = ride.id
@@ -247,7 +228,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     await supabase.from('rides').update({ status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).eq('id', rideId)
     setCancelReason('')
   }
-
   async function finishTrip() {
     if (!ride) return
     const rideId = ride.id
@@ -267,7 +247,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
     setRide(null); setShowChat(false); setRoute(undefined); setSheetHeight(58); setRating(0)
   }
-
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
@@ -277,7 +256,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <strong>BuddyRide1</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
     </header>
-
     {cancelledNotification && (
       <div style={{position:'fixed', top:'70px', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center'}}>
         <div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div>
@@ -285,28 +263,22 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
       </div>
     )}
-
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
       <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} availableCars={nearbyCars as any} />
       <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px' }}>📍</button>
     </div>
-
     <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', color: text, borderTop: `1px solid ${border}`, height: `${sheetHeight}vh`, overflowY: 'auto', transition: isDragging? 'none' : 'height 0.28s ease' }}>
       <div onClick={toggleSheet} onTouchStart={onDragStart} onTouchMove={onDragMove} onTouchEnd={onDragEnd} onMouseDown={onDragStart} onMouseMove={(e:any) => e.buttons===1 && onDragMove(e)} onMouseUp={onDragEnd} style={{ display: 'flex', justifyContent: 'center', padding: '14px 0 8px 0', cursor: 'grab', position: 'sticky', top: 0, background: bg, zIndex: 5 }}>
         <div style={{ width: '48px', height: '6px', background: sheetHeight > 40? '#ff7a00' : '#666', borderRadius: '3px' }} />
       </div>
-
       <div style={{ padding: '0 16px 20px 16px' }}>
         {!ride && (<>
           <h2 style={{ margin: '0 0 12px' }}>Where are you going?</h2>
-
-          {/* VERIFICATION WARNING - NEW */}
           {!isVerified && (
             <div style={{padding:'12px', background:'#ff7a00', borderRadius:'12px', textAlign:'center', fontWeight:'bold', color:'white', marginBottom:'12px', fontSize:'14px'}}>
               🛡️ Your ID is pending approval. You can enter destination but cannot request until Admin approves.
             </div>
           )}
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ position: 'relative' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
@@ -334,7 +306,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
-
         {ride && ride.status === 'searching' && (
           <>
             <h3>Searching driver... ●</h3>
@@ -342,7 +313,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
           </>
         )}
-
         {ride && ['accepted','arrived'].includes(ride.status as any) && driverProfile && (
           <>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -355,7 +325,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
           </>
         )}
-
         {ride && ['picked_up','en_route','in_progress'].includes(ride.status as any) && driverProfile && (
           <>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -368,7 +337,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <div style={{ marginTop: '12px', padding: '12px', borderRadius: '12px', background: '#00d18122', border: '1px solid #00d181', textAlign: 'center', color: '#00d181', fontWeight: 'bold' }}>🧭 Driving to destination...</div>
           </>
         )}
-
         {ride && ride.status === 'completed' && (
           <>
             <div style={{ textAlign: 'center' }}>
@@ -386,7 +354,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         )}
       </div>
     </section>
-
     {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bg, width: '100%', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between' }}><div style={{ fontWeight: 'bold', color: text }}>{driverProfile?.full_name}</div><button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
     {showCancelReason && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}><div style={{background: isDark? '#18181b':'white', width:'100%', borderTopLeftRadius:'24px', borderTopRightRadius:'24px', padding:'20px', color: text}}>{['Driver too far','Waiting too long','Changed my mind','Other'].map(reason => (<button key={reason} onClick={() => setCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: cancelReason===reason? '#00d181':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {cancelReason===reason? '✓':''}</button>))}<div style={{display:'flex', gap:'8px', marginTop:'16px'}}><button onClick={() => setShowCancelReason(false)} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button><button onClick={cancelRide} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!cancelReason}>Confirm Cancel</button></div></div></div>)}
   </div>

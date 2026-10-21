@@ -8,50 +8,57 @@ export type FareEstimate = {
   price: number;
   bookingFee: number;
   booking_fee: number;
+  // NEW - your 20% breakdown
+  driverGets: number;
+  platformGets: number;
+  breakdown: string;
+  commission: number;
 };
 
+export const COMMISSION = 0.20 // BuddyRide takes 20%
+
 const CATEGORY_RATES: Record<string, { base: number; perKm: number; perMin: number; min: number }> = {
-  buddy_go: { base: 15, perKm: 7.5, perMin: 1.2, min: 35 },
-  buddy_comfort: { base: 20, perKm: 9, perMin: 1.5, min: 45 },
-  buddy_xl: { base: 28, perKm: 11, perMin: 1.8, min: 60 },
-  go: { base: 15, perKm: 7.5, perMin: 1.2, min: 35 },
+  // NEW CHEAPER POLOKWANE PRICING - undercuts Bolt 2026
+  buddy_go: { base: 8, perKm: 5.5, perMin: 0.5, min: 20 },
+  go: { base: 8, perKm: 5.5, perMin: 0.5, min: 20 },
+  buddy_comfort: { base: 12, perKm: 7.0, perMin: 0.7, min: 30 },
+  buddy_xl: { base: 18, perKm: 9.0, perMin: 1.0, min: 45 },
 }
 
-function isPeakHour() {
-  const hour = new Date().getHours()
-  return hour >= 16 && hour <= 19 // 4-7pm Polokwane surge like Bolt
-}
-
-export function calculateFare(distanceKm: number, durationMin: number = 10, category: string = 'buddy_go'): FareEstimate {
+export function calculateFare(distanceKm: number, durationMin: number = 5, category: string = 'buddy_go'): FareEstimate {
   const rates = CATEGORY_RATES[category] || CATEGORY_RATES.buddy_go
-  const surge = isPeakHour()? 1.3 : 1.0
 
   let calcFare = rates.base + (distanceKm * rates.perKm) + (durationMin * rates.perMin)
-  calcFare = calcFare * surge
 
   if (calcFare < rates.min) calcFare = rates.min
   if (calcFare > 350) calcFare = 350
-  calcFare = Math.ceil(calcFare / 5) * 5 // Round to R5 like Bolt
+  calcFare = Math.round(calcFare) // No R5 rounding, exact pricing
 
   const bookingFee = 0
-  const total = calcFare + bookingFee
+  const total = calcFare
+  const driverGets = Math.round(calcFare * (1 - COMMISSION))
+  const platformGets = Math.round(calcFare * COMMISSION)
 
   return {
     distance: distanceKm,
     distanceKm,
     duration: durationMin * 60,
     durationMin,
-    fare: calcFare,
+    fare: calcFare, // passenger pays
     total,
     price: calcFare,
     bookingFee,
-    booking_fee: bookingFee
+    booking_fee: bookingFee,
+    driverGets, // driver gets 80%
+    platformGets, // you get 20%
+    breakdown: `R${rates.base} + ${distanceKm.toFixed(1)}km×R${rates.perKm} + ${durationMin.toFixed(0)}min×R${rates.perMin}`,
+    commission: COMMISSION
   };
 }
 
 // For PassengerHome compatibility
-export function calculateFareForCategory(catId: string, km: number, min: number = 10) {
-  return calculateFare(km, min, catId).fare
+export function calculateFareForCategory(catId: string, km: number, min: number = 5) {
+  return calculateFare(km, min, catId)
 }
 
 export default calculateFare;
