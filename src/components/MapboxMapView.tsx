@@ -14,7 +14,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     if (!containerRef.current || mapRef.current) return
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: mapStyle || 'mapbox://styles/mapbox/dark-v11',
+      style: mapStyle || 'mapbox://styles/mapbox/streets-v12', // FIXED: normal map, not dark
       center: center || driverLocation || [29.4589, -23.9045],
       zoom: 15,
       pitch: 0,
@@ -40,7 +40,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
             source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
             paint: { 
-              'line-color': '#FF6B00', // ORANGE - like your pictures
+              'line-color': '#FF6B00',
               'line-width': 20, 
               'line-opacity': 0.28, 
               'line-blur': 12 
@@ -54,7 +54,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
             source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
             paint: { 
-              'line-color': '#FF6B00', // ORANGE - not blue
+              'line-color': '#FF6B00',
               'line-width': 6.5, 
               'line-opacity': 1 
             }
@@ -69,7 +69,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     const driverEl = document.createElement('div')
     driverEl.style.width = '52px'
     driverEl.style.height = '52px'
-    driverEl.style.background = '#FF6B00' // Orange driver
+    driverEl.style.background = '#FF6B00'
     driverEl.style.border = '4px solid white'
     driverEl.style.borderRadius = '26px'
     driverEl.style.boxShadow = '0 4px 16px rgba(255,107,0,0.5)'
@@ -126,13 +126,16 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     } else if (center) { mapRef.current.easeTo({ center, duration: 1000 }) }
   }, [driverLocation, center, bearing, isNavigating, followDriver])
 
-  useEffect(() => { if (!mapRef.current || !mapStyle) return; try { mapRef.current.setStyle(mapStyle) } catch {} }, [mapStyle])
+  // Keep this so parent can still change style if needed
+  useEffect(() => { 
+    if (!mapRef.current || !mapStyle) return; 
+    try { mapRef.current.setStyle(mapStyle) } catch {} 
+  }, [mapStyle])
 
   return (
     <>
-      {/* FIX: Not covering buttons - w-full h-full */}
       <div ref={containerRef} className="w-full h-full" style={{ width: '100%', height: '100%' }} />
-      <style>{`.mapboxgl-ctrl-top-right{top:75px!important;right:12px!important;}.mapboxgl-ctrl-group{background:#121214!important;border-radius:12px!important;border:1px solid #222!important;}`}</style>
+      <style>{`.mapboxgl-ctrl-top-right{top:75px!important;right:12px!important;}.mapboxgl-ctrl-group{background:#ffffff!important;border-radius:12px!important;border:1px solid #ddd!important;}`}</style>
     </>
   )
 }
