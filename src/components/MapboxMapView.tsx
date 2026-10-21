@@ -24,6 +24,11 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right')
     mapRef.current = map
 
+    // FIX: Force resize after load
+    map.on('load', () => {
+      setTimeout(() => map.resize(), 100)
+    })
+
     const addRouteLayer = () => {
       try {
         if (!map.getSource('route')) {
@@ -117,7 +122,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
 
   return (
     <>
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <div ref={containerRef} style={{ width: '100%', height: '100vh', position: 'absolute', inset: 0 }} />
       <style>{`.mapboxgl-ctrl-top-right{top:75px!important;right:12px!important;}.mapboxgl-ctrl-group{background:#121214!important;border-radius:12px!important;}`}</style>
     </>
   )
