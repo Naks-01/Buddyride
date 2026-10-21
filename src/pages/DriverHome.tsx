@@ -6,7 +6,6 @@ import { getRoute } from '../lib/mapbox'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
-// FIXED: Added huru = 7 docs total + TestDriver bypass for Paystack
 const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie','huru'] as const
 const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com', 'testdriver@buddyride.co.za', 'TestDriver@buddyride.co.za', 'test@buddyride.co.za']
 
@@ -43,13 +42,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const beepIntervalRef = useRef<any>(null)
 
   const isDark = theme === 'dark'
-  const bg = isDark? '#0e0e10' : '#f5f5f7'
-  const bgCard = isDark? '#18181b' : '#ffffff'
-  const bg2 = isDark? '#242428' : '#eeeeef'
-  const text = isDark? 'white' : '#111827'
-  const subText = isDark? '#9ca3af' : '#6b7280'
-  const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
-  const mapStyleUrl = isDark? 'mapbox://styles/mapbox/navigation-night-v1' : 'mapbox://styles/mapbox/navigation-day-v1'
+  const mapStyleUrl = isDark? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/streets-v12'
   const isTestDriver = TEST_DRIVER_EMAILS.map(e=>e.toLowerCase()).includes((profile.email || '').toLowerCase()) || (profile.full_name || '').toLowerCase().includes('mokgalaka') || (profile.full_name || '').toLowerCase().includes('mokgafaka') || (profile.email || '').toLowerCase().includes('testdriver') || (profile.email || '').toLowerCase().includes('buddyride')
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
@@ -127,9 +120,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     async function loadRide() {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
-      if (data) {
-        setRide(data); setIsNavigating(true); setZoom(17)
-      }
+      if (data) { setRide(data); setIsNavigating(true); setZoom(17) }
     }
     loadRide()
   }, [profile.id])
@@ -229,9 +220,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       try { const r = await getRoute(from, target); setRoute(r.geometry); setRouteData(r) } catch {}
     }
     buildRoute()
-    if (isNavigating) {
-      interval = setInterval(buildRoute, 15000)
-    }
+    if (isNavigating) { interval = setInterval(buildRoute, 15000) }
     return () => clearInterval(interval)
   }, [ride?.id, ride?.status, location, isNavigating])
 
@@ -321,150 +310,144 @@ export function DriverHome({ profile }: { profile: Profile }) {
   })()
   const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
   const distText = curStep ? `${(curStep.distance/1000).toFixed(1)}km • ${Math.ceil(curStep.duration/60)} min •` : routeData? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min •` : '0.0km • 0 min •'
-
   const showTopBanner =!isTestDriver && docStatus!== 'approved' || isTestDriver
   const topBannerHeight = showTopBanner? 42 : 0
 
-  return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <div style={{ position: 'absolute', inset: 0 }}>
-      <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} isNavigating={isNavigating} followDriver={true} mapStyle={mapStyleUrl} theme={theme} />
-    </div>
-    <header style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
-      <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
-      <strong>BuddyRide<br/>Driver</strong>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
-        <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: docStatus!== 'approved' &&!isTestDriver? '#666' : isOnline? '#00d181' : '#666', color: 'white', fontSize: '12px' }}>{docStatus!== 'approved' &&!isTestDriver? '⛔ BLOCKED' : isOnline? '● ONLINE' : '○ OFFLINE'}</button>
+  return (
+    <div className="relative h-[100dvh] overflow-hidden bg-[#08080A]">
+      <div className="absolute inset-0">
+        <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} isNavigating={isNavigating} followDriver={true} mapStyle={mapStyleUrl} theme={theme} />
       </div>
-    </header>
-    {showTopBanner && (
-      <div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: isTestDriver? '#00d181' : docStatus==='missing'? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>
-        {isTestDriver? `✅ Test mode: ${profile.email} - bypass docs` : docStatus==='missing'? `⚠️ Upload 7 docs: ${approvedDocs.length}/7` : `⏳ Pending: ${approvedDocs.length}/7 approved`}
-      </div>
-    )}
-    {isNavigating && ride && (
-      <div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
-        <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div>
-        <div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div>
-      </div>
-    )}
-    <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: '260px', zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px' }}>🎯</button>
 
-    {cancelledNotification && (
-      <div style={{position:'fixed', top:'90px', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
-        <div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div>
-        <div style={{flex:1}}><div style={{color:'white', fontWeight:'900', fontSize:'15px'}}>Trip Cancelled by Passenger!</div><div style={{color:'white', fontSize:'13px', opacity:0.9}}>{cancelledNotification.msg} • R{cancelledNotification.fare}</div></div>
-        <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
-      </div>
-    )}
+      <header className="absolute top-0 left-0 right-0 z-[300] flex items-center gap-3 px-4 py-3 bg-[#121214]/90 backdrop-blur-2xl border-b border-white/[0.06]">
+        <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
+        <div className="leading-none">
+          <div className="font-black text-[16px]"><span className="text-[#FF6B00]">Buddy</span><span className="text-white">Ride</span> <span className="text-white/30 text-[10px] ml-1">DRIVER</span></div>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => setTheme(isDark? 'light' : 'dark')} className="w-10 h-9 rounded-full bg-white/10 border border-white/10 text-white"> {isDark? '☀️' : '🌙'} </button>
+          <button onClick={toggleOnline} className={`px-4 py-2 rounded-full text-[11px] font-black tracking-wide ${docStatus!=='approved' &&!isTestDriver? 'bg-zinc-700 text-white/40' : isOnline? 'bg-[#00D181] text-white shadow-[0_0_20px_rgba(0,209,129,0.4)]' : 'bg-white/10 text-white border border-white/10'}`}> {docStatus!=='approved' &&!isTestDriver? '⛔ BLOCKED' : isOnline? '● ONLINE' : '○ OFFLINE'} </button>
+        </div>
+      </header>
 
-    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '14px 12px 20px', color: text, borderTop: `1px solid ${border}`, maxHeight: '70vh', overflowY: 'auto' }}>
-      {ride && (ride.status as any) === 'accepted' && (
-        <>
-          <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-            <div><div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>FARE TO COLLECT</div><div style={{color:'white', fontSize:'22px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div></div>
-            <div style={{background:'#00d181', color:'white', padding:'6px 10px', borderRadius:'8px', fontSize:'12px', fontWeight:'bold'}}>CASH</div>
-          </div>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>Go to Pickup • R {ride.fare}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
-          <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>{ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-            <button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>{isNavigating? 'Navigating...' : 'Navigate'}</button>
-            <button onClick={async () => {
-              const prevStatus = ride.status
-              setRide(r => r? {...r, status: 'arrived'} as any : r)
-              const { error } = await supabase.from('rides').update({ status: 'arrived' as any } as any).eq('id', ride.id)
-              if (error) {
-                console.error(error)
-                alert('Arrived failed: ' + error.message)
-                setRide(r => r? {...r, status: prevStatus} as any : r)
-              }
-            }} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>I Have Arrived</button>
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${ride.pickup_lat},${ride.pickup_lng}`, '_blank')} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#4285F4', color: 'white', border: 'none', fontWeight: 'bold' }}>🗺️ Google</button>
-            <button onClick={() => window.open(`https://waze.com/ul?ll=${ride.pickup_lat},${ride.pickup_lng}&navigate=yes`, '_blank')} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: '#33CCFF', color: 'black', border: 'none', fontWeight: 'bold' }}>🚗 Waze</button>
-            <button onClick={() => openDriverCancel(ride)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
-          </div>
-        </>
-      )}
-      {ride && (ride.status as any) === 'arrived' && (
-        <>
-          <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', textAlign:'center'}}>
-            <div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>PASSENGER IN CAR? START TRIP</div>
-            <div style={{color:'white', fontSize:'22px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div>
-          </div>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>You Have Arrived • R {ride.fare}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
-          <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>Waiting at {ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-            <button onClick={async () => {
-              const prevStatus = ride.status
-              setRide(r => r? {...r, status: 'in_progress'} as any : r)
-              const target: [number, number] = [ride.dropoff_lng, ride.dropoff_lat]
-              try { const from = lastLocation.current[0]!== 0? lastLocation.current : location; const res = await getRoute(from, target); setRoute(res.geometry); setRouteData(res) } catch {}
-              const { error } = await supabase.from('rides').update({ status: 'in_progress' as any } as any).eq('id', ride.id)
-              if (error) {
-                alert('Start trip failed: ' + error.message)
-                setRide(r => r? {...r, status: prevStatus} as any : r)
-              }
-            }} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold', fontSize: '16px' }}>Start Trip → Passenger In</button>
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}><button onClick={() => openDriverCancel(ride)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>Cancel Ride</button></div>
-        </>
-      )}
-      {ride && ((ride.status as any) === 'picked_up' || (ride.status as any) === 'in_progress' || (ride.status as any) === 'en_route') &&!showDriverRating && (
-        <>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]} • R {ride.fare}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
-          <p style={{margin:'0 0 10px', fontSize:'12px', color:subText}}>Passenger in car</p>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}><button style={{ flex: 1, padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}` }}>Navigating...</button><button onClick={completeRide} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip ✓ R {ride.fare}</button></div>
-        </>
-      )}
-      {ride && (ride.status as any) === 'completed' &&!showDriverRating && showCollected === null && (
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '48px' }}>✅</div>
-          <h2 style={{ margin: '8px 0' }}>Trip Completed!</h2>
-          <h1 style={{ color: '#00d181', margin: '4px 0' }}>R {ride.fare} CASH</h1>
-          <p style={{ color: subText, fontSize: '13px' }}>Rate passenger to continue</p>
-          <button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button>
+      {showTopBanner && (
+        <div className={`absolute left-3 right-3 z-[80] rounded-xl px-4 py-2.5 text-[13px] font-bold text-white top-[62px] shadow-xl ${isTestDriver? 'bg-[#00D181]' : docStatus==='missing'? 'bg-[#FF3B30]' : 'bg-[#FF9500]'}`}>
+          {isTestDriver? `✅ Test mode: ${profile.email}` : docStatus==='missing'? `⚠️ Upload 7 docs: ${approvedDocs.length}/7` : `⏳ Pending: ${approvedDocs.length}/7`}
         </div>
       )}
-      {showDriverRating && ride && (
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '48px' }}>⭐</div>
-          <h2 style={{ margin: '8px 0' }}>Rate Passenger</h2>
-          <p style={{ color: subText, fontSize: '13px' }}>{ride.dropoff_address?.split(',')[0]} • R {ride.fare}</p>
-          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '20px 0' }}>
-            {[1,2,3,4,5].map(s => (
-              <button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '52px', background: 'none', border: 'none', color: driverRating >= s? '#FFB400' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button>
-            <button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button>
-          </div>
+
+      {isNavigating && ride && (
+        <div className="absolute left-3 right-3 z-[70] bg-white rounded-[18px] px-4 py-3.5 flex items-center gap-3 shadow-[0_8px_32px_rgba(0,0,0,0.4)]" style={{ top: `${68 + topBannerHeight + 8}px` }}>
+          <div className="w-11 h-11 rounded-full bg-[#00D181] flex items-center justify-center text-white text-xl font-black">↑</div>
+          <div><div className="font-extrabold text-[#111] text-[15px]">{instruction}</div><div className="text-[#666] text-[13px]">{distText}</div></div>
         </div>
       )}
-      {!ride &&!showDriverRating && (
-        <div style={{ textAlign: 'center' }}>
-          {isOnline && searchingRides.map(r => {
-            const expires = new Date((r as any).offer_expires_at || Date.now() + 12000).getTime()
-            const secs = Math.max(0, Math.floor((expires - now)/1000))
-            return (
-            <div key={r.id} style={{ background: isDark? '#1e1e22' : 'white', border: `2px solid #00d181`, borderRadius: '16px', padding: '14px', marginBottom: '12px', textAlign: 'left' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><p style={{ fontWeight: 'bold', margin: 0, color: '#00d181' }}>🔔 BUDDY REQUEST • R {r.fare}</p><span style={{ background: '#00d181', color: 'white', borderRadius: '12px', padding: '2px 8px', fontSize: '12px' }}>{secs}s</span></div>
-              <p style={{ margin: '6px 0', fontSize: '13px' }}>📍 {r.pickup_address?.split(',')[0]} → {r.dropoff_address?.split(',')[0]}</p>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                <button onClick={() => declineRide(r.id)} style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>DECLINE</button>
-                <button onClick={() => acceptRide(r.id)} style={{ flex: 1.5, padding: '12px', borderRadius: '10px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>ACCEPT R {r.fare}</button>
-              </div>
+
+      <button onClick={() => setZoom(17)} className="absolute right-4 z-50 w-[52px] h-[52px] rounded-full bg-white border shadow-lg text-xl bottom-[280px]">🎯</button>
+
+      {cancelledNotification && (
+        <div className="fixed top-[90px] left-3 right-3 z-[99999] bg-[#FF3B30] rounded-2xl p-4 flex gap-3 items-center">
+          <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-2xl">❌</div>
+          <div className="flex-1"><div className="text-white font-black">Trip Cancelled!</div><div className="text-white/90 text-[13px]">{cancelledNotification.msg} • R{cancelledNotification.fare}</div></div>
+          <button onClick={() => setCancelledNotification(null)} className="bg-white text-[#FF3B30] rounded-full px-3.5 py-2 font-bold">OK</button>
+        </div>
+      )}
+
+      <section className="absolute bottom-0 left-0 right-0 z-40 bg-[#121214] border-t border-white/[0.06] rounded-t-[28px] p-3 pb-7 max-h-[72vh] overflow-y-auto shadow-[0_-8px_40px_rgba(0,0,0,0.6)]">
+        <div className="w-10 h-1.5 rounded-full bg-white/20 mx-auto mb-4" />
+
+        {ride && (ride.status as any) === 'accepted' && (
+          <>
+            <div className="bg-[#14261A] border-2 border-[#00D181]/30 rounded-[16px] p-3 mb-3 flex justify-between items-center">
+              <div><div className="text-[#00D181] text-[11px] font-black tracking-widest">FARE TO COLLECT</div><div className="text-white text-[22px] font-black">R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div></div>
+              <div className="bg-[#00D181] text-white px-3 py-1.5 rounded-lg text-xs font-black">CASH</div>
             </div>
-          )})}
-          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{!isOnline && docStatus!=='approved' &&!isTestDriver? `⛔ Blocked - Docs: ${approvedDocs.length}/7` : isTestDriver? '✅ Test mode 🔊 Sound ON' : isOnline? '✅ Waiting for Buddy requests... 🔊' : 'You are offline'}</div>
-          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: docStatus!=='approved' &&!isTestDriver? '#666' : isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{docStatus!=='approved' &&!isTestDriver? `NEED DOCS (${approvedDocs.length}/7)` : isOnline? 'GO OFFLINE' : 'GO ONLINE 🔊'}</button>
-        </div>
-      )}
-    </section>
-    {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bgCard, width: '100%', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><div style={{ fontWeight: 'bold', color: text }}>Chat with Passenger</div><div style={{ fontSize: '11px', color: '#999' }}>Messages disappear after trip</div></div><button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
-    {showCollected!== null && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}><div style={{background:'linear-gradient(135deg,#ff7a00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px'}}><div style={{fontSize:'48px'}}>💰</div><div style={{color:'white', fontSize:'14px', fontWeight:'bold'}}>FARE COLLECTED</div><div style={{color:'white', fontSize:'42px', fontWeight:'900'}}>R {showCollected} CASH</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#ff7a00', border:'none', fontWeight:'900'}}>Rate Passenger →</button></div></div>)}
-    {showDriverCancelReason && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}><div style={{background: isDark? '#18181b':'white', width:'100%', borderTopLeftRadius:'24px', borderTopRightRadius:'24px', padding:'20px', color: text}}><h3>Why cancel?</h3>{['Passenger no-show','Passenger asked to cancel','Wrong pickup','Vehicle issue','Other'].map(reason => (<button key={reason} onClick={() => setDriverCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: driverCancelReason===reason? '#ff3b30':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {driverCancelReason===reason? '✓':''}</button>))}<div style={{display:'flex', gap:'8px', marginTop:'16px'}}><button onClick={() => { setShowDriverCancelReason(false); setDriverCancelReason(''); setRideToCancel(null) }} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button><button onClick={executeDriverCancel} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!driverCancelReason}>Confirm Cancel</button></div></div></div>)}
-  </div>
+            <div className="flex justify-between items-center mb-1"><h3 className="font-black text-white">Go to Pickup • R {ride.fare}</h3><button onClick={() => setShowChat(true)} className="w-12 h-12 rounded-full bg-[#00D181] text-xl">💬</button></div>
+            <p className="text-[13px] text-white/50 mb-3">{ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
+            <div className="flex gap-2 mb-2">
+              <button className="flex-1 py-3.5 rounded-xl bg-white/10 text-white border border-white/10 font-bold">{isNavigating? 'Navigating...' : 'Navigate'}</button>
+              <button onClick={async () => { const prev=ride.status; setRide(r=>r?{...r,status:'arrived'} as any:r); const {error}=await supabase.from('rides').update({status:'arrived' as any} as any).eq('id',ride.id); if(error){alert(error.message); setRide(r=>r?{...r,status:prev} as any:r)} }} className="flex-[1.5] py-3.5 rounded-xl bg-[#00D181] text-white font-black">I Have Arrived</button>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${ride.pickup_lat},${ride.pickup_lng}`, '_blank')} className="flex-1 py-2.5 rounded-xl bg-[#4285F4] text-white font-bold text-sm">🗺️ Google</button>
+              <button onClick={() => window.open(`https://waze.com/ul?ll=${ride.pickup_lat},${ride.pickup_lng}&navigate=yes`, '_blank')} className="flex-1 py-2.5 rounded-xl bg-[#33CCFF] text-black font-bold text-sm">🚗 Waze</button>
+              <button onClick={() => openDriverCancel(ride)} className="flex-1 py-2.5 rounded-xl bg-white/10 text-white border border-white/10 font-bold text-sm">Cancel</button>
+            </div>
+          </>
+        )}
+
+        {ride && (ride.status as any) === 'arrived' && (
+          <>
+            <div className="bg-[#14261A] border-2 border-[#00D181]/30 rounded-[16px] p-3 mb-3 text-center">
+              <div className="text-[#00D181] text-[11px] font-black">PASSENGER IN CAR? START TRIP</div>
+              <div className="text-white text-[22px] font-black">R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div>
+            </div>
+            <div className="flex justify-between items-center mb-1"><h3 className="font-black text-white">You Have Arrived • R {ride.fare}</h3><button onClick={() => setShowChat(true)} className="w-12 h-12 rounded-full bg-[#00D181] text-xl">💬</button></div>
+            <p className="text-[13px] text-white/50 mb-3">Waiting at {ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
+            <button onClick={async () => { const prev=ride.status; setRide(r=>r?{...r,status:'in_progress'} as any:r); const target:[number,number]=[ride.dropoff_lng,ride.dropoff_lat]; try{ const from=lastLocation.current[0]!==0?lastLocation.current:location; const res=await getRoute(from,target); setRoute(res.geometry); setRouteData(res)}catch{}; const {error}=await supabase.from('rides').update({status:'in_progress' as any} as any).eq('id',ride.id); if(error){alert(error.message); setRide(r=>r?{...r,status:prev} as any:r)} }} className="w-full py-4 rounded-[16px] bg-[#00D181] text-white font-black text-[16px] mb-2">Start Trip → Passenger In</button>
+            <button onClick={() => openDriverCancel(ride)} className="w-full py-2.5 rounded-xl bg-white/10 text-white border border-white/10">Cancel Ride</button>
+          </>
+        )}
+
+        {ride && ((ride.status as any) === 'picked_up' || (ride.status as any) === 'in_progress' || (ride.status as any) === 'en_route') &&!showDriverRating && (
+          <>
+            <div className="flex justify-between items-center"><h3 className="font-black text-white mb-1.5">Drive to {ride.dropoff_address?.split(',')[0]} • R {ride.fare}</h3><button onClick={() => setShowChat(true)} className="w-12 h-12 rounded-full bg-[#00D181] text-xl">💬</button></div>
+            <p className="text-xs text-white/50 mb-3">Passenger in car • Cash trip</p>
+            <div className="flex gap-2 mt-3"><button className="flex-1 py-3.5 rounded-xl bg-white/10 text-white border border-white/10">Navigating...</button><button onClick={completeRide} className="flex-[1.5] py-3.5 rounded-xl bg-[#FF6B00] text-white font-black shadow-[0_4px_20px_rgba(255,107,0,0.4)]">Complete Trip ✓ R {ride.fare}</button></div>
+          </>
+        )}
+
+        {ride && (ride.status as any) === 'completed' &&!showDriverRating && showCollected === null && (
+          <div className="text-center py-2">
+            <div className="w-20 h-20 mx-auto rounded-full bg-[#00D181]/20 flex items-center justify-center text-4xl mb-3">✅</div>
+            <h2 className="font-black text-white text-xl">Trip Completed!</h2>
+            <div className="inline-flex items-center gap-2 mt-3 bg-[#FF6B00] px-6 py-3 rounded-full shadow-[0_6px_24px_rgba(255,107,0,0.4)]">
+              <span className="text-white/70 text-sm font-bold">COLLECT</span><span className="text-white text-3xl font-black">R {ride.fare}</span><span className="bg-white text-[#FF6B00] text-[11px] font-black px-2 py-1 rounded-full">CASH</span>
+            </div>
+            <div className="flex justify-center gap-6 mt-4 text-[13px] text-white/50"><span>📍 {ride.dropoff_address?.split(',')[0]}</span><span>•</span><span>{routeData? `${routeData.distanceKm.toFixed(1)}km` : 'Trip'}</span><span>•</span><span>{routeData? `${Math.ceil(routeData.durationMin)} min` : ''}</span></div>
+            <button onClick={() => setShowDriverRating(true)} className="w-full mt-5 py-4 rounded-[16px] bg-[#FF6B00] text-white font-black text-[16px]">Rate Passenger ⭐</button>
+          </div>
+        )}
+
+        {showDriverRating && ride && (
+          <div className="text-center py-2">
+            <div className="text-5xl mb-2">⭐</div>
+            <h2 className="font-black text-white text-xl">Rate Passenger</h2>
+            <p className="text-white/50 text-[13px]">{ride.dropoff_address?.split(',')[0]} • R {ride.fare}</p>
+            <div className="flex gap-1 justify-center my-6">
+              {[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} className={`text-[52px] bg-transparent border-none ${driverRating >= s? 'text-[#FFB400]' : 'text-white/20'}`}>{driverRating >= s? '★' : '☆'}</button>))}
+            </div>
+            <div className="flex gap-2.5">
+              <button onClick={skipRating} className="flex-1 py-4 rounded-[16px] bg-white/10 text-white border border-white/10 font-bold">Skip</button>
+              <button onClick={submitDriverRating} disabled={driverRating === 0} className={`flex-[1.5] py-4 rounded-[16px] font-black ${driverRating === 0? 'bg-zinc-700 text-white/30' : 'bg-[#FF6B00] text-white shadow-[0_4px_20px_rgba(255,107,0,0.4)]'}`}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button>
+            </div>
+          </div>
+        )}
+
+        {!ride &&!showDriverRating && (
+          <div className="text-center py-2">
+            {isOnline && searchingRides.map(r => {
+              const expires = new Date((r as any).offer_expires_at || Date.now() + 12000).getTime()
+              const secs = Math.max(0, Math.floor((expires - now)/1000))
+              return (
+              <div key={r.id} className="bg-[#1E1E22] border-2 border-[#00D181]/40 rounded-[20px] p-4 mb-3 text-left shadow-[0_8px_32px_rgba(0,209,129,0.15)]">
+                <div className="flex justify-between items-center mb-1"><p className="font-black text-[#00D181] text-[13px] tracking-wide">🔔 BUDDY REQUEST • R {r.fare}</p><span className="bg-[#00D181] text-white rounded-full px-2.5 py-1 text-xs font-black">{secs}s</span></div>
+                <p className="text-[13px] text-white/70 my-1.5">📍 {r.pickup_address?.split(',')[0]} → {r.dropoff_address?.split(',')[0]}</p>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => declineRide(r.id)} className="flex-1 py-3 rounded-xl bg-white/10 text-white border border-white/10 font-bold">DECLINE</button>
+                  <button onClick={() => acceptRide(r.id)} className="flex-[1.5] py-3 rounded-xl bg-[#00D181] text-white font-black shadow-[0_4px_20px_rgba(0,209,129,0.4)]">ACCEPT R {r.fare}</button>
+                </div>
+              </div>
+            )})}
+            <div className="text-[13px] mb-3 text-white/40">{!isOnline && docStatus!=='approved' &&!isTestDriver? `⛔ Blocked - Docs: ${approvedDocs.length}/7` : isTestDriver? '✅ Test mode 🔊 Sound ON' : isOnline? '✅ Waiting for Buddy requests... 🔊' : 'You are offline'}</div>
+            <button onClick={toggleOnline} className={`w-full py-4 rounded-[16px] font-black text-[16px] shadow-lg ${docStatus!=='approved' &&!isTestDriver? 'bg-zinc-700 text-white/40' : isOnline? 'bg-[#FF3B30] text-white' : 'bg-[#00D181] text-white shadow-[0_4px_20px_rgba(0,209,129,0.4)]'}`}>{docStatus!=='approved' &&!isTestDriver? `NEED DOCS (${approvedDocs.length}/7)` : isOnline? 'GO OFFLINE' : 'GO ONLINE 🔊'}</button>
+          </div>
+        )}
+      </section>
+
+      {showChat && ride && (<div className="fixed inset-0 z-[9999] bg-black/60 flex items-end"><div className="bg-[#18181B] w-full rounded-t-[24px] h-[75vh] flex flex-col"><div className="p-4 border-b border-white/10 flex justify-between items-center"><div><div className="font-bold text-white">Chat with Passenger</div><div className="text-[11px] text-white/40">Messages disappear after trip</div></div><button onClick={() => setShowChat(false)} className="w-9 h-9 rounded-full bg-white/10 border border-white/10 text-white">✕</button></div><div className="flex-1 overflow-hidden"><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
+      {showCollected!== null && (<div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-5"><div className="bg-gradient-to-br from-[#FF6B00] to-[#FF9500] rounded-[24px] p-8 text-center w-full max-w-[340px] shadow-[0_20px_60px_rgba(0,0,0,0.5)]"><div className="text-5xl mb-2">💰</div><div className="text-white/80 text-[12px] font-black tracking-widest">FARE COLLECTED</div><div className="text-white text-[42px] font-black">R {showCollected} CASH</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} className="mt-5 w-full py-3.5 rounded-xl bg-white text-[#FF6B00] font-black">Rate Passenger →</button></div></div>)}
+      {showDriverCancelReason && (<div className="fixed inset-0 z-[9999] bg-black/70 flex items-end"><div className="bg-[#18181B] w-full rounded-t-[24px] p-5 text-white"><h3 className="font-black text-lg mb-3">Why cancel?</h3>{['Passenger no-show','Passenger asked to cancel','Wrong pickup','Vehicle issue','Other'].map(reason => (<button key={reason} onClick={() => setDriverCancelReason(reason)} className={`w-full text-left p-3.5 rounded-xl mb-2 border font-bold ${driverCancelReason===reason? 'bg-[#FF3B30] border-[#FF3B30] text-white' : 'bg-white/10 border-white/10 text-white/80'}`}>{reason} {driverCancelReason===reason? '✓':''}</button>))}<div className="flex gap-2 mt-4"><button onClick={() => { setShowDriverCancelReason(false); setDriverCancelReason(''); setRideToCancel(null) }} className="flex-1 py-3.5 rounded-xl bg-white/10 border border-white/10 font-bold">Back</button><button onClick={executeDriverCancel} disabled={!driverCancelReason} className="flex-[1.5] py-3.5 rounded-xl bg-[#FF3B30] text-white font-bold">Confirm Cancel</button></div></div></div>)}
+    </div>
+  )
 }
