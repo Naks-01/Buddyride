@@ -88,7 +88,7 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
           <div style={{ flex: "1 1 200px" }}>
             <h4 style={{ fontWeight: 700, fontSize: 14 }}>Contact</h4>
             <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 1.8 }}>
-              Email: mokgalaka.nt@gmail.com<br/>
+              Email: buddyride@outlook.com<br/>
               Phone: 079 305 1213<br/>
               Address: Polokwane, Limpopo, SA<br/>
               Support: 8am - 8pm daily
