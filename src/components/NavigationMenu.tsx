@@ -1,63 +1,113 @@
 import { useState } from 'react'
-import { History, LogOut, Menu, Settings, UserRound, X, CreditCard, HelpCircle, Star, Shield, Wallet } from 'lucide-react'
-import { supabase, type Profile } from '../lib/supabase'
 
-export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSignOut: () => void }) {
-  const [open, setOpen] = useState(false)
+type View = 'main' | 'profile' | 'navigation' | 'defaultnav' | 'vehicles' | 'safety' | 'account' | 'appsettings' | 'communications' | 'about'
+
+interface Props {
+  profile?: any
+  onSignOut?: () => void
+  isOpen?: boolean
+  onClose?: () => void
+  userName?: string
+  onNavigate?: any
+}
+
+export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose, userName: propName }: Props) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const [view, setView] = useState<View>('main')
+  const [defaultNav, setDefaultNav] = useState('Bolt Navigation')
+  const [autoStart, setAutoStart] = useState(false)
+
+  // Support both modes: DriverHome (no isOpen) and controlled (isOpen prop)
+  const isControlled = propIsOpen !== undefined
+  const isOpen = isControlled ? propIsOpen : internalOpen
+  const close = () => {
+    if (onClose) onClose()
+    else setInternalOpen(false)
+    setTimeout(()=>setView('main'),200)
+  }
+  const open = () => setInternalOpen(true)
+
+  const userName = propName || profile?.full_name || "Nakampe Trevor Mokgalaka"
+  const phone = profile?.phone || "+27793051213"
+  const vehicle = "HCM339L • Renault Kwid 2022"
 
   return (
     <>
-      <button onClick={() => setOpen(true)} style={{ 
-        display:'flex', alignItems:'center', gap:6, 
-        background:'#111', color:'white', border:'1px solid #333', 
-        borderRadius:'20px', padding:'8px 14px', fontWeight:800, fontSize:'12px' 
-      }}>
-        <Menu size={16} /> MENU
-      </button>
+      {/* Burger button for DriverHome mode */}
+      {!isControlled && (
+        <button onClick={open} style={{width:42,height:42,borderRadius:21,background:'#242428',border:'1px solid rgba(255,255,255,0.1)',color:'white',fontSize:18}}>☰</button>
+      )}
 
-      {open && (
-        <div onClick={() => setOpen(false)} style={{ position:'fixed', inset:0, zIndex:999999, background:'rgba(0,0,0,0.75)', backdropFilter:'blur(6px)', display:'flex' }}>
-          <div onClick={e=>e.stopPropagation()} style={{ width:'380px', maxWidth:'85vw', height:'100%', background:'#0f0f0f', color:'white', display:'flex', flexDirection:'column' }}>
-            
-            <div style={{ padding:'18px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-              <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-                <div style={{ width:'34px', height:'34px', background:'#00d181', borderRadius:'8px', display:'grid', placeItems:'center', fontWeight:900, color:'#000' }}>B</div>
-                <b style={{ fontSize:'17px' }}>BuddyRide</b>
-              </div>
-              <button onClick={() => setOpen(false)} style={{ background:'#222', border:'none', color:'white', width:'36px', height:'36px', borderRadius:'50%', display:'grid', placeItems:'center' }}><X size={18} /></button>
-            </div>
-
-            <div style={{ margin:'0 14px 14px', padding:'14px', background:'#1a1a1a', borderRadius:'16px', border:'1px solid #262626', display:'flex', gap:12, alignItems:'center' }}>
-              <div style={{ width:'52px', height:'52px', borderRadius:'50%', background:'#00d181', display:'grid', placeItems:'center', fontWeight:900, fontSize:'20px', color:'#000' }}>{profile.full_name?.[0] || 'U'}</div>
-              <div style={{ flex:1 }}>
-                <div style={{ fontWeight:800, fontSize:'14px', display:'flex', gap:6, alignItems:'center' }}>{profile.full_name} <Shield size={12} color="#00d181" /></div>
-                <div style={{ fontSize:'11px', opacity:0.5 }}>{profile.email}</div>
-                <div style={{ marginTop:'5px', display:'flex', gap:6 }}>
-                  <span style={{ fontSize:'9px', background:'#00d181', color:'#000', padding:'3px 8px', borderRadius:'20px', fontWeight:900 }}>{profile.role?.toUpperCase()}</span>
-                  <span style={{ fontSize:'9px', background:'#133a25', color:'#00d181', padding:'3px 8px', borderRadius:'20px', fontWeight:800 }}>VERIFIED ✓</span>
+      {isOpen && (
+        <div className="fixed inset-0 z-[9999] flex">
+          <div className="absolute inset-0 bg-black/60" onClick={close} />
+          <div className="relative w-[88%] max-w-[380px] h-full bg-[#151a28] text-white flex flex-col overflow-hidden">
+            <div className="p-5">
+              <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('profile')}>
+                <img src={`https://i.pravatar.cc/100?u=${userName}`} className="w-10 h-10 rounded-full" alt="" />
+                <div className="flex-1">
+                  <div className="font-bold text-[15px]">{userName}</div>
+                  <div className="text-[12px] text-[#7a8196]">◆ Silver ›</div>
                 </div>
               </div>
+              {view === 'main' && (
+                <>
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                    <div className="bg-[#242b3d] rounded-xl p-3"><div className="font-bold">89%</div><div className="text-[11px] text-[#7a8196]">Driver score</div></div>
+                    <div className="bg-[#242b3d] rounded-xl p-3"><div className="font-bold">4.70</div><div className="text-[11px] text-[#7a8196]">Star rating</div></div>
+                  </div>
+                  <div className="bg-[#242b3d] rounded-xl p-3 mt-2 w-[48%]"><div className="font-bold">70%</div><div className="text-[11px] text-[#7a8196]">Acceptance rate</div></div>
+                </>
+              )}
             </div>
 
-            {/* FULL MENU - FIX FOR YOUR BUG */}
-            <div style={{ flex:1, padding:'0 14px', display:'flex', flexDirection:'column', gap:'10px', overflowY:'auto' }}>
-              <MenuRow icon={<UserRound size={18}/>} title="Profile" sub={profile.phone || 'Add phone'} />
-              <MenuRow icon={<History size={18}/>} title="My Rides" sub="History & receipts" />
-              <MenuRow icon={<Wallet size={18}/>} title="Earnings" sub="R0.00 today" badge="NEW" />
-              <MenuRow icon={<CreditCard size={18}/>} title="Payment" sub="Cash only - Limpopo" />
-              <MenuRow icon={<Star size={18}/>} title="Rating" sub="5.0 ★ Excellent" />
-              <MenuRow icon={<Settings size={18}/>} title="Settings" sub="Mapbox • Navigation" />
-              <MenuRow icon={<HelpCircle size={18}/>} title="Help" sub="24/7 Support" />
-            </div>
+            <div className="flex-1 overflow-y-auto px-2 pb-6">
+              {view === 'main' && (
+                <div className="space-y-1">
+                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>💰</span><b>Earnings</b></button>
+                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>🏷️</span><b>Campaigns</b></button>
+                  <button onClick={()=>setView('profile')} className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>⚙️</span><b>Settings</b></button>
+                  <div className="pt-6 px-4 space-y-4 text-[14px] text-[#8b92a8]"><div>Invite friends to drive</div><div>Driver Portal</div><div>Privacy</div></div>
+                </div>
+              )}
 
-            <div style={{ padding:'14px', borderTop:'1px solid #1a1a1a' }}>
-              <button onClick={async () => { setOpen(false); await supabase.auth.signOut(); onSignOut(); localStorage.clear(); location.href='/' }} 
-                style={{ width:'100%', padding:'14px', background:'#1e1e1e', color:'#ff4d4d', border:'1px solid #2a2020', borderRadius:'12px', fontWeight:800, display:'flex', gap:8, justifyContent:'center' }}>
-                <LogOut size={18} /> Log Out
-              </button>
-              <div style={{ textAlign:'center', fontSize:'10px', opacity:0.2, marginTop:'8px' }}>v2.1 • Mapbox Streets • Limpopo 🇿🇦</div>
-            </div>
+              {view === 'profile' && (
+                <div>
+                  <button onClick={()=>setView('main')} className="px-4 py-2 text-sm text-[#8b92a8]">← Back</button>
+                  <div className="px-4 py-3 border-b border-[#242b3d]"><div className="font-bold">{userName}</div><div className="text-xs text-[#7a8196]">{phone}</div></div>
+                  <button onClick={()=>setView('vehicles' as View)} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Vehicles<span className="block text-xs text-[#7a8196]">{vehicle}</span></span><span>›</span></button>
+                  <button onClick={()=>setView('navigation')} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Navigation</span><span>›</span></button>
+                  <button onClick={()=>setView('safety')} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Safety</span><span>›</span></button>
+                  <button onClick={()=>setView('account')} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Account</span><span>›</span></button>
+                  <button onClick={()=>setView('about')} className="w-full flex justify-between px-4 py-4 text-left"><span>About</span><span>›</span></button>
+                </div>
+              )}
 
+              {view === 'navigation' && (
+                <div>
+                  <button onClick={()=>setView('profile')} className="px-4 py-3 font-bold">← Navigation</button>
+                  <button onClick={()=>setView('defaultnav')} className="w-full flex justify-between px-4 py-3 border-y border-[#242b3d] text-left"><div><div className="text-sm">Default navigation</div><div className="text-xs text-[#7a8196]">{defaultNav}</div></div><span>›</span></button>
+                  <div className="px-4 py-4 flex justify-between items-center"><span className="text-sm">Navigation auto-start</span><button onClick={()=>setAutoStart(!autoStart)} className={`w-12 h-7 rounded-full p-1 ${autoStart?'bg-[#1de28f]':'bg-[#2a344d]'}`}><div className={`w-5 h-5 bg-white rounded-full ${autoStart?'translate-x-5':''} transition-all`} /></button></div>
+                </div>
+              )}
+
+              {view === 'defaultnav' && (
+                <div>
+                  <button onClick={()=>setView('navigation')} className="px-4 py-3 font-bold">← Default navigation</button>
+                  {['Bolt Navigation','Google Maps','Waze'].map(n=>(
+                    <label key={n} className="flex gap-3 px-4 py-4 cursor-pointer"><input type="radio" checked={defaultNav===n} onChange={()=>{setDefaultNav(n); setView('navigation')}} className="accent-[#1de28f]" />{n}</label>
+                  ))}
+                </div>
+              )}
+
+              {view === 'account' && (
+                <div>
+                  <button onClick={()=>setView('profile')} className="px-4 py-3 font-bold">← Account</button>
+                  <div className="m-3 bg-[#1e2538] p-3 rounded-xl"><div className="text-sm">🎁 Earn up to</div><div className="font-bold">R 510 by inviting drivers</div></div>
+                  <button onClick={onSignOut} className="w-full text-left px-4 py-4 text-[#ff6b6b]">↪ Log out</button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -65,15 +115,4 @@ export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSig
   )
 }
 
-function MenuRow({ icon, title, sub, badge }: any) {
-  return (
-    <div style={{ display:'flex', gap:12, alignItems:'center', padding:'13px 14px', background:'#1a1a1a', borderRadius:'14px', border:'1px solid #222' }}>
-      <div style={{ width:'38px', height:'38px', background:'#252525', borderRadius:'10px', display:'grid', placeItems:'center' }}>{icon}</div>
-      <div style={{ flex:1 }}>
-        <div style={{ fontWeight:700, fontSize:'13px', display:'flex', gap:6 }}>{title} {badge && <span style={{ fontSize:'8px', background:'#00d181', color:'#000', padding:'2px 6px', borderRadius:'10px', fontWeight:900 }}>{badge}</span>}</div>
-        <div style={{ fontSize:'11px', opacity:0.5 }}>{sub}</div>
-      </div>
-      <div style={{ opacity:0.2 }}>›</div>
-    </div>
-  )
-}
+export default NavigationMenu
