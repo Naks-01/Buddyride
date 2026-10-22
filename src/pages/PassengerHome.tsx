@@ -62,6 +62,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [nearbyCars, setNearbyCars] = useState<any[]>([])
   const [showChat, setShowChat] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(50)
+  const [uiVisible, setUiVisible] = useState(true)
+  const [lastTouch, setLastTouch] = useState(Date.now())
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null)
@@ -87,6 +89,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setSheetSnap(90)
     }
   }, [rideStatus])
+  useEffect(() => {
+    const isDriving = ['picked_up', 'en_route', 'in_progress'].includes(rideStatus)
+    if (!isDriving) {
+      setUiVisible(true)
+      return
+    }
+    if (!uiVisible) return
+    const timer = setTimeout(() => setUiVisible(false), 3000)
+    return () => clearTimeout(timer)
+  }, [rideStatus, uiVisible, lastTouch])
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => {
@@ -252,13 +264,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     } else {
       await supabase.from('rides').update({ status: 'rated' as any }).eq('id', rideId)
     }
-    setRide(null); setShowChat(false); setRoute(undefined); setSheetSnap(50); setRating(0)
+    setRide(null); setShowChat(false); setRoute(undefined); setDropoff(''); setDropoffCoords(null); setShowEstimate(false); setSheetSnap(50); setRating(0)
   }
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
-  return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
+  return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}`, transform: uiVisible ? 'translateY(0)' : 'translateY(-110%)', transition: 'transform 300ms ease' }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide1</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
@@ -270,10 +282,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
       </div>
     )}
-    <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
+    <div onClick={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
       <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} availableCars={nearbyCars as any} theme={theme} />
-      <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px' }}>📍</button>
+      {uiVisible && <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px' }}>📍</button>}
     </div>
+    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, transform: uiVisible || !['picked_up', 'en_route', 'in_progress'].includes(rideStatus) ? 'translateY(0)' : 'translateY(calc(100% - 20px))', transition: 'transform 300ms ease' }}>
     <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap}>
         {!ride && (<>
           <h2 style={{ margin: '0 0 12px' }}>Where are you going?</h2>
@@ -360,6 +373,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           </>
         )}
     </BottomSheet>
+    </div>
     {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bg, width: '100%', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between' }}><div style={{ fontWeight: 'bold', color: text }}>{driverProfile?.full_name}</div><button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
     {showCancelReason && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}><div style={{background: isDark? '#18181b':'white', width:'100%', borderTopLeftRadius:'24px', borderTopRightRadius:'24px', padding:'20px', color: text}}>{['Driver too far','Waiting too long','Changed my mind','Other'].map(reason => (<button key={reason} onClick={() => setCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: cancelReason===reason? '#00d181':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {cancelReason===reason? '✓':''}</button>))}<div style={{display:'flex', gap:'8px', marginTop:'16px'}}><button onClick={() => setShowCancelReason(false)} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button><button onClick={cancelRide} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!cancelReason}>Confirm Cancel</button></div></div></div>)}
   </div>

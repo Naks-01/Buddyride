@@ -15,6 +15,7 @@ type MapboxMapViewProps = {
   bearing?: number
   isNavigating?: boolean
   followDriver?: boolean
+  speedKmh?: number
 }
 
 const DEFAULT_CENTER: Coordinates = [29.4589, -23.9045]
@@ -28,6 +29,7 @@ export function MapboxMapView({
   bearing = 0,
   isNavigating = false,
   followDriver = true,
+  speedKmh = 0,
 }: MapboxMapViewProps) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -35,17 +37,16 @@ export function MapboxMapView({
   const driverArrowRef = useRef<SVGSVGElement | null>(null)
   const passengerMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const routeRef = useRef(route)
-  const themeRef = useRef(theme)
+  const smoothBearingRef = useRef(bearing)
 
   routeRef.current = route
-  themeRef.current = theme
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/standard',
+      style: 'mapbox://styles/mapbox/navigation-day-v1',
       center: center || driverLocation || DEFAULT_CENTER,
       zoom: 15.5,
       pitch: 0,
@@ -103,12 +104,14 @@ export function MapboxMapView({
       }
     }
 
-    const applyTheme = () => {
-      map.setConfigProperty('basemap', 'lightPreset', themeRef.current === 'dark' ? 'night' : 'day')
+    const simplifyNavigationStyle = () => {
+      for (const layerId of ['building', 'poi-label']) {
+        if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', 'none')
+      }
     }
     const onLoad = () => {
       map.resize()
-      applyTheme()
+      simplifyNavigationStyle()
       addRoute()
     }
     const onStyleData = () => addRoute()
@@ -117,11 +120,11 @@ export function MapboxMapView({
     map.on('styledata', onStyleData)
 
     const driverEl = document.createElement('div')
-    driverEl.style.width = '56px'
-    driverEl.style.height = '56px'
+    driverEl.style.width = '48px'
+    driverEl.style.height = '48px'
     driverEl.innerHTML = `
-      <div style="width:56px;height:56px;background:#000;border:3px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);">
-        <svg id="car-rotate" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" style="fill:#fff;transform:rotate(${bearing}deg);transform-origin:center;">
+      <div style="width:48px;height:48px;background:#000;border:3px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);">
+        <svg id="car-rotate" viewBox="0 0 24 24" width="36" height="36" aria-hidden="true" style="fill:#fff;transform:rotate(${bearing}deg);transform-origin:center;">
           <path d="M12 2 4.5 20.5l7.5-4 7.5 4L12 2z" />
         </svg>
       </div>
@@ -153,15 +156,6 @@ export function MapboxMapView({
   }, [])
 
   useEffect(() => {
-    const map = mapRef.current
-    if (!map) return
-    themeRef.current = theme
-    if (map.isStyleLoaded()) {
-      map.setConfigProperty('basemap', 'lightPreset', theme === 'dark' ? 'night' : 'day')
-    }
-  }, [theme])
-
-  useEffect(() => {
     routeRef.current = route
     const source = mapRef.current?.getSource('route') as mapboxgl.GeoJSONSource | undefined
     if (!source) return
@@ -187,19 +181,25 @@ export function MapboxMapView({
     const map = mapRef.current
     if (!map || !driverMarkerRef.current) return
     if (driverLocation) driverMarkerRef.current.setLngLat(driverLocation)
+    if (speedKmh > 5) {
+      smoothBearingRef.current = smoothBearingRef.current * 0.7 + bearing * 0.3
+    }
     if (driverArrowRef.current) {
-      driverArrowRef.current.style.transform = `rotate(${bearing}deg)`
+      driverArrowRef.current.style.transform = `rotate(${smoothBearingRef.current}deg)`
     }
     if (driverLocation && followDriver) {
       map.easeTo({
         center: driverLocation,
         zoom: isNavigating ? 17 : 15.5,
-        pitch: isNavigating ? 50 : 0,
-        bearing: isNavigating ? bearing : 0,
-        duration: 900,
+        pitch: isNavigating ? 30 : 0,
+        bearing: isNavigating ? smoothBearingRef.current : 0,
+        padding: isNavigating
+          ? { top: window.innerHeight * 0.4, right: 0, bottom: 0, left: 0 }
+          : undefined,
+        duration: 1000,
       })
     }
-  }, [driverLocation, bearing, isNavigating, followDriver])
+  }, [driverLocation, bearing, speedKmh, isNavigating, followDriver])
 
   return (
     <div

@@ -30,11 +30,13 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     const map = mapRef.current
     if (!map) return
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
-    const tileStyle = theme === 'dark' ? 'dark_all' : 'light_all'
-    tileLayerRef.current = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${tileStyle}/{z}/{x}/{y}{r}.png`, {
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-      maxZoom: 20,
+    const url = theme === 'dark'
+      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+      : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+    tileLayerRef.current = L.tileLayer(url, {
       subdomains: 'abcd',
+      maxZoom: 20,
+      attribution: '&copy; CARTO',
     }).addTo(map)
   }, [theme])
 
@@ -64,7 +66,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     if (routeLineRef.current) {
       routeLineRef.current.setLatLngs(latLngs)
     } else {
-      routeLineRef.current = L.polyline(latLngs, { color: '#2962FF', weight: 5.5, opacity: 0.95 }).addTo(mapRef.current)
+      routeLineRef.current = L.polyline(latLngs, { color: '#2962FF', weight: 5, opacity: 0.95 }).addTo(mapRef.current)
       mapRef.current.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50] })
     }
   }, [route])

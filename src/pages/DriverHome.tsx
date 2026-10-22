@@ -43,6 +43,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [zoom, setZoom] = useState(13)
   const [now, setNow] = useState(Date.now())
   const [bearing, setBearing] = useState(0)
+  const [speedKmh, setSpeedKmh] = useState(0)
+  const [uiVisible, setUiVisible] = useState(true)
+  const [lastTouch, setLastTouch] = useState(Date.now())
   const watchId = useRef<number | null>(null)
   const lastSupabaseUpdate = useRef<number>(0)
   const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
@@ -129,6 +132,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
       setIsMinimized(false)
     }
   }, [rideStatus])
+  useEffect(() => {
+    if (!isNavigating || !ride) {
+      setUiVisible(true)
+      return
+    }
+    if (!uiVisible) return
+    const timer = setTimeout(() => setUiVisible(false), 3000)
+    return () => clearTimeout(timer)
+  }, [isNavigating, ride?.id, rideStatus, uiVisible, lastTouch])
   useEffect(() => {
     if (!ride?.passenger_id) { setPassengerProfile(null); return }
     supabase.from('profiles').select('full_name, rating, phone').eq('id', ride.passenger_id).single().then(({data}) => { if (data) setPassengerProfile(data) })
@@ -293,6 +305,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     watchId.current = navigator.geolocation.watchPosition(pos => {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
           updateNavigationProgress(p)
+          setSpeedKmh((pos.coords.speed ?? 0) * 3.6)
           const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
         if (dist > 0.00005) {
           const dLng = p[0] - lastLocation.current[0]; const dLat = p[1] - lastLocation.current[1]
@@ -433,14 +446,14 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const distText = nextTurnDistance !== null
     ? `${nextTurnDistance >= 1000 ? `${(nextTurnDistance / 1000).toFixed(1)}km` : `${Math.ceil(nextTurnDistance / 10) * 10}m`} • ${curStep ? `${Math.ceil(curStep.duration / 60)} min` : ''}`
     : routeData ? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min` : '0.0km • 0 min'
-  const showTopBanner =!isTestDriver && docStatus!== 'approved' || isTestDriver
+  const showTopBanner = (!isTestDriver && docStatus!== 'approved') || (import.meta.env.DEV && isTestDriver)
   const topBannerHeight = showTopBanner? 42 : 0
 
-  return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <div style={{ position: 'absolute', inset: 0 }}>
-      <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} isNavigating={isNavigating} followDriver={true} theme={theme} />
+  return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    <div onClick={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: 0 }}>
+      <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={true} theme={theme} />
     </div>
-    <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
+    <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative', transform: uiVisible ? 'translateY(0)' : 'translateY(-110%)', transition: 'transform 300ms ease' }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -449,17 +462,22 @@ export function DriverHome({ profile }: { profile: Profile }) {
       </div>
     </header>
     {showTopBanner && (
-      <div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: isTestDriver? '#00d181' : docStatus==='missing'? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>
+      <div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: isTestDriver? '#00d181' : docStatus==='missing'? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold', transform: uiVisible ? 'translateY(0)' : 'translateY(-150%)', transition: 'transform 300ms ease' }}>
         {isTestDriver? `✅ Test mode: ${profile.email} - bypass docs` : docStatus==='missing'? `⚠️ Upload 7 docs: ${approvedDocs.length}/7` : `⏳ Pending: ${approvedDocs.length}/7 approved`}
       </div>
     )}
     {isNavigating && ride && (
-      <div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+      <div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', transform: uiVisible ? 'translateY(0)' : 'translateY(-160%)', transition: 'transform 300ms ease' }}>
         <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div>
         <div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div>
       </div>
     )}
-    <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: `calc(${sheetSnap}dvh + 12px)`, zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px', transition: 'bottom 0.3s ease' }}>🎯</button>
+    {!uiVisible && isNavigating && ride && (
+      <div style={{ position: 'absolute', top: '14px', left: '50%', transform: 'translateX(-50%)', zIndex: 90, padding: '7px 12px', borderRadius: '999px', color: 'white', background: 'rgba(28,28,30,.88)', fontSize: '13px', fontWeight: 700 }}>
+        {Math.round(speedKmh)} km/h
+      </div>
+    )}
+    {uiVisible && <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: `calc(${sheetSnap}dvh + 12px)`, zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px', transition: 'bottom 0.3s ease' }}>🎯</button>}
     {cancelledNotification && (
       <div style={{position:'fixed', top:'90px', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
         <div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div>
@@ -467,6 +485,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
       </div>
     )}
+    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, transform: uiVisible || !isNavigating ? 'translateY(0)' : 'translateY(calc(100% - 20px))', transition: 'transform 300ms ease' }}>
     <BottomSheet
       snapPoint={sheetSnap}
       onSnapChange={point => {
@@ -588,11 +607,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
               </div>
             </div>
           )})}
-          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{!isOnline && docStatus!=='approved' &&!isTestDriver? `⛔ Blocked - Docs: ${approvedDocs.length}/7` : isTestDriver? '✅ Test mode 🔊 Sound ON' : isOnline? '✅ Waiting for Buddy requests... 🔊' : 'You are offline'}</div>
+          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{!isOnline && docStatus!=='approved' &&!isTestDriver? `⛔ Blocked - Docs: ${approvedDocs.length}/7` : import.meta.env.DEV && isTestDriver? '✅ Test mode 🔊 Sound ON' : isOnline? '✅ Waiting for Buddy requests... 🔊' : 'You are offline'}</div>
           <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: docStatus!=='approved' &&!isTestDriver? '#666' : isOnline? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{docStatus!=='approved' &&!isTestDriver? `NEED DOCS (${approvedDocs.length}/7)` : isOnline? 'GO OFFLINE' : 'GO ONLINE 🔊'}</button>
         </div>
       )}
     </BottomSheet>
+    </div>
     {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bgCard, width: '100%', borderTopLeftRadius: '32px', borderTopRightRadius: '32px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><div style={{ fontWeight: 'bold', color: text }}>Chat with Passenger</div><div style={{ fontSize: '11px', color: '#999' }}>Messages disappear after trip</div></div><button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
     {showCollected!== null && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}><div style={{background:'linear-gradient(135deg,#FF6B00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px'}}><div style={{fontSize:'48px'}}>💰</div><div style={{color:'white', fontSize:'14px', fontWeight:'bold'}}>FARE COLLECTED</div><div style={{color:'white', fontSize:'20px'}}>Passenger R {showCollected}</div><div style={{color:'white', fontSize:'32px', fontWeight:'900'}}>You get R {getEarnings(showCollected).driverGets}</div><div style={{color:'white', fontSize:'14px', opacity:0.8}}>Fee R {getEarnings(showCollected).platformGets} (20%)</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#FF6B00', border:'none', fontWeight:'900'}}>Rate Passenger →</button></div></div>)}
     {showDriverCancelReason && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}><div style={{background: isDark? '#121214':'white', width:'100%', borderTopLeftRadius:'32px', borderTopRightRadius:'32px', padding:'20px', color: text}}><div style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '0 auto 14px' }} /><h3>Why cancel?</h3>{['Passenger no-show','Passenger asked to cancel','Wrong pickup','Vehicle issue','Other'].map(reason => (<button key={reason} onClick={() => setDriverCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: driverCancelReason===reason? '#ff3b30':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {driverCancelReason===reason? '✓':''}</button>))}<div style={{display:'flex', gap:'8px', marginTop:'16px'}}><button onClick={() => { setShowDriverCancelReason(false); setDriverCancelReason(''); setRideToCancel(null) }} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button><button onClick={executeDriverCancel} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!driverCancelReason}>Confirm Cancel</button></div></div></div>)}
