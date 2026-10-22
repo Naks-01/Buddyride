@@ -75,20 +75,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const isVerified = (profile as any).is_verified === true || (profile as any).is_verified === 1
   const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
   useEffect(() => {
-    let timer: number | undefined
     if (rideStatus === 'searching' || rideStatus === 'finding') {
       setSheetSnap(25)
     } else if (['driver_assigned', 'accepted', 'driver_arriving'].includes(rideStatus)) {
-      timer = window.setTimeout(() => setSheetSnap(50), 500)
+      setSheetSnap(50)
     } else if (['arrived', 'passenger_in', 'i_have_arrived'].includes(rideStatus)) {
       setSheetSnap(80)
     } else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) {
       setSheetSnap(50)
     } else if (rideStatus === 'completed') {
       setSheetSnap(90)
-    }
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [rideStatus])
 

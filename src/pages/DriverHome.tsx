@@ -12,6 +12,16 @@ const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com', 
 
 const COMMISSION = 0.20
 const EXPIRE_SECONDS = 15
+function distanceBetweenCoordinates(from: [number, number], to: [number, number]) {
+  const radians = (degrees: number) => degrees * Math.PI / 180
+  const [fromLng, fromLat] = from.map(radians)
+  const [toLng, toLat] = to.map(radians)
+  const deltaLat = toLat - fromLat
+  const deltaLng = toLng - fromLng
+  const a = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(deltaLng / 2) ** 2
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 const getEarnings = (fare: number) => {
   const f = fare || 0
   return { driverGets: Math.round(f * 0.8), platformGets: Math.round(f * 0.2) }
@@ -23,6 +33,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [searchingRides, setSearchingRides] = useState<Ride[]>([])
   const [route, setRoute] = useState<any>()
   const [routeData, setRouteData] = useState<any>(null)
+  const routeDataRef = useRef<any>(null)
+  const activeStepIndexRef = useRef(0)
+  const [activeStepIndex, setActiveStepIndex] = useState(0)
+  const [nextTurnDistance, setNextTurnDistance] = useState<number | null>(null)
   const [isNavigating, setIsNavigating] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'light')
@@ -64,6 +78,27 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
   const isTestDriver = TEST_DRIVER_EMAILS.map(e=>e.toLowerCase()).includes((profile.email || '').toLowerCase()) || (profile.full_name || '').toLowerCase().includes('mokgalaka') || (profile.full_name || '').toLowerCase().includes('mokgafaka') || (profile.email || '').toLowerCase().includes('testdriver') || (profile.email || '').toLowerCase().includes('buddyride')
   const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
+  routeDataRef.current = routeData
+
+  function updateNavigationProgress(position: [number, number]) {
+    const steps = routeDataRef.current?.steps
+    if (!steps?.length) {
+      setNextTurnDistance(null)
+      return
+    }
+
+    let index = Math.min(activeStepIndexRef.current, steps.length - 1)
+    while (index < steps.length - 1) {
+      const maneuverLocation = steps[index]?.maneuver?.location as [number, number] | undefined
+      if (!maneuverLocation || distanceBetweenCoordinates(position, maneuverLocation) > 30) break
+      index += 1
+    }
+
+    activeStepIndexRef.current = index
+    setActiveStepIndex(index)
+    const target = steps[index]?.maneuver?.location as [number, number] | undefined
+    if (target) setNextTurnDistance(distanceBetweenCoordinates(position, target))
+  }
   const incomingRide = !ride ? searchingRides.find(r => r.status === 'searching') : undefined
 
   function clearRequestTimer() {
@@ -77,15 +112,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false); setIsMinimized(false); setSheetSnap(50) } }, [ride, showDriverRating])
   useEffect(() => {
-    let timer: number | undefined
     if (rideStatus === 'searching' || rideStatus === 'finding') {
       setSheetSnap(25)
       setIsMinimized(true)
     } else if (['driver_assigned', 'accepted', 'driver_arriving'].includes(rideStatus)) {
-      timer = window.setTimeout(() => {
-        setSheetSnap(50)
-        setIsMinimized(false)
-      }, 500)
+      setSheetSnap(50)
+      setIsMinimized(false)
     } else if (['arrived', 'passenger_in', 'i_have_arrived'].includes(rideStatus)) {
       setSheetSnap(80)
       setIsMinimized(false)
@@ -95,9 +127,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     } else if (rideStatus === 'completed') {
       setSheetSnap(90)
       setIsMinimized(false)
-    }
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [rideStatus])
   useEffect(() => {
@@ -263,7 +292,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!isNavigating &&!isOnline) return
     watchId.current = navigator.geolocation.watchPosition(pos => {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-        const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
+          updateNavigationProgress(p)
+          const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
         if (dist > 0.00005) {
           const dLng = p[0] - lastLocation.current[0]; const dLat = p[1] - lastLocation.current[1]
           if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) { const b = Math.atan2(dLng, dLat) * 180 / Math.PI; setBearing(b) }
@@ -299,7 +329,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
       const from = lastLocation.current[0]!== 0? lastLocation.current : location
       if (!from) return
       const target: [number, number] = (ride.status as any) === 'accepted' || (ride.status as any) === 'arrived'? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
-      try { const r = await getRoute(from, target); setRoute(r.geometry); setRouteData(r) } catch {}
+      try {
+        const r = await getRoute(from, target)
+        activeStepIndexRef.current = 0
+        setActiveStepIndex(0)
+        routeDataRef.current = r
+        setRoute(r.geometry)
+        setRouteData(r)
+        updateNavigationProgress(from)
+      } catch {}
     }
     buildRoute()
     if (isNavigating) { interval = setInterval(buildRoute, 15000) }
@@ -389,10 +427,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const curStep = (() => {
     if (!routeData?.steps?.length) return null
-    return routeData.steps.find((s:any)=> s.distance > 30) || routeData.steps[0]
+    return routeData.steps[activeStepIndex] || routeData.steps[0]
   })()
   const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
-  const distText = curStep ? `${(curStep.distance/1000).toFixed(1)}km • ${Math.ceil(curStep.duration/60)} min •` : routeData? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min •` : '0.0km • 0 min •'
+  const distText = nextTurnDistance !== null
+    ? `${nextTurnDistance >= 1000 ? `${(nextTurnDistance / 1000).toFixed(1)}km` : `${Math.ceil(nextTurnDistance / 10) * 10}m`} • ${curStep ? `${Math.ceil(curStep.duration / 60)} min` : ''}`
+    : routeData ? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min` : '0.0km • 0 min'
   const showTopBanner =!isTestDriver && docStatus!== 'approved' || isTestDriver
   const topBannerHeight = showTopBanner? 42 : 0
 
