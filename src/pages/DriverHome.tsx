@@ -213,6 +213,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
           if (isOnline) {
             supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
             supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: true, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' }).then(()=>{})
+            // FIX: send live location + heading to passenger
+            supabase.from('driver_locations').upsert({ 
+              driver_id: profile.id, 
+              lat: pos.coords.latitude, 
+              lng: pos.coords.longitude,
+              heading: pos.coords.heading ?? bearing,
+              speed: pos.coords.speed ?? 0,
+              is_online: true,
+              updated_at: new Date().toISOString() 
+            } as any, { onConflict: 'driver_id' }).then(()=>{})
           }
         }
       }, err => console.log(err), { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }

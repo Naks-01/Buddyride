@@ -14,7 +14,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     if (!containerRef.current || mapRef.current) return
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: mapStyle || 'mapbox://styles/mapbox/streets-v12', // FIXED: normal map, not dark
+      style: mapStyle || 'mapbox://styles/mapbox/streets-v12',
       center: center || driverLocation || [29.4589, -23.9045],
       zoom: 15,
       pitch: 0,
@@ -78,8 +78,10 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     driverEl.style.justifyContent = 'center'
     driverEl.style.fontSize = '22px'
     driverEl.style.color = 'white'
+    driverEl.style.transition = 'transform 0.3s linear'
     driverEl.innerHTML = '▲'
-    driverMarkerRef.current = new mapboxgl.Marker({ element: driverEl, rotationAlignment: 'map' }).setLngLat(driverLocation || center || [29.4589, -23.9045]).addTo(map)
+    // FIX: use viewport alignment and let Mapbox handle rotation
+    driverMarkerRef.current = new mapboxgl.Marker({ element: driverEl, rotationAlignment: 'viewport', pitchAlignment: 'viewport' }).setLngLat(driverLocation || center || [29.4589, -23.9045]).addTo(map)
 
     const passEl = document.createElement('div')
     passEl.style.width = '40px'
@@ -118,8 +120,9 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
   useEffect(() => {
     if (!mapRef.current || !driverLocation || !driverMarkerRef.current) return
     driverMarkerRef.current.setLngLat(driverLocation)
-    const el = driverMarkerRef.current.getElement()
-    if (el) el.style.transform = `rotate(${bearing}deg)`
+    // FIX: Use Mapbox rotation API - keeps movement straight
+    const normalizedBearing = ((bearing % 360) + 360) % 360
+    driverMarkerRef.current.setRotation(normalizedBearing)
     if (followDriver) {
       if (isNavigating) { mapRef.current.easeTo({ center: driverLocation, zoom: 17.5, pitch: 60, bearing: bearing, duration: 1000 }) }
       else { mapRef.current.easeTo({ center: driverLocation, zoom: 15, pitch: 0, bearing: 0, duration: 1000 }) }
