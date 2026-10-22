@@ -73,6 +73,25 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const text = isDark? 'white' : 'black'
   const border = isDark? '#333' : '#ddd'
   const isVerified = (profile as any).is_verified === true || (profile as any).is_verified === 1
+  const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
+  useEffect(() => {
+    let timer: number | undefined
+    if (rideStatus === 'searching' || rideStatus === 'finding') {
+      setSheetSnap(25)
+    } else if (['driver_assigned', 'accepted', 'driver_arriving'].includes(rideStatus)) {
+      timer = window.setTimeout(() => setSheetSnap(50), 500)
+    } else if (['arrived', 'passenger_in', 'i_have_arrived'].includes(rideStatus)) {
+      setSheetSnap(80)
+    } else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) {
+      setSheetSnap(50)
+    } else if (rideStatus === 'completed') {
+      setSheetSnap(90)
+    }
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [rideStatus])
+
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => {
     audioRef.current = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3')
@@ -147,7 +166,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       }
       prevStatusRef.current = newStatus
       setRide(newR as Ride)
-      if (['picked_up','in_progress','en_route'].includes(newR.status)) { setSheetSnap(90) }
+      if (['picked_up','in_progress','en_route'].includes(newR.status)) { setSheetSnap(50) }
     }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
@@ -209,7 +228,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     const { pCoords, dCoords } = await ensureCoords(); if (!pCoords ||!dCoords) { setLoading(false); return }
     let finalFare = price || calcFareForCategory(selectedCat, 3); let finalKm = distance || 2.5
     try { const r = await getOSMRoute(pCoords, dCoords); finalKm = r.distanceKm; finalFare = calcFareForCategory(selectedCat, r.distanceKm) } catch {}
-    const { data } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
+    const { data } = await supabase.from('rides').insert({ passenger_id: profile.id, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', offer_expires_at: new Date(Date.now() + 15_000).toISOString(), fare: finalFare, distance_km: finalKm, payment_method: 'cash', ride_category: selectedCat } as any).select().single()
     if (data) { setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = 'searching'; try { await supabase.functions.invoke('dispatch', { body: { ride_id: (data as any).id } }) } catch {} }
     setLoading(false)
   }

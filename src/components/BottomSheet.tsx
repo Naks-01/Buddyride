@@ -1,6 +1,6 @@
 import { useRef, useState, type PointerEvent, type ReactNode } from 'react'
 
-export type BottomSheetSnapPoint = 25 | 50 | 90
+export type BottomSheetSnapPoint = 25 | 50 | 80 | 90
 
 type BottomSheetProps = {
   children: ReactNode
@@ -8,7 +8,7 @@ type BottomSheetProps = {
   onSnapChange: (snapPoint: BottomSheetSnapPoint) => void
 }
 
-const SNAP_POINTS: BottomSheetSnapPoint[] = [25, 50, 90]
+const SNAP_POINTS: BottomSheetSnapPoint[] = [25, 50, 80, 90]
 
 export function BottomSheet({ children, snapPoint, onSnapChange }: BottomSheetProps) {
   const [dragHeight, setDragHeight] = useState<number | null>(null)
@@ -47,6 +47,7 @@ export function BottomSheet({ children, snapPoint, onSnapChange }: BottomSheetPr
   }
 
   const height = dragHeight ?? snapPoint
+  const translateY = 90 - height
 
   return (
     <section
@@ -55,7 +56,8 @@ export function BottomSheet({ children, snapPoint, onSnapChange }: BottomSheetPr
         position: 'absolute',
         inset: 'auto 0 0',
         zIndex: 60,
-        height: `${height}dvh`,
+        height: '90dvh',
+        transform: `translateY(${translateY}dvh)`,
         overflowY: 'auto',
         overscrollBehavior: 'contain',
         background: 'rgba(28,28,30,.96)',
@@ -63,7 +65,7 @@ export function BottomSheet({ children, snapPoint, onSnapChange }: BottomSheetPr
         borderRadius: '28px 28px 0 0',
         boxShadow: '0 -8px 32px rgba(0,0,0,.4)',
         backdropFilter: 'blur(24px)',
-        transition: dragHeight === null ? 'height 420ms cubic-bezier(.32,.72,0,1)' : 'none',
+        transition: dragHeight === null ? 'transform 400ms cubic-bezier(.32,.72,0,1)' : 'none',
         touchAction: 'pan-y',
       }}
     >

@@ -11,6 +11,7 @@ const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie','huru']
 const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com', 'testdriver@buddyride.co.za', 'TestDriver@buddyride.co.za', 'test@buddyride.co.za']
 
 const COMMISSION = 0.20
+const EXPIRE_SECONDS = 15
 const getEarnings = (fare: number) => {
   const f = fare || 0
   return { driverGets: Math.round(f * 0.8), platformGets: Math.round(f * 0.2) }
@@ -48,6 +49,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const prevRideCountRef = useRef(0)
   const beepIntervalRef = useRef<any>(null)
   const [passengerProfile, setPassengerProfile] = useState<any>(null)
+  const [secondsLeft, setSecondsLeft] = useState(EXPIRE_SECONDS)
+  const requestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // --- SLIDE ONLY FIX ---
   const [isMinimized, setIsMinimized] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(50)
@@ -60,10 +63,43 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const subText = isDark? '#9ca3af' : '#6b7280'
   const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
   const isTestDriver = TEST_DRIVER_EMAILS.map(e=>e.toLowerCase()).includes((profile.email || '').toLowerCase()) || (profile.full_name || '').toLowerCase().includes('mokgalaka') || (profile.full_name || '').toLowerCase().includes('mokgafaka') || (profile.email || '').toLowerCase().includes('testdriver') || (profile.email || '').toLowerCase().includes('buddyride')
+  const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
+  const incomingRide = !ride ? searchingRides.find(r => r.status === 'searching') : undefined
+
+  function clearRequestTimer() {
+    if (requestTimerRef.current) {
+      clearInterval(requestTimerRef.current)
+      requestTimerRef.current = null
+    }
+  }
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false); setIsMinimized(false); setSheetSnap(50) } }, [ride, showDriverRating])
+  useEffect(() => {
+    let timer: number | undefined
+    if (rideStatus === 'searching' || rideStatus === 'finding') {
+      setSheetSnap(25)
+      setIsMinimized(true)
+    } else if (['driver_assigned', 'accepted', 'driver_arriving'].includes(rideStatus)) {
+      timer = window.setTimeout(() => {
+        setSheetSnap(50)
+        setIsMinimized(false)
+      }, 500)
+    } else if (['arrived', 'passenger_in', 'i_have_arrived'].includes(rideStatus)) {
+      setSheetSnap(80)
+      setIsMinimized(false)
+    } else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) {
+      setSheetSnap(50)
+      setIsMinimized(false)
+    } else if (rideStatus === 'completed') {
+      setSheetSnap(90)
+      setIsMinimized(false)
+    }
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [rideStatus])
   useEffect(() => {
     if (!ride?.passenger_id) { setPassengerProfile(null); return }
     supabase.from('profiles').select('full_name, rating, phone').eq('id', ride.passenger_id).single().then(({data}) => { if (data) setPassengerProfile(data) })
@@ -198,6 +234,32 @@ export function DriverHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch2); clearInterval(interval) }
   }, [isOnline, ride, profile.id, isTestDriver, declinedIds])
   useEffect(() => {
+    clearRequestTimer()
+    if (!incomingRide || incomingRide.status !== 'searching') return
+
+    const expiresAt = (incomingRide as any).offer_expires_at
+    const remaining = expiresAt
+      ? Math.max(0, Math.min(EXPIRE_SECONDS, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000)))
+      : EXPIRE_SECONDS
+    setSecondsLeft(remaining)
+    if (remaining === 0) {
+      void declineRide(incomingRide.id)
+      return
+    }
+
+    let seconds = remaining
+    const rideId = incomingRide.id
+    requestTimerRef.current = setInterval(() => {
+      seconds -= 1
+      setSecondsLeft(seconds)
+      if (seconds <= 0) {
+        clearRequestTimer()
+        void declineRide(rideId)
+      }
+    }, 1000)
+    return clearRequestTimer
+  }, [incomingRide?.id])
+  useEffect(() => {
     if (!isNavigating &&!isOnline) return
     watchId.current = navigator.geolocation.watchPosition(pos => {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
@@ -255,6 +317,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     }
   }
   async function acceptRide(rideId: string) {
+    clearRequestTimer()
     if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
     try {
       const { data: rData } = await supabase.from('rides').select('pickup_lng,pickup_lat').eq('id', rideId).single()
@@ -268,6 +331,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setSearchingRides([]); setIsNavigating(true); setZoom(17); setIsMinimized(true)
   }
   async function declineRide(rideId: string) {
+    clearRequestTimer()
     if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
     const newDeclined = [...declinedIds, rideId]
     setDeclinedIds(newDeclined)
@@ -461,12 +525,21 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {!ride &&!showDriverRating && (
         <div style={{ textAlign: 'center' }}>
           {isOnline && searchingRides.map(r => {
-            const expires = new Date((r as any).offer_expires_at || Date.now() + 12000).getTime()
-            const secs = Math.max(0, Math.floor((expires - now)/1000))
+            const timerColor = secondsLeft < 3 ? '#ef4444' : secondsLeft < 7 ? '#f97316' : '#22c55e'
+            const timerProgress = Math.max(0, Math.min(100, secondsLeft / EXPIRE_SECONDS * 100))
             const e = getEarnings(r.fare)
             return (
             <div key={r.id} style={{ background: isDark? '#1e1e22' : 'white', border: `2px solid #00d181`, borderRadius: '16px', padding: '14px', marginBottom: '12px', textAlign: 'left' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><p style={{ fontWeight: 'bold', margin: 0, color: '#00d181' }}>🔔 BUDDY REQUEST • Passenger R {r.fare}</p><span style={{ background: '#00d181', color: 'white', borderRadius: '12px', padding: '2px 8px', fontSize: '12px' }}>{secs}s • You R{e.driverGets}</span></div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <p style={{ flex: 1, fontWeight: 'bold', margin: 0, color: '#00d181' }}>🔔 BUDDY REQUEST • Passenger R {r.fare}</p>
+                <div aria-label={`Expires in ${secondsLeft} seconds`} style={{ width: '44px', height: '44px', flex: 'none', borderRadius: '50%', display: 'grid', placeItems: 'center', background: `conic-gradient(${timerColor} ${timerProgress * 3.6}deg, #3A3A3C 0deg)` }}>
+                  <span style={{ width: '34px', height: '34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: isDark ? '#1e1e22' : '#fff', color: timerColor, fontSize: '11px', fontWeight: 800 }}>{secondsLeft}s</span>
+                </div>
+              </div>
+              <div style={{ height: '5px', marginTop: '8px', overflow: 'hidden', borderRadius: '5px', background: '#3A3A3C' }}>
+                <div style={{ height: '100%', width: `${timerProgress}%`, background: timerColor, transition: 'width 1s linear, background-color 200ms ease' }} />
+              </div>
+              <div style={{ marginTop: '4px', color: subText, fontSize: '11px' }}>Expires in {secondsLeft}s • You R{e.driverGets}</div>
               <p style={{ margin: '6px 0', fontSize: '13px', color: subText }}>You get R{e.driverGets} (80%) • Fee R{e.platformGets} (20%) • {((r as any).distance_km||0).toFixed(1)}km</p>
               <p style={{ margin: '6px 0', fontSize: '13px' }}>📍 {r.pickup_address?.split(',')[0]} → {r.dropoff_address?.split(',')[0]}</p>
               <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
