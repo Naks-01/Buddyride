@@ -34,6 +34,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     tileLayerRef.current = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${tileStyle}/{z}/{x}/{y}{r}.png`, {
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
       maxZoom: 20,
+      subdomains: 'abcd',
     }).addTo(map)
   }, [theme])
 
@@ -63,7 +64,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     if (routeLineRef.current) {
       routeLineRef.current.setLatLngs(latLngs)
     } else {
-      routeLineRef.current = L.polyline(latLngs, { color: '#FF6B00', weight: 5.5, opacity: 0.95 }).addTo(mapRef.current)
+      routeLineRef.current = L.polyline(latLngs, { color: '#2962FF', weight: 5.5, opacity: 0.95 }).addTo(mapRef.current)
       mapRef.current.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50] })
     }
   }, [route])

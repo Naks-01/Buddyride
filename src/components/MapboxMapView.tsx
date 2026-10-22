@@ -32,6 +32,7 @@ export function MapboxMapView({
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const driverArrowRef = useRef<SVGSVGElement | null>(null)
   const passengerMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const routeRef = useRef(route)
   const themeRef = useRef(theme)
@@ -97,7 +98,7 @@ export function MapboxMapView({
           type: 'line',
           source: 'route',
           layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': '#FF6B00', 'line-width': 5.5, 'line-opacity': 0.95 },
+          paint: { 'line-color': '#2962FF', 'line-width': 5.5, 'line-opacity': 0.95 },
         })
       }
     }
@@ -119,17 +120,19 @@ export function MapboxMapView({
     driverEl.style.width = '56px'
     driverEl.style.height = '56px'
     driverEl.innerHTML = `
-      <div style="width:56px;height:56px;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);">
-        <div style="width:22px;height:22px;background:#FF6B00;border-radius:50%;box-shadow:0 0 0 6px rgba(255,107,0,0.15);"></div>
+      <div style="width:56px;height:56px;background:#000;border:3px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);">
+        <svg id="car-rotate" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" style="fill:#fff;transform:rotate(${bearing}deg);transform-origin:center;">
+          <path d="M12 2 4.5 20.5l7.5-4 7.5 4L12 2z" />
+        </svg>
       </div>
     `
+    driverArrowRef.current = driverEl.querySelector<SVGSVGElement>('#car-rotate')
     driverMarkerRef.current = new mapboxgl.Marker({
       element: driverEl,
       rotationAlignment: 'viewport',
       anchor: 'center',
     })
       .setLngLat(driverLocation || center || DEFAULT_CENTER)
-      .setRotation(((bearing % 360) + 360) % 360)
       .addTo(map)
 
     const passengerEl = document.createElement('div')
@@ -144,6 +147,7 @@ export function MapboxMapView({
       map.remove()
       mapRef.current = null
       driverMarkerRef.current = null
+      driverArrowRef.current = null
       passengerMarkerRef.current = null
     }
   }, [])
@@ -181,11 +185,12 @@ export function MapboxMapView({
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !driverLocation || !driverMarkerRef.current) return
-    driverMarkerRef.current
-      .setLngLat(driverLocation)
-      .setRotation(((bearing % 360) + 360) % 360)
-    if (followDriver) {
+    if (!map || !driverMarkerRef.current) return
+    if (driverLocation) driverMarkerRef.current.setLngLat(driverLocation)
+    if (driverArrowRef.current) {
+      driverArrowRef.current.style.transform = `rotate(${bearing}deg)`
+    }
+    if (driverLocation && followDriver) {
       map.easeTo({
         center: driverLocation,
         zoom: isNavigating ? 17 : 15.5,

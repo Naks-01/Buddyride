@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bell, CarFront, ChevronRight, CircleHelp, CreditCard, FileText, History, LogOut, MapPin, Menu, Navigation, Settings, ShieldCheck, UserRound, Wallet, X } from 'lucide-react'
+import { Bell, ChevronRight, CircleHelp, CreditCard, History, LogOut, MapPin, Menu, Navigation, Settings, UserRound, X } from 'lucide-react'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 type Section = 'home' | 'profile' | 'trips' | 'earnings' | 'saved' | 'payments' | 'safety' | 'help' | 'settings' | 'navigation' | 'documents'
@@ -46,35 +46,13 @@ export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSig
     localStorage.setItem('buddy_nav_autostart', String(navAutoStart))
   }, [navAutoStart])
 
-  const items: Array<{ id: Section; label: string; icon: typeof UserRound }> = isAdmin
-? [
-        { id: 'profile', label: 'Admin profile', icon: UserRound },
-        { id: 'trips', label: 'Ride management', icon: History },
-        { id: 'earnings', label: 'Platform earnings', icon: Wallet },
-        { id: 'settings', label: 'Settings', icon: Settings },
-        { id: 'safety', label: 'Safety centre', icon: ShieldCheck },
-        { id: 'help', label: 'Help and support', icon: CircleHelp },
-      ]
-    : isDriver
- ? [
-          { id: 'profile', label: 'My driver profile', icon: UserRound },
-          { id: 'documents', label: 'My documents', icon: FileText },
-          { id: 'trips', label: 'Trip history', icon: History },
-          { id: 'earnings', label: 'Earnings and payouts', icon: Wallet },
-          { id: 'payments', label: 'Payment details', icon: CreditCard },
-          { id: 'safety', label: 'Safety centre', icon: ShieldCheck },
-          { id: 'help', label: 'Help and support', icon: CircleHelp },
-          { id: 'settings', label: 'Settings', icon: Settings },
-        ]
-      : [
-          { id: 'profile', label: 'My profile', icon: UserRound },
-          { id: 'trips', label: 'My trips', icon: History },
-          { id: 'saved', label: 'Saved places', icon: MapPin },
-          { id: 'payments', label: 'Payment methods', icon: CreditCard },
-          { id: 'safety', label: 'Safety centre', icon: ShieldCheck },
-          { id: 'help', label: 'Help and support', icon: CircleHelp },
-          { id: 'settings', label: 'Settings', icon: Settings },
-        ]
+  const items: Array<{ id: Section; label: string; icon: typeof UserRound }> = [
+    { id: 'profile', label: 'Profile', icon: UserRound },
+    { id: 'trips', label: 'My Rides', icon: History },
+    { id: 'payments', label: 'Payment', icon: CreditCard },
+    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'help', label: 'Help', icon: CircleHelp },
+  ]
 
   function choose(id: Section) {
     setSection(id)
@@ -112,19 +90,59 @@ export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSig
       return <div className="menu-content"><h2>{profile.full_name}</h2><p className="muted">{profile.email}</p></div>
     if (section === 'trips' || section === 'earnings')
       return <div className="menu-content"><h2>{section}</h2>{loadingRides?'Loading...': rides.map(r=><div key={r.id}>{r.pickup_address} → {r.dropoff_address}</div>)}</div>
+    if (section === 'payments')
+      return <div className="menu-content"><h2>Payment</h2><p>Manage your payment methods.</p></div>
+    if (section === 'help')
+      return <div className="menu-content"><h2>Help</h2><p>Get help with your BuddyRide account or trip.</p></div>
     return <div className="menu-content"><h2>Welcome {profile.full_name}</h2><p>Choose an option from the menu.</p></div>
   }
 
   return (
     <>
-      <button className="menu-trigger" onClick={() => { setOpen(true); setSection('home') }} style={{position:'relative', zIndex:9999, pointerEvents:'auto'}}><Menu size={23} /><span>Menu</span></button>
+      <style>{`
+        @keyframes uber-menu-drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+        @keyframes uber-menu-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+      `}</style>
+      <button
+        className="menu-trigger"
+        type="button"
+        aria-label="Open menu"
+        aria-expanded={open}
+        aria-controls="buddyride-side-drawer"
+        onClick={() => { setOpen(true); setSection('home') }}
+        style={{ position: 'relative', zIndex: 9999, pointerEvents: 'auto' }}
+      >
+        <Menu size={23} />
+        <span>Menu</span>
+      </button>
       {open && (
-        <div className="menu-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(false) }} style={{position:'fixed', inset:0, zIndex:99999, background:'rgba(0,0,0,0.6)', display:'flex'}}>
-          <aside className="side-drawer" style={{width:'85%', maxWidth:'360px', background:'#121212', height:'100%', overflowY:'auto', zIndex:100000, position:'relative'}}>
+        <div
+          className="menu-backdrop"
+          onClick={event => { if (event.target === event.currentTarget) setOpen(false) }}
+          style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,.5)', display: 'flex', animation: 'uber-menu-overlay-in 300ms ease both' }}
+        >
+          <aside
+            id="buddyride-side-drawer"
+            className="side-drawer"
+            onClick={event => event.stopPropagation()}
+            style={{
+              width: '80vw',
+              maxWidth: '400px',
+              background: '#1C1C1E',
+              color: '#F5F5F7',
+              height: '100%',
+              overflowY: 'auto',
+              zIndex: 100000,
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              animation: 'uber-menu-drawer-in 300ms ease both',
+            }}
+          >
             <div className="drawer-head" style={{display:'flex', justifyContent:'space-between', padding:'16px', borderBottom:'1px solid #222'}}><div className="drawer-brand"><strong>BuddyRide</strong></div><button className="drawer-close" onClick={() => setOpen(false)}><X /></button></div>
             <div className="drawer-user" style={{padding:'16px', display:'flex', gap:12}}><UserRound /><div><strong>{profile.full_name}</strong><small style={{display:'block', opacity:0.6}}>{profile.email}</small></div></div>
             <nav className="drawer-nav">{items.map(item => { const Icon = item.icon; return <button key={item.id} style={{width:'100%', textAlign:'left', padding:'12px 16px', background: section===item.id?'#1e1e1e':'transparent', border:'none', color:'white', display:'flex', gap:10}} onClick={() => choose(item.id)}><Icon size={19} /><span>{item.label}</span><ChevronRight style={{marginLeft:'auto'}} size={17} /></button> })}</nav>
-            <button className="drawer-logout" onClick={onSignOut} style={{margin:'20px', padding:'12px', width:'calc(100% - 40px)', background:'#222', color:'white', border:'none', borderRadius:10, display:'flex', gap:8, justifyContent:'center'}}><LogOut size={18} /> Sign out</button>
+            <button className="drawer-logout" onClick={() => { setOpen(false); onSignOut() }} style={{margin:'20px', padding:'12px', width:'calc(100% - 40px)', background:'#222', color:'white', border:'none', borderRadius:10, display:'flex', gap:8, justifyContent:'center'}}><LogOut size={18} /> Logout</button>
             <div className="drawer-main" style={{padding:'16px', borderTop:'1px solid #222'}}>{renderSection()}</div>
           </aside>
         </div>
