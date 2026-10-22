@@ -4,7 +4,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string
 
-export function MapboxMapView({ center, route, passengerLocation, driverLocation, mapStyle, theme, bearing = 0, isNavigating = false, followDriver = true }: any) {
+export function MapboxMapView({ center, route, passengerLocation, driverLocation, bearing = 0, isNavigating = false, followDriver = true }: any) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null)
@@ -14,38 +14,20 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     if (!containerRef.current || mapRef.current) return
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: mapStyle || 'mapbox://styles/mapbox/streets-v12',
+      style: 'mapbox://styles/mapbox/light-v11',
       center: center || driverLocation || [29.4589, -23.9045],
-      zoom: 15,
+      zoom: 15.5,
       pitch: 0,
       bearing: 0,
       antialias: true
     })
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'top-right')
     mapRef.current = map
+    map.on('load', () => setTimeout(() => map.resize(), 150))
 
-    map.on('load', () => {
-      setTimeout(() => map.resize(), 100)
-    })
-
-    const addRouteLayer = () => {
+    const addRoute = () => {
       try {
         if (!map.getSource('route')) {
           map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} } as any })
-        }
-        if (!map.getLayer('route-glow')) {
-          map.addLayer({
-            id: 'route-glow',
-            type: 'line',
-            source: 'route',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 
-              'line-color': '#FF6B00',
-              'line-width': 20, 
-              'line-opacity': 0.28, 
-              'line-blur': 12 
-            }
-          } as any)
         }
         if (!map.getLayer('route-line')) {
           map.addLayer({
@@ -53,49 +35,42 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
             type: 'line',
             source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 
-              'line-color': '#FF6B00',
-              'line-width': 6.5, 
-              'line-opacity': 1 
-            }
+            paint: { 'line-color': '#FF6B00', 'line-width': 5.5, 'line-opacity': 0.95 }
+          } as any)
+        }
+        if (!map.getLayer('route-outline')) {
+          map.addLayer({
+            id: 'route-outline',
+            type: 'line',
+            source: 'route',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.6 },
+            // @ts-ignore
+            before: 'route-line'
           } as any)
         }
       } catch {}
     }
+    map.on('load', addRoute)
+    map.on('style.load', addRoute)
 
-    map.on('load', addRouteLayer)
-    map.on('style.load', addRouteLayer)
-
+    // BEAUTIFUL DRIVER MARKER - Uber style
     const driverEl = document.createElement('div')
-    driverEl.style.width = '52px'
-    driverEl.style.height = '52px'
-    driverEl.style.background = '#FF6B00'
-    driverEl.style.border = '4px solid white'
-    driverEl.style.borderRadius = '26px'
-    driverEl.style.boxShadow = '0 4px 16px rgba(255,107,0,0.5)'
-    driverEl.style.display = 'flex'
-    driverEl.style.alignItems = 'center'
-    driverEl.style.justifyContent = 'center'
-    driverEl.style.fontSize = '22px'
-    driverEl.style.color = 'white'
-    driverEl.style.transition = 'transform 0.3s linear'
-    driverEl.innerHTML = '▲'
-    // FIX: use viewport alignment and let Mapbox handle rotation
-    driverMarkerRef.current = new mapboxgl.Marker({ element: driverEl, rotationAlignment: 'viewport', pitchAlignment: 'viewport' }).setLngLat(driverLocation || center || [29.4589, -23.9045]).addTo(map)
+    driverEl.style.width = '56px'
+    driverEl.style.height = '56px'
+    driverEl.style.position = 'relative'
+    driverEl.innerHTML = `
+      <div style="width:56px;height:56px;background:white;border-radius:28px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);border:2px solid white;">
+        <div style="width:22px;height:22px;background:#FF6B00;border-radius:50%;box-shadow:0 0 0 6px rgba(255,107,0,0.15);"></div>
+      </div>
+    `
+    driverMarkerRef.current = new mapboxgl.Marker({ element: driverEl, rotationAlignment: 'viewport', pitchAlignment: 'viewport', anchor: 'center' }).setLngLat(driverLocation || center || [29.4589, -23.9045]).addTo(map)
 
+    // PASSENGER PIN
     const passEl = document.createElement('div')
-    passEl.style.width = '40px'
-    passEl.style.height = '40px'
-    passEl.style.background = '#121214'
-    passEl.style.border = '3px solid white'
-    passEl.style.borderRadius = '20px'
-    passEl.style.display = 'flex'
-    passEl.style.alignItems = 'center'
-    passEl.style.justifyContent = 'center'
-    passEl.style.fontSize = '20px'
-    passEl.innerHTML = '📍'
-    passengerMarkerRef.current = new mapboxgl.Marker({ element: passEl })
-    
+    passEl.innerHTML = `<div style="width:40px;height:40px;background:#111;border:3px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.25);">📍</div>`
+    passengerMarkerRef.current = new mapboxgl.Marker({ element: passEl, anchor: 'bottom' })
+
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
@@ -104,11 +79,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     const source: any = mapRef.current.getSource('route')
     if (!source) return
     if (!route) { source.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} }); return }
-    let coords: any = []
-    if (route.type === 'Feature') coords = route.geometry.coordinates
-    else if (route.coordinates) coords = route.coordinates
-    else if (route.geometry?.coordinates) coords = route.geometry.coordinates
-    else coords = route
+    let coords = route.type === 'Feature' ? route.geometry.coordinates : route.coordinates || route.geometry?.coordinates || route
     source.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} })
   }, [route])
 
@@ -120,25 +91,15 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
   useEffect(() => {
     if (!mapRef.current || !driverLocation || !driverMarkerRef.current) return
     driverMarkerRef.current.setLngLat(driverLocation)
-    // FIX: Use Mapbox rotation API - keeps movement straight
-    const normalizedBearing = ((bearing % 360) + 360) % 360
-    driverMarkerRef.current.setRotation(normalizedBearing)
+    driverMarkerRef.current.setRotation(((bearing % 360) + 360) % 360)
     if (followDriver) {
-      if (isNavigating) { mapRef.current.easeTo({ center: driverLocation, zoom: 17.5, pitch: 60, bearing: bearing, duration: 1000 }) }
-      else { mapRef.current.easeTo({ center: driverLocation, zoom: 15, pitch: 0, bearing: 0, duration: 1000 }) }
-    } else if (center) { mapRef.current.easeTo({ center, duration: 1000 }) }
-  }, [driverLocation, center, bearing, isNavigating, followDriver])
+      if (isNavigating) {
+        mapRef.current.easeTo({ center: driverLocation, zoom: 17, pitch: 50, bearing: bearing, duration: 900 })
+      } else {
+        mapRef.current.easeTo({ center: driverLocation, zoom: 15.5, pitch: 0, bearing: 0, duration: 900 })
+      }
+    }
+  }, [driverLocation, bearing, isNavigating, followDriver])
 
-  // Keep this so parent can still change style if needed
-  useEffect(() => { 
-    if (!mapRef.current || !mapStyle) return; 
-    try { mapRef.current.setStyle(mapStyle) } catch {} 
-  }, [mapStyle])
-
-  return (
-    <>
-      <div ref={containerRef} className="w-full h-full" style={{ width: '100%', height: '100%' }} />
-      <style>{`.mapboxgl-ctrl-top-right{top:75px!important;right:12px!important;}.mapboxgl-ctrl-group{background:#ffffff!important;border-radius:12px!important;border:1px solid #ddd!important;}`}</style>
-    </>
-  )
+  return <div ref={containerRef} className="w-full h-full" style={{ width: '100%', height: '100%', background: '#f8f9fa' }} />
 }
