@@ -1,152 +1,53 @@
-import { useEffect, useState } from 'react'
-import { Bell, ChevronRight, CircleHelp, CreditCard, History, LogOut, MapPin, Menu, Navigation, Settings, UserRound, X } from 'lucide-react'
-import { supabase, type Profile, type Ride } from '../lib/supabase'
-
-type Section = 'home' | 'profile' | 'trips' | 'earnings' | 'saved' | 'payments' | 'safety' | 'help' | 'settings' | 'navigation' | 'documents'
+import { useState } from 'react'
+import { History, LogOut, Menu, Settings, UserRound, X, CreditCard, HelpCircle } from 'lucide-react'
+import { supabase, type Profile } from '../lib/supabase'
 
 export function NavigationMenu({ profile, onSignOut }: { profile: Profile; onSignOut: () => void }) {
   const [open, setOpen] = useState(false)
-  const [section, setSection] = useState<Section>('home')
-  const [rides, setRides] = useState<Ride[]>([])
-  const [loadingRides, setLoadingRides] = useState(false)
-  const [notifications, setNotifications] = useState(true)
-  const [shareLocation, setShareLocation] = useState(true)
-  const [savedHome, setSavedHome] = useState('')
-  const [savedWork, setSavedWork] = useState('')
-  const [navPref, setNavPref] = useState(() => localStorage.getItem('buddy_nav') || localStorage.getItem('nav_pref') || 'mapbox')
-  const [navAutoStart, setNavAutoStart] = useState(() => localStorage.getItem('buddy_nav_autostart') === 'true' || localStorage.getItem('buddy_nav_autostart') === null)
-
-  const isDriver = profile.role === 'driver'
-  const isAdmin = profile.role === 'admin'
-
-  useEffect(() => {
-    if (section!== 'trips' && section!== 'earnings') return
-    let cancelled = false
-    const fetchRides = async () => {
-      setLoadingRides(true)
-      let query = supabase.from('rides').select('*').order('created_at', { ascending: false }).limit(50)
-      if (isDriver) query = query.eq('driver_id', profile.id)
-      else if (!isAdmin) query = query.eq('passenger_id', profile.id)
-      const { data } = await query
-      if (!cancelled) {
-        setRides((data || []) as Ride[])
-        setLoadingRides(false)
-      }
-    }
-    fetchRides()
-    return () => { cancelled = true }
-  }, [section, profile.id, isDriver, isAdmin])
-
-  useEffect(() => {
-    localStorage.setItem('buddy_nav', navPref)
-    localStorage.setItem('nav_pref', navPref)
-  }, [navPref])
-
-  useEffect(() => {
-    localStorage.setItem('buddy_nav_autostart', String(navAutoStart))
-  }, [navAutoStart])
-
-  const items: Array<{ id: Section; label: string; icon: typeof UserRound }> = [
-    { id: 'profile', label: 'Profile', icon: UserRound },
-    { id: 'trips', label: 'My Rides', icon: History },
-    { id: 'payments', label: 'Payment', icon: CreditCard },
-    { id: 'settings', label: 'Settings', icon: Settings },
-    { id: 'help', label: 'Help', icon: CircleHelp },
-  ]
-
-  function choose(id: Section) {
-    setSection(id)
-    if (id === 'home') setOpen(false)
-  }
-
-  function renderSection() {
-    if (section === 'navigation')
-      return (
-        <div className="menu-content">
-          <button onClick={() => setSection('settings')} style={{ background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, opacity: 0.8, color:'inherit' }}><ChevronRight style={{ transform: 'rotate(180deg)' }} size={18} /> Back</button>
-          <h2>Navigation</h2>
-          <p className="muted" style={{fontSize:13, marginBottom:12}}>Choose how driver navigates — your choice is saved</p>
-          <button onClick={() => setNavPref('mapbox')} style={{ width: '100%', textAlign: 'left', padding: '14px', borderRadius: 12, border: navPref==='mapbox'? '2px solid #00d181':'1px solid #333', background: navPref==='mapbox'? '#1a2e22':'transparent', marginBottom: 10, color:'inherit' }}>🗺️ Buddy navigation - Recommended (inside app)</button>
-          <button onClick={() => setNavPref('google')} style={{ width: '100%', textAlign: 'left', padding: '14px', borderRadius: 12, border: navPref==='google'? '2px solid #00d181':'1px solid #333', background: navPref==='google'? '#1a2e22':'transparent', marginBottom: 10, color:'inherit' }}>📍 Google Maps</button>
-          <button onClick={() => setNavPref('waze')} style={{ width: '100%', textAlign: 'left', padding: '14px', borderRadius: 12, border: navPref==='waze'? '2px solid #00d181':'1px solid #333', background: navPref==='waze'? '#1a2e22':'transparent', marginBottom: 20, color:'inherit' }}>🚗 Waze</button>
-          <div className="setting-row"><div><Navigation size={19} /><span><strong>Auto-start navigation</strong></span></div><button className={`switch ${navAutoStart? 'switch-on' : ''}`} onClick={() => setNavAutoStart(v =>!v)}>{navAutoStart? 'On' : 'Off'}</button></div>
-        </div>
-      )
-    if (section === 'settings')
-      return (
-        <div className="menu-content">
-          <h2>Settings</h2>
-          <div className="setting-row" onClick={() => setSection('navigation')} style={{ cursor: 'pointer', padding:'12px', border:'1px solid #333', borderRadius:10, marginBottom:10 }}><div style={{display:'flex', gap:10, alignItems:'center'}}><Navigation size={19} /><span><strong>Navigation</strong><small style={{display:'block', opacity:0.6}}>{navPref} • Tap to change</small></span></div><ChevronRight size={17} /></div>
-          <div className="setting-row"><div><Bell size={19} /><span><strong>Notifications</strong></span></div><button className={`switch ${notifications? 'switch-on' : ''}`} onClick={() => setNotifications(v =>!v)}>{notifications? 'On' : 'Off'}</button></div>
-          <div className="setting-row"><div><MapPin size={19} /><span><strong>Location sharing</strong></span></div><button className={`switch ${shareLocation? 'switch-on' : ''}`} onClick={() => setShareLocation(v =>!v)}>{shareLocation? 'On' : 'Off'}</button></div>
-          <div style={{marginTop:20, padding:12, background:'#111', borderRadius:10, border:'1px solid #222'}}>
-            <p style={{fontSize:12, opacity:0.6}}>Current nav: <b style={{color:'#00d181'}}>{navPref}</b> • Auto-start: {navAutoStart?'On':'Off'}</p>
-          </div>
-        </div>
-      )
-    if (section === 'documents')
-      return <div className="menu-content"><h2>My Documents</h2><p className="muted">Upload CRC, License, Disk</p></div>
-    if (section === 'profile')
-      return <div className="menu-content"><h2>{profile.full_name}</h2><p className="muted">{profile.email}</p></div>
-    if (section === 'trips' || section === 'earnings')
-      return <div className="menu-content"><h2>{section}</h2>{loadingRides?'Loading...': rides.map(r=><div key={r.id}>{r.pickup_address} → {r.dropoff_address}</div>)}</div>
-    if (section === 'payments')
-      return <div className="menu-content"><h2>Payment</h2><p>Manage your payment methods.</p></div>
-    if (section === 'help')
-      return <div className="menu-content"><h2>Help</h2><p>Get help with your BuddyRide account or trip.</p></div>
-    return <div className="menu-content"><h2>Welcome {profile.full_name}</h2><p>Choose an option from the menu.</p></div>
-  }
 
   return (
     <>
-      <style>{`
-        @keyframes uber-menu-drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
-        @keyframes uber-menu-overlay-in { from { opacity: 0; } to { opacity: 1; } }
-      `}</style>
-      <button
-        className="menu-trigger"
-        type="button"
-        aria-label="Open menu"
-        aria-expanded={open}
-        aria-controls="buddyride-side-drawer"
-        onClick={() => { setOpen(true); setSection('home') }}
-        style={{ position: 'relative', zIndex: 9999, pointerEvents: 'auto' }}
-      >
-        <Menu size={23} />
-        <span>Menu</span>
+      <button onClick={() => setOpen(true)} style={{ display:'flex', alignItems:'center', gap:6, background:'#fff', border:'1px solid #ddd', borderRadius:'20px', padding:'8px 12px', cursor:'pointer' }}>
+        <Menu size={20} /> Menu
       </button>
+
       {open && (
-        <div
-          className="menu-backdrop"
-          onClick={event => { if (event.target === event.currentTarget) setOpen(false) }}
-          style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,.5)', display: 'flex', animation: 'uber-menu-overlay-in 300ms ease both' }}
-        >
-          <aside
-            id="buddyride-side-drawer"
-            className="side-drawer"
-            onClick={event => event.stopPropagation()}
-            style={{
-              width: '80vw',
-              maxWidth: '400px',
-              background: '#1C1C1E',
-              color: '#F5F5F7',
-              height: '100%',
-              overflowY: 'auto',
-              zIndex: 100000,
-              position: 'relative',
-              display: 'flex',
-              flexDirection: 'column',
-              animation: 'uber-menu-drawer-in 300ms ease both',
-            }}
-          >
-            <div className="drawer-head" style={{display:'flex', justifyContent:'space-between', padding:'16px', borderBottom:'1px solid #222'}}><div className="drawer-brand"><strong>BuddyRide</strong></div><button className="drawer-close" onClick={() => setOpen(false)}><X /></button></div>
-            <div className="drawer-user" style={{padding:'16px', display:'flex', gap:12}}><UserRound /><div><strong>{profile.full_name}</strong><small style={{display:'block', opacity:0.6}}>{profile.email}</small></div></div>
-            <nav className="drawer-nav">{items.map(item => { const Icon = item.icon; return <button key={item.id} style={{width:'100%', textAlign:'left', padding:'12px 16px', background: section===item.id?'#1e1e1e':'transparent', border:'none', color:'white', display:'flex', gap:10}} onClick={() => choose(item.id)}><Icon size={19} /><span>{item.label}</span><ChevronRight style={{marginLeft:'auto'}} size={17} /></button> })}</nav>
-            <button className="drawer-logout" onClick={() => { setOpen(false); onSignOut() }} style={{margin:'20px', padding:'12px', width:'calc(100% - 40px)', background:'#222', color:'white', border:'none', borderRadius:10, display:'flex', gap:8, justifyContent:'center'}}><LogOut size={18} /> Logout</button>
-            <div className="drawer-main" style={{padding:'16px', borderTop:'1px solid #222'}}>{renderSection()}</div>
-          </aside>
+        <div onClick={() => setOpen(false)} style={{ position:'fixed', inset:0, zIndex:999999, background:'rgba(0,0,0,0.6)', display:'flex' }}>
+          <div onClick={e=>e.stopPropagation()} style={{ width:'340px', maxWidth:'85vw', height:'100%', background:'#1C1C1E', color:'white', display:'flex', flexDirection:'column' }}>
+            
+            <div style={{ padding:'16px', display:'flex', justifyContent:'space-between', borderBottom:'1px solid #333' }}>
+              <strong style={{ fontSize:'18px' }}>BuddyRide</strong>
+              <button onClick={() => setOpen(false)} style={{ background:'none', border:'none', color:'white' }}><X size={22} /></button>
+            </div>
+
+            <div style={{ padding:'16px', display:'flex', gap:12, alignItems:'center', background:'#242428', margin:'12px', borderRadius:'12px' }}>
+              <div style={{ width:'50px', height:'50px', borderRadius:'25px', background:'#00d181', display:'grid', placeItems:'center', fontWeight:900, fontSize:'20px' }}>{profile.full_name?.[0] || 'U'}</div>
+              <div>
+                <div style={{ fontWeight:700, fontSize:'16px' }}>{profile.full_name}</div>
+                <div style={{ fontSize:'12px', opacity:0.6 }}>{profile.email}</div>
+                <div style={{ fontSize:'11px', color:'#00d181', fontWeight:700 }}>{profile.role?.toUpperCase()} • {profile.id_number ? 'VERIFIED' : 'UNVERIFIED'}</div>
+              </div>
+            </div>
+
+            {/* MENU - FULL, NOT EMPTY */}
+            <div style={{ flex:1, padding:'12px', display:'flex', flexDirection:'column', gap:'10px' }}>
+              <div style={item}><UserRound size={18} /> <span><b>Profile</b><br/><small style={{opacity:0.6}}>{profile.phone || 'Add phone'}</small></span></div>
+              <div style={item}><History size={18} /> <span><b>My Rides</b><br/><small style={{opacity:0.6}}>View trip history</small></span></div>
+              <div style={item}><CreditCard size={18} /> <span><b>Payment</b><br/><small style={{opacity:0.6}}>Cash only - Limpopo</small></span></div>
+              <div style={item}><Settings size={18} /> <span><b>Settings</b><br/><small style={{opacity:0.6}}>Navigation: mapbox</small></span></div>
+              <div style={item}><HelpCircle size={18} /> <span><b>Help</b><br/><small style={{opacity:0.6}}>Support 24/7</small></span></div>
+            </div>
+
+            {/* LOGOUT - RED, ALWAYS VISIBLE */}
+            <button onClick={async () => { setOpen(false); await supabase.auth.signOut(); onSignOut(); localStorage.clear(); location.href='/' }} 
+              style={{ margin:'16px', padding:'16px', background:'#ef4444', color:'white', border:'none', borderRadius:'12px', fontWeight:900, display:'flex', gap:10, justifyContent:'center', fontSize:'16px', cursor:'pointer' }}>
+              <LogOut size={20} /> LOGOUT
+            </button>
+
+          </div>
         </div>
       )}
     </>
   )
 }
+const item = { display:'flex', gap:12, alignItems:'center', padding:'14px', background:'#242428', borderRadius:'12px', border:'1px solid #333' } as const

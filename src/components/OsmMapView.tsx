@@ -8,7 +8,6 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
   const routeLineRef = useRef<L.Polyline | null>(null)
   const driverMarkerRef = useRef<L.Marker | null>(null)
   const tileLayerRef = useRef<L.TileLayer | null>(null)
-  // ADDED FOR CARS
   const carsRef = useRef<Map<string, L.Marker>>(new Map())
 
   useEffect(() => {
@@ -26,17 +25,18 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
+  // FIXED - NO MORE API KEY REQUIRED - Normal OSM tiles
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
-    const url = theme === 'dark'
-      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-      : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+    
+    // Normal map - no API key needed, no green tint
+    const url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+    
     tileLayerRef.current = L.tileLayer(url, {
-      subdomains: 'abcd',
-      maxZoom: 20,
-      attribution: '&copy; CARTO',
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap',
     }).addTo(map)
   }, [theme])
 
@@ -47,7 +47,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     }
   }, [center])
 
-  // Route clears from the map when no ride is active.
+  // BLUE LINE - guides driver like Google Maps
   useEffect(() => {
     if (!mapRef.current) return
 
@@ -60,18 +60,24 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     }
 
     const coords = route.type === 'Feature'? route.geometry.coordinates : route.coordinates
-    // GeoJSON is [lng, lat] -> Leaflet needs [lat, lng]
     const latLngs = coords.map((c: any) => [c[1], c[0]])
 
     if (routeLineRef.current) {
       routeLineRef.current.setLatLngs(latLngs)
     } else {
-      routeLineRef.current = L.polyline(latLngs, { color: '#2962FF', weight: 5, opacity: 0.95 }).addTo(mapRef.current)
+      // Blue line - Google Maps style
+      routeLineRef.current = L.polyline(latLngs, { 
+        color: '#2962FF', 
+        weight: 7, 
+        opacity: 1,
+        lineJoin: 'round',
+        lineCap: 'round'
+      }).addTo(mapRef.current)
       mapRef.current.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50] })
     }
   }, [route])
 
-  // driver marker
+  // driver marker - follows like Google Maps
   useEffect(() => {
     if (!mapRef.current) return
 
@@ -86,7 +92,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     const latLng: any = [driverLocation[1], driverLocation[0]]
     if (!driverMarkerRef.current) {
       const icon = L.divIcon({
-        html: '<div style="background:#fff;width:48px;height:48px;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);font-size:24px">🚗</div>',
+        html: '<div style="background:#000;width:48px;height:48px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.3);font-size:24px">🚗</div>',
         className: '',
         iconSize: [48, 48],
         iconAnchor: [24, 24],
@@ -94,17 +100,18 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       driverMarkerRef.current = L.marker(latLng, { icon }).addTo(mapRef.current)
     } else {
       driverMarkerRef.current.setLatLng(latLng)
+      // Follow driver like Google Maps
+      mapRef.current.panTo(latLng)
     }
   }, [driverLocation])
 
-  // ADDED FOR CARS - shows available cars BEFORE ride starts
+  // Available cars
   useEffect(() => {
     if (!mapRef.current) return
     if (!availableCars) return
 
     const currentIds = new Set(availableCars.map((c:any)=> c.driver_id))
 
-    // Remove offline cars
     carsRef.current.forEach((marker, id) => {
       if (!currentIds.has(id)) {
         mapRef.current?.removeLayer(marker)
@@ -112,7 +119,6 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       }
     })
 
-    // Add / update online cars
     availableCars.forEach((car:any) => {
       const latLng: any = [car.lat, car.lng]
       const existing = carsRef.current.get(car.driver_id)
@@ -120,7 +126,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
         existing.setLatLng(latLng)
       } else {
         const icon = L.divIcon({
-          html: '<div style="background:white;width:40px;height:40px;border-radius:50%;border:2px solid #FF6B00;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.18);font-size:20px">🚗</div>',
+          html: '<div style="background:white;width:40px;height:40px;border-radius:50%;border:2px solid #2962FF;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.18);font-size:20px">🚗</div>',
           className: '',
           iconSize: [40, 40],
           iconAnchor: [20, 20],
@@ -131,5 +137,5 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     })
   }, [availableCars])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: theme === 'dark' ? '#0a0a0a' : '#f8f9fa', zIndex: 0 }} />
+  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#f8f9fa', zIndex: 0 }} />
 }
