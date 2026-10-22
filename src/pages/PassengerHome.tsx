@@ -54,7 +54,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [price, setPrice] = useState<number | null>(null)
   const [showEstimate, setShowEstimate] = useState(false)
   const [selectedCat, setSelectedCat] = useState('buddy_go')
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'light')
   const [rating, setRating] = useState(0)
   const [showCancelReason, setShowCancelReason] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
@@ -248,8 +248,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
-  return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <header style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
+  return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide1</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
@@ -262,12 +262,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       </div>
     )}
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
-      <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} availableCars={nearbyCars as any} />
+      <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} availableCars={nearbyCars as any} theme={theme} />
       <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px' }}>📍</button>
     </div>
-    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', color: text, borderTop: `1px solid ${border}`, height: `${sheetHeight}vh`, overflowY: 'auto', transition: isDragging? 'none' : 'height 0.28s ease' }}>
-      <div onClick={toggleSheet} onTouchStart={onDragStart} onTouchMove={onDragMove} onTouchEnd={onDragEnd} onMouseDown={onDragStart} onMouseMove={(e:any) => e.buttons===1 && onDragMove(e)} onMouseUp={onDragEnd} style={{ display: 'flex', justifyContent: 'center', padding: '14px 0 8px 0', cursor: 'grab', position: 'sticky', top: 0, background: bg, zIndex: 5 }}>
-        <div style={{ width: '48px', height: '6px', background: sheetHeight > 40? '#ff7a00' : '#666', borderRadius: '3px' }} />
+    <section className="ride-sheet passenger-ride-sheet" style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bg, borderTopLeftRadius: '24px', borderTopRightRadius: '24px', color: text, borderTop: `1px solid ${border}`, height: `${sheetHeight}vh`, overflowY: 'auto', transition: isDragging? 'none' : 'height 0.28s ease' }}>
+      <div className="ride-sheet-handle-wrap" onClick={toggleSheet} onTouchStart={onDragStart} onTouchMove={onDragMove} onTouchEnd={onDragEnd} onMouseDown={onDragStart} onMouseMove={(e:any) => e.buttons===1 && onDragMove(e)} onMouseUp={onDragEnd}>
+        <div className="ride-sheet-handle" />
       </div>
       <div style={{ padding: '0 16px 20px 16px' }}>
         {!ride && (<>
@@ -313,7 +313,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         )}
         {ride && ['accepted','arrived'].includes(ride.status as any) && driverProfile && (
           <>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div className="ride-card" style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderRadius: '24px' }}>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👨</div>
                 <div><div style={{ fontWeight: 'bold' }}>{driverProfile.full_name} • {driverProfile.rating?.toFixed(1)}★</div><div style={{ fontSize: '13px' }}>{driverProfile.car_model} • {driverProfile.car_plate}</div><div style={{ color: '#ff7a00', fontWeight: 'bold', fontSize: '13px' }}>{ride.status === 'arrived'? '📍 Arrived at pickup - Ding!' : '🚗 Coming • 2 min - Driver on way!'}</div></div>
@@ -325,14 +325,14 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         )}
         {ride && ['picked_up','en_route','in_progress'].includes(ride.status as any) && driverProfile && (
           <>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div className="ride-card" style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderRadius: '24px' }}>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🚗</div>
                 <div><div style={{ fontWeight: 'bold' }}>On trip to {ride.dropoff_address?.split(',')[0]}</div><div style={{ fontSize: '13px', color: '#00d181', fontWeight: 'bold' }}>En route • R {ride.fare}</div><div style={{ fontSize: '12px' }}>{driverProfile.full_name} • {driverProfile.car_plate}</div></div>
               </div>
               <button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button>
             </div>
-            <div style={{ marginTop: '12px', padding: '12px', borderRadius: '12px', background: '#00d18122', border: '1px solid #00d181', textAlign: 'center', color: '#00d181', fontWeight: 'bold' }}>🧭 Driving to destination...</div>
+            <div className="ride-status" style={{ marginTop: '12px', padding: '12px', borderRadius: '24px', textAlign: 'center', fontWeight: 'bold' }}>🧭 Driving to destination...</div>
           </>
         )}
         {ride && ride.status === 'completed' && (

@@ -4,118 +4,207 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string
 
-export function MapboxMapView({ center, route, passengerLocation, driverLocation, mapStyle, theme, bearing = 0, isNavigating = false, followDriver = true }: any) {
+type Coordinates = [number, number]
+
+type MapboxMapViewProps = {
+  center?: Coordinates
+  route?: any
+  passengerLocation?: Coordinates
+  driverLocation?: Coordinates
+  theme: 'light' | 'dark'
+  bearing?: number
+  isNavigating?: boolean
+  followDriver?: boolean
+}
+
+const DEFAULT_CENTER: Coordinates = [29.4589, -23.9045]
+
+export function MapboxMapView({
+  center,
+  route,
+  passengerLocation,
+  driverLocation,
+  theme,
+  bearing = 0,
+  isNavigating = false,
+  followDriver = true,
+}: MapboxMapViewProps) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const passengerMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const routeRef = useRef(route)
+  const themeRef = useRef(theme)
+
+  routeRef.current = route
+  themeRef.current = theme
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
+
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: mapStyle || 'mapbox://styles/mapbox/standard',
-      center: center || driverLocation || [29.4589, -23.9045],
+      style: 'mapbox://styles/mapbox/standard',
+      center: center || driverLocation || DEFAULT_CENTER,
       zoom: 15.5,
       pitch: 0,
       bearing: 0,
-      antialias: true
+      antialias: true,
     })
     mapRef.current = map
-    map.on('load', () => {
-      setTimeout(() => map.resize(), 150)
-      try {
-        // @ts-ignore
-        map.setConfigProperty('basemap', 'lightPreset', theme === 'dark' ? 'night' : 'day')
-      } catch {}
-    })
+
+    const routeFeature = () => {
+      const currentRoute = routeRef.current
+      if (!currentRoute) {
+        return {
+          type: 'Feature' as const,
+          geometry: { type: 'LineString' as const, coordinates: [] },
+          properties: {},
+        }
+      }
+      const coordinates = currentRoute.type === 'Feature'
+        ? currentRoute.geometry.coordinates
+        : currentRoute.coordinates || currentRoute.geometry?.coordinates || currentRoute
+      return {
+        type: 'Feature' as const,
+        geometry: { type: 'LineString' as const, coordinates },
+        properties: {},
+      }
+    }
 
     const addRoute = () => {
-      try {
-        if (!map.getSource('route')) {
-          map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} } as any })
-        }
-        if (!map.getLayer('route-line')) {
-          map.addLayer({
-            id: 'route-line',
-            type: 'line',
-            source: 'route',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#FF6B00', 'line-width': 5.5, 'line-opacity': 0.95 }
-          } as any)
-        }
-        if (!map.getLayer('route-outline')) {
-          map.addLayer({
-            id: 'route-outline',
-            type: 'line',
-            source: 'route',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.6 }
-          } as any, 'route-line')
-        }
-      } catch {}
+      if (!map.isStyleLoaded()) return
+      if (!map.getSource('route')) {
+        map.addSource('route', {
+          type: 'geojson',
+          data: routeFeature(),
+        })
+      } else {
+        (map.getSource('route') as mapboxgl.GeoJSONSource).setData(routeFeature())
+      }
+      if (!map.getLayer('route-outline')) {
+        map.addLayer({
+          id: 'route-outline',
+          type: 'line',
+          source: 'route',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.6 },
+        })
+      }
+      if (!map.getLayer('route-line')) {
+        map.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#FF6B00', 'line-width': 5.5, 'line-opacity': 0.95 },
+        })
+      }
     }
-    map.on('load', addRoute)
-    map.on('style.load', addRoute)
-    map.on('styledata', addRoute)
+
+    const applyTheme = () => {
+      map.setConfigProperty('basemap', 'lightPreset', themeRef.current === 'dark' ? 'night' : 'day')
+    }
+    const onLoad = () => {
+      map.resize()
+      applyTheme()
+      addRoute()
+    }
+    const onStyleData = () => addRoute()
+
+    map.on('load', onLoad)
+    map.on('styledata', onStyleData)
 
     const driverEl = document.createElement('div')
     driverEl.style.width = '56px'
     driverEl.style.height = '56px'
-    driverEl.style.position = 'relative'
     driverEl.innerHTML = `
-      <div style="width:56px;height:56px;background:white;border-radius:28px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);border:2px solid white;">
+      <div style="width:56px;height:56px;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);">
         <div style="width:22px;height:22px;background:#FF6B00;border-radius:50%;box-shadow:0 0 0 6px rgba(255,107,0,0.15);"></div>
       </div>
     `
-    driverMarkerRef.current = new mapboxgl.Marker({ element: driverEl, rotationAlignment: 'viewport', pitchAlignment: 'viewport', anchor: 'center' }).setLngLat(driverLocation || center || [29.4589, -23.9045]).addTo(map)
+    driverMarkerRef.current = new mapboxgl.Marker({
+      element: driverEl,
+      rotationAlignment: 'viewport',
+      anchor: 'center',
+    })
+      .setLngLat(driverLocation || center || DEFAULT_CENTER)
+      .setRotation(((bearing % 360) + 360) % 360)
+      .addTo(map)
 
-    const passEl = document.createElement('div')
-    passEl.innerHTML = `<div style="width:40px;height:40px;background:#111;border:3px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.25);">📍</div>`
-    passengerMarkerRef.current = new mapboxgl.Marker({ element: passEl, anchor: 'bottom' })
+    const passengerEl = document.createElement('div')
+    passengerEl.innerHTML = `
+      <div style="width:40px;height:40px;background:#111;border:3px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.25);">📍</div>
+    `
+    passengerMarkerRef.current = new mapboxgl.Marker({ element: passengerEl, anchor: 'bottom' })
 
-    return () => { map.remove(); mapRef.current = null }
+    return () => {
+      map.off('load', onLoad)
+      map.off('styledata', onStyleData)
+      map.remove()
+      mapRef.current = null
+      driverMarkerRef.current = null
+      passengerMarkerRef.current = null
+    }
   }, [])
 
-  // FIX: DAY/NIGHT INSTANT SWITCH - NO WHITE FLASH
   useEffect(() => {
-    if (!mapRef.current) return
-    try {
-      if (mapStyle) {
-        mapRef.current.setStyle(mapStyle)
-      } else {
-        // @ts-ignore
-        mapRef.current.setConfigProperty('basemap', 'lightPreset', theme === 'dark' ? 'night' : 'day')
-      }
-    } catch {}
-  }, [theme, mapStyle])
+    const map = mapRef.current
+    if (!map) return
+    themeRef.current = theme
+    if (map.isStyleLoaded()) {
+      map.setConfigProperty('basemap', 'lightPreset', theme === 'dark' ? 'night' : 'day')
+    }
+  }, [theme])
 
   useEffect(() => {
-    if (!mapRef.current) return
-    const source: any = mapRef.current.getSource('route')
+    routeRef.current = route
+    const source = mapRef.current?.getSource('route') as mapboxgl.GeoJSONSource | undefined
     if (!source) return
-    if (!route) { source.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} }); return }
-    let coords = route.type === 'Feature' ? route.geometry.coordinates : route.coordinates || route.geometry?.coordinates || route
-    source.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} })
+    const coordinates = route
+      ? route.type === 'Feature'
+        ? route.geometry.coordinates
+        : route.coordinates || route.geometry?.coordinates || route
+      : []
+    source.setData({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates },
+      properties: {},
+    })
   }, [route])
 
   useEffect(() => {
-    if (!passengerLocation || !passengerMarkerRef.current || !mapRef.current) return
-    passengerMarkerRef.current.setLngLat(passengerLocation).addTo(mapRef.current)
+    if (!passengerMarkerRef.current || !mapRef.current) return
+    if (passengerLocation) passengerMarkerRef.current.setLngLat(passengerLocation).addTo(mapRef.current)
+    else passengerMarkerRef.current.remove()
   }, [passengerLocation])
 
   useEffect(() => {
-    if (!mapRef.current || !driverLocation || !driverMarkerRef.current) return
-    driverMarkerRef.current.setLngLat(driverLocation)
-    driverMarkerRef.current.setRotation(((bearing % 360) + 360) % 360)
+    const map = mapRef.current
+    if (!map || !driverLocation || !driverMarkerRef.current) return
+    driverMarkerRef.current
+      .setLngLat(driverLocation)
+      .setRotation(((bearing % 360) + 360) % 360)
     if (followDriver) {
-      if (isNavigating) {
-        mapRef.current.easeTo({ center: driverLocation, zoom: 17, pitch: 50, bearing: bearing, duration: 900 })
-      } else {
-        mapRef.current.easeTo({ center: driverLocation, zoom: 15.5, pitch: 0, bearing: 0, duration: 900 })
-      }
+      map.easeTo({
+        center: driverLocation,
+        zoom: isNavigating ? 17 : 15.5,
+        pitch: isNavigating ? 50 : 0,
+        bearing: isNavigating ? bearing : 0,
+        duration: 900,
+      })
     }
   }, [driverLocation, bearing, isNavigating, followDriver])
 
-  return <div ref={containerRef} className="w-full h-full" style={{ width: '100%', height: '100%', background: theme === 'dark' ? '#0a0a0a' : '#f8f9fa' }} />
+  return (
+    <div
+      ref={containerRef}
+      className="w-full h-full"
+      style={{
+        width: '100%',
+        height: '100%',
+        background: theme === 'dark' ? '#0a0a0a' : '#f8f9fa',
+      }}
+    />
+  )
 }

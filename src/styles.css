@@ -14,3 +14,44 @@
 @keyframes drawer-in{from{transform:translateX(-24px);opacity:.65}to{transform:translateX(0);opacity:1}}@keyframes backdrop-in{from{opacity:0}to{opacity:1}}@keyframes logo-arrive{from{transform:translateY(12px) scale(.76);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}@keyframes logo-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}@keyframes title-in{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}@keyframes logo-ring{0%{transform:scale(.55);opacity:.65}100%{transform:scale(1.4);opacity:0}}
 @media(max-width:680px){.side-drawer{width:100%;grid-template-columns:1fr;grid-template-rows:auto auto auto 1fr auto}.drawer-head,.drawer-user,.drawer-nav,.drawer-logout,.drawer-main{grid-column:1}.drawer-user{grid-row:2;padding:12px 16px}.drawer-nav{grid-row:3;display:grid;grid-template-columns:1fr 1fr;max-height:35vh;overflow:auto;padding:8px}.drawer-nav button{padding:10px;font-size:12px;gap:8px}.nav-chevron{display:none}.drawer-logout{grid-row:5;margin:8px 12px}.drawer-main{grid-row:4;border-left:0;border-top:1px solid #263448;padding:18px 20px}.menu-content h2{font-size:21px}.menu-trigger span{display:none}}
 @media(prefers-reduced-motion:reduce){.splash-intro *,.splash-intro:before,.splash-intro:after,.menu-backdrop,.side-drawer{animation-duration:.01ms!important;animation-iteration-count:1!important}}
+
+/* Premium ride surfaces */
+:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f8f9fa}
+body{background:#f8f9fa;color:#111827}
+button{font-weight:600}
+input{height:56px;border:0;border-radius:16px}
+.primary{height:56px;border-radius:16px;background:#ff6b00;font-weight:600}
+.auth-page{background:#f8f9fa;color:#111827}
+.auth-card,.panel,.stats>div,.menu-info-card{background:#fff;border:1px solid rgba(0,0,0,.06);border-radius:24px;box-shadow:0 8px 32px rgba(0,0,0,.12)}
+.auth-card{color:#111827}
+.auth-card .muted,.auth-foot{color:#6b7280}
+.role-row button{border-radius:16px}
+.role-row .driver-role.selected{background:#ff6b00;border-color:#ff6b00}
+.ride-app{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.ride-app--light{--ride-surface:rgba(255,255,255,.94);--ride-subtle:#f5f5f7;--ride-text:#111827;--ride-muted:#6b7280;--ride-border:rgba(0,0,0,.06)}
+.ride-app--dark{--ride-surface:rgba(17,17,19,.94);--ride-subtle:#1c1c1e;--ride-text:#f8fafc;--ride-muted:#9ca3af;--ride-border:rgba(255,255,255,.08)}
+.ride-header{backdrop-filter:blur(18px);border-bottom:1px solid var(--ride-border)!important}
+.ride-header strong{font-size:22px;font-weight:700;letter-spacing:-.35px}
+.ride-sheet{background:var(--ride-surface)!important;color:var(--ride-text)!important;border:1px solid var(--ride-border)!important;border-bottom:0;border-radius:32px 32px 0 0!important;box-shadow:0 8px 32px rgba(0,0,0,.12)!important;backdrop-filter:blur(22px) saturate(150%)}
+.ride-sheet-handle-wrap{display:flex;justify-content:center;padding:14px 0 8px;cursor:grab;position:sticky;top:0;background:var(--ride-surface);z-index:5}
+.ride-sheet-handle{width:40px;height:4px;background:#ddd;border-radius:4px;margin:0 auto 16px;cursor:pointer;flex:none}
+.ride-sheet input{height:56px!important;padding:0 16px!important;background:var(--ride-subtle)!important;color:var(--ride-text)!important;border:0!important;border-radius:16px!important;box-shadow:none!important}
+.ride-sheet input::placeholder{color:var(--ride-muted)}
+.ride-sheet h2,.ride-sheet h3{font-size:22px;font-weight:700;letter-spacing:-.35px}
+.ride-sheet p,.ride-sheet small{color:var(--ride-muted)}
+.ride-sheet button{min-height:56px;border-radius:16px!important;font-weight:600!important}
+.ride-sheet button[disabled]{opacity:.58}
+.ride-sheet .ride-card,.ride-sheet .ride-status,.ride-sheet .fare-card{background:var(--ride-surface);border:1px solid var(--ride-border);border-radius:24px;box-shadow:0 8px 32px rgba(0,0,0,.12)}
+.ride-app--dark .ride-sheet .ride-card,.ride-app--dark .ride-sheet .ride-status,.ride-app--dark .ride-sheet .fare-card{box-shadow:0 8px 32px rgba(0,0,0,.28)}
+.ride-app .side-drawer{background:var(--ride-surface);color:var(--ride-text);border-color:var(--ride-border)}
+.ride-app .drawer-head{background:var(--ride-surface);border-color:var(--ride-border)}
+.ride-app .drawer-user,.ride-app .drawer-main{border-color:var(--ride-border)}
+.ride-app .drawer-nav button{color:var(--ride-text)}
+.ride-app .drawer-nav button.active{background:var(--ride-subtle);border-color:var(--ride-border);color:#ff6b00}
+.ride-app .menu-detail,.ride-app .setting-row{border-color:var(--ride-border)}
+.ride-app .menu-info-card{background:var(--ride-subtle);border-color:var(--ride-border)}
+.ride-app--dark .ride-sheet-handle-wrap{background:var(--ride-surface)}
+.ride-app--dark .ride-sheet-handle{background:#666}
+.ride-app .leaflet-control-zoom a{width:44px;height:44px;line-height:44px;background:var(--ride-surface);color:var(--ride-text);border-color:var(--ride-border);box-shadow:0 4px 16px rgba(0,0,0,.14)}
+.ride-app .leaflet-control-zoom-in{border-radius:14px 14px 0 0}
+.ride-app .leaflet-control-zoom-out{border-radius:0 0 14px 14px}

@@ -2,11 +2,12 @@ import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-export function OsmMapView({ center, route, driverLocation, availableCars }: any) {
+export function OsmMapView({ center, route, driverLocation, availableCars, theme = 'light' }: any) {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const routeLineRef = useRef<L.Polyline | null>(null)
   const driverMarkerRef = useRef<L.Marker | null>(null)
+  const tileLayerRef = useRef<L.TileLayer | null>(null)
   // ADDED FOR CARS
   const carsRef = useRef<Map<string, L.Marker>>(new Map())
 
@@ -17,11 +18,6 @@ export function OsmMapView({ center, route, driverLocation, availableCars }: any
       zoomControl: false,
     }).setView([center[1], center[0]], 14)
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap',
-      maxZoom: 19,
-    }).addTo(map)
-
     L.control.zoom({ position: 'bottomright' }).addTo(map)
 
     mapRef.current = map
@@ -30,6 +26,17 @@ export function OsmMapView({ center, route, driverLocation, availableCars }: any
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
+    const tileStyle = theme === 'dark' ? 'dark_all' : 'light_all'
+    tileLayerRef.current = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${tileStyle}/{z}/{x}/{y}{r}.png`, {
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      maxZoom: 20,
+    }).addTo(map)
+  }, [theme])
+
   // center update
   useEffect(() => {
     if (mapRef.current && center) {
@@ -37,7 +44,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars }: any
     }
   }, [center])
 
-  // route - BLUE + clears when undefined
+  // Route clears from the map when no ride is active.
   useEffect(() => {
     if (!mapRef.current) return
 
@@ -56,7 +63,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars }: any
     if (routeLineRef.current) {
       routeLineRef.current.setLatLngs(latLngs)
     } else {
-      routeLineRef.current = L.polyline(latLngs, { color: '#1E90FF', weight: 6, opacity: 0.95 }).addTo(mapRef.current)
+      routeLineRef.current = L.polyline(latLngs, { color: '#FF6B00', weight: 5.5, opacity: 0.95 }).addTo(mapRef.current)
       mapRef.current.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50] })
     }
   }, [route])
@@ -76,9 +83,10 @@ export function OsmMapView({ center, route, driverLocation, availableCars }: any
     const latLng: any = [driverLocation[1], driverLocation[0]]
     if (!driverMarkerRef.current) {
       const icon = L.divIcon({
-        html: '<div style="background:#1E90FF;width:36px;height:36px;border-radius:18px;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.5)">🚗</div>',
+        html: '<div style="background:#fff;width:48px;height:48px;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.18);font-size:24px">🚗</div>',
         className: '',
-        iconSize: [36, 36],
+        iconSize: [48, 48],
+        iconAnchor: [24, 24],
       })
       driverMarkerRef.current = L.marker(latLng, { icon }).addTo(mapRef.current)
     } else {
@@ -109,9 +117,10 @@ export function OsmMapView({ center, route, driverLocation, availableCars }: any
         existing.setLatLng(latLng)
       } else {
         const icon = L.divIcon({
-          html: '<div style="background:white;width:36px;height:36px;border-radius:18px;border:2px solid #ff7a00;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.4);font-size:20px">🚗</div>',
+          html: '<div style="background:white;width:40px;height:40px;border-radius:50%;border:2px solid #FF6B00;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.18);font-size:20px">🚗</div>',
           className: '',
-          iconSize: [36, 36],
+          iconSize: [40, 40],
+          iconAnchor: [20, 20],
         })
         const m = L.marker(latLng, { icon }).addTo(mapRef.current!)
         carsRef.current.set(car.driver_id, m)
@@ -119,5 +128,5 @@ export function OsmMapView({ center, route, driverLocation, availableCars }: any
     })
   }, [availableCars])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100vh', background: '#e5e7eb', zIndex: 0 }} />
+  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: theme === 'dark' ? '#0a0a0a' : '#f8f9fa', zIndex: 0 }} />
 }

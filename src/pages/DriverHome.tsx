@@ -23,7 +23,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [routeData, setRouteData] = useState<any>(null)
   const [isNavigating, setIsNavigating] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'dark')
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'light')
   const [zoom, setZoom] = useState(13)
   const [now, setNow] = useState(Date.now())
   const [bearing, setBearing] = useState(0)
@@ -57,7 +57,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const text = isDark? 'white' : '#111827'
   const subText = isDark? '#9ca3af' : '#6b7280'
   const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
-  const mapStyleUrl = isDark? 'mapbox://styles/mapbox/navigation-night-v1' : 'mapbox://styles/mapbox/navigation-day-v1'
   const isTestDriver = TEST_DRIVER_EMAILS.map(e=>e.toLowerCase()).includes((profile.email || '').toLowerCase()) || (profile.full_name || '').toLowerCase().includes('mokgalaka') || (profile.full_name || '').toLowerCase().includes('mokgafaka') || (profile.email || '').toLowerCase().includes('testdriver') || (profile.email || '').toLowerCase().includes('buddyride')
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
@@ -331,11 +330,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const showTopBanner =!isTestDriver && docStatus!== 'approved' || isTestDriver
   const topBannerHeight = showTopBanner? 42 : 0
 
-  return <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+  return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <div style={{ position: 'absolute', inset: 0 }}>
-      <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} isNavigating={isNavigating} followDriver={true} mapStyle={mapStyleUrl} theme={theme} />
+      <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} isNavigating={isNavigating} followDriver={true} theme={theme} />
     </div>
-    <header style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
+    <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -362,12 +361,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button>
       </div>
     )}
-    <section style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '32px', borderTopRightRadius: '32px', padding: '16px 16px 24px', color: text, borderTop: `1px solid ${border}`, maxHeight: isMinimized ? '32vh' : '72vh', overflowY: 'auto', boxShadow: '0 -12px 40px rgba(0,0,0,0.6)', transition: 'max-height 0.35s ease' }}>
-      <div onClick={() => setIsMinimized(!isMinimized)} style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.3)', borderRadius: '3px', margin: '0 auto 16px', cursor: 'pointer' }} />
+    <section className="ride-sheet" style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60, background: bgCard, borderTopLeftRadius: '32px', borderTopRightRadius: '32px', padding: '16px 16px 24px', color: text, borderTop: `1px solid ${border}`, maxHeight: isMinimized ? '32vh' : '72vh', overflowY: 'auto', boxShadow: '0 -12px 40px rgba(0,0,0,0.6)', transition: 'max-height 0.35s ease' }}>
+      <div className="ride-sheet-handle" onClick={() => setIsMinimized(!isMinimized)} />
       {ride && (ride.status as any) === 'accepted' && (
         <>
           {!isMinimized && passengerProfile && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', background: bg2, borderRadius: '14px', padding: '10px 12px' }}>
+            <div className="ride-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', background: bg2, borderRadius: '24px', padding: '10px 12px' }}>
               <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#FF6B00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900' }}>{passengerProfile.full_name?.[0] || 'T'}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: '900', fontSize: '16px' }}>{passengerProfile.full_name || 'Thabo M'} • {passengerProfile.rating ? passengerProfile.rating.toFixed(1) : '4.8'}★</div>
@@ -377,9 +376,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
             </div>
           )}
           {!isMinimized && (
-            <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-              <div><div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>FARE TO COLLECT (Passenger pays)</div><div style={{color:'white', fontSize:'20px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div><div style={{color:'#00d181', fontSize:'13px', fontWeight:'bold'}}>YOU GET R {getEarnings(ride.fare).driverGets} (80%) • Fee R {getEarnings(ride.fare).platformGets}</div></div>
-              <div style={{background:'#00d181', color:'white', padding:'6px 10px', borderRadius:'8px', fontSize:'12px', fontWeight:'bold'}}>CASH</div>
+            <div className="ride-card" style={{background:bg2, border:`1px solid ${border}`, borderRadius:'24px', padding:'12px', marginBottom:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              <div><div style={{color:subText, fontSize:'12px', fontWeight:'bold'}}>FARE TO COLLECT (Passenger pays)</div><div style={{color:text, fontSize:'20px', fontWeight:'900'}}>R {ride.fare} • {(ride as any).payment_method || 'CASH'}</div><div style={{color:subText, fontSize:'13px', fontWeight:'bold'}}>YOU GET R {getEarnings(ride.fare).driverGets} (80%) • Fee R {getEarnings(ride.fare).platformGets}</div></div>
+              <div style={{background:'#FF6B00', color:'white', padding:'6px 10px', borderRadius:'12px', fontSize:'12px', fontWeight:'bold'}}>CASH</div>
             </div>
           )}
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>Go to Pickup • You get R {getEarnings(ride.fare).driverGets}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
@@ -402,9 +401,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
       )}
       {ride && (ride.status as any) === 'arrived' && (
         <>
-          <div style={{background:'#1a3a2a', border:'2px solid #00d181', borderRadius:'14px', padding:'12px', marginBottom:'12px', textAlign:'center'}}>
-            <div style={{color:'#00d181', fontSize:'12px', fontWeight:'bold'}}>PASSENGER IN CAR? START TRIP</div>
-            <div style={{color:'white', fontSize:'20px', fontWeight:'900'}}>Passenger R {ride.fare} • You get R {getEarnings(ride.fare).driverGets}</div>
+          <div className="ride-card" style={{background:bg2, border:`1px solid ${border}`, borderRadius:'24px', padding:'12px', marginBottom:'12px', textAlign:'center'}}>
+            <div style={{color:subText, fontSize:'12px', fontWeight:'bold'}}>PASSENGER IN CAR? START TRIP</div>
+            <div style={{color:text, fontSize:'20px', fontWeight:'900'}}>Passenger R {ride.fare} • You get R {getEarnings(ride.fare).driverGets}</div>
           </div>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>You Have Arrived • You R {getEarnings(ride.fare).driverGets}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: '#00d181', border: 'none', fontSize: '22px' }}>💬</button></div>
           <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>Waiting at {ride.pickup_address?.split(',').slice(0,2).join(',')}</p>
