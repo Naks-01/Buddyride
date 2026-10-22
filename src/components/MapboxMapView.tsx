@@ -4,7 +4,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string
 
-export function MapboxMapView({ center, route, passengerLocation, driverLocation, bearing = 0, isNavigating = false, followDriver = true }: any) {
+export function MapboxMapView({ center, route, passengerLocation, driverLocation, mapStyle, theme, bearing = 0, isNavigating = false, followDriver = true }: any) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null)
@@ -14,7 +14,7 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     if (!containerRef.current || mapRef.current) return
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/light-v11',
+      style: mapStyle || 'mapbox://styles/mapbox/standard',
       center: center || driverLocation || [29.4589, -23.9045],
       zoom: 15.5,
       pitch: 0,
@@ -22,7 +22,13 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
       antialias: true
     })
     mapRef.current = map
-    map.on('load', () => setTimeout(() => map.resize(), 150))
+    map.on('load', () => {
+      setTimeout(() => map.resize(), 150)
+      try {
+        // @ts-ignore
+        map.setConfigProperty('basemap', 'lightPreset', theme === 'dark' ? 'night' : 'day')
+      } catch {}
+    })
 
     const addRoute = () => {
       try {
@@ -44,17 +50,15 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
             type: 'line',
             source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.6 },
-            // @ts-ignore
-            before: 'route-line'
-          } as any)
+            paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.6 }
+          } as any, 'route-line')
         }
       } catch {}
     }
     map.on('load', addRoute)
     map.on('style.load', addRoute)
+    map.on('styledata', addRoute)
 
-    // BEAUTIFUL DRIVER MARKER - Uber style
     const driverEl = document.createElement('div')
     driverEl.style.width = '56px'
     driverEl.style.height = '56px'
@@ -66,13 +70,25 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     `
     driverMarkerRef.current = new mapboxgl.Marker({ element: driverEl, rotationAlignment: 'viewport', pitchAlignment: 'viewport', anchor: 'center' }).setLngLat(driverLocation || center || [29.4589, -23.9045]).addTo(map)
 
-    // PASSENGER PIN
     const passEl = document.createElement('div')
     passEl.innerHTML = `<div style="width:40px;height:40px;background:#111;border:3px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.25);">📍</div>`
     passengerMarkerRef.current = new mapboxgl.Marker({ element: passEl, anchor: 'bottom' })
 
     return () => { map.remove(); mapRef.current = null }
   }, [])
+
+  // FIX: DAY/NIGHT INSTANT SWITCH - NO WHITE FLASH
+  useEffect(() => {
+    if (!mapRef.current) return
+    try {
+      if (mapStyle) {
+        mapRef.current.setStyle(mapStyle)
+      } else {
+        // @ts-ignore
+        mapRef.current.setConfigProperty('basemap', 'lightPreset', theme === 'dark' ? 'night' : 'day')
+      }
+    } catch {}
+  }, [theme, mapStyle])
 
   useEffect(() => {
     if (!mapRef.current) return
@@ -101,5 +117,5 @@ export function MapboxMapView({ center, route, passengerLocation, driverLocation
     }
   }, [driverLocation, bearing, isNavigating, followDriver])
 
-  return <div ref={containerRef} className="w-full h-full" style={{ width: '100%', height: '100%', background: '#f8f9fa' }} />
+  return <div ref={containerRef} className="w-full h-full" style={{ width: '100%', height: '100%', background: theme === 'dark' ? '#0a0a0a' : '#f8f9fa' }} />
 }
