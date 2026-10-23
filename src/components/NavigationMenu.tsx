@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 type View = 'main' | 'profile' | 'navigation' | 'defaultnav' | 'vehicles' | 'safety' | 'account'
 
@@ -38,7 +39,7 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
         <button onClick={open} style={{width:42,height:42,borderRadius:21,background:'#242428',border:'1px solid rgba(255,255,255,0.1)',color:'white',fontSize:18}}>☰</button>
       )}
 
-      {isOpen && (
+      {isOpen && createPortal(
         <div style={{position:'fixed',inset:0,zIndex:99999,display:'flex'}}>
           <div onClick={close} style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.6)'}} />
           <div style={{position:'relative',width:'92%',maxWidth:400,height:'100%',background:'#151a28',color:'white',display:'flex',flexDirection:'column',overflow:'hidden'}}>
@@ -119,7 +120,8 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
             )}
 
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )
