@@ -136,7 +136,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
             </div>
             {r.hasExpiry && d?.expiry_date &&!expired && (
               <div style={{fontSize:'11px', color: r.k==='huru'? '#f59e0b' : '#9ca3af'}}>
-                Exp: {new Date(d.expiry_date).toLocaleDateString()} {r.k==='huru' && '(Bolt rule: 30 days)'}
+                Exp: {new Date(d.expiry_date).toLocaleDateString()} {r.k==='huru' && '(BuddyRide requirement: 30 days)'}
               </div>
             )}
             {r.k==='huru' &&!d && (

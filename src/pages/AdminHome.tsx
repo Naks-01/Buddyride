@@ -121,7 +121,7 @@ export function AdminHome({ profile, onDocs }: Props) {
           <h3>Limpopo Zones - No Surge</h3>
           {zones.map((z,i)=>(
             <div key={z.name} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', background:'#0f172a', borderRadius:'10px', padding:'10px', marginBottom:'8px' }}>
-              <div><p style={{ margin:0, fontSize:'13px', fontWeight:'bold' }}>{z.name}</p><p style={{ margin:0, fontSize:'11px', color:'#94a3b8' }}>Surge x{z.surge} • Cheaper than Bolt</p></div>
+              <div><p style={{ margin:0, fontSize:'13px', fontWeight:'bold' }}>{z.name}</p><p style={{ margin:0, fontSize:'11px', color:'#94a3b8' }}>Surge x{z.surge} • Competitive local pricing</p></div>
               <button onClick={()=>{ const nz=[...zones]; nz[i].active=!nz[i].active; setZones(nz)}} style={{ padding:'6px 12px', borderRadius:'999px', border:'none', fontSize:'11px', fontWeight:'bold', background: z.active? '#16a34a' : '#475569', color:'white' }}>{z.active?'Active':'Off'}</button>
             </div>
           ))}
@@ -134,7 +134,7 @@ export function AdminHome({ profile, onDocs }: Props) {
           <div style={{ background:'#0f172a', borderRadius:'10px', padding:'12px', display:'flex', justifyContent:'space-between' }}>
             <span style={{ fontFamily:'monospace', fontWeight:'bold' }}>WELCOME50</span><span style={{ color:'#4ade80', fontWeight:'bold' }}>-50%</span>
           </div>
-          <div style={{ fontSize:'11px', color:'#94a3b8', marginTop:'8px' }}>Use promos to beat Bolt in Seshego & Mankweng</div>
+          <div style={{ fontSize:'11px', color:'#94a3b8', marginTop:'8px' }}>Use promos to grow BuddyRide in Seshego & Mankweng</div>
         </div>
       )}
     </main>

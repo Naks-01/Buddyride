@@ -297,7 +297,7 @@ export function PassengerNavigationMenu({
               </span>
             </button>
             <h3 style={{ margin: '22px 0 4px', fontSize: 15 }}>Navigation</h3>
-            {['Google Maps', 'Waze', 'Bolt Navigation'].map((app) =>
+            {['Google Maps', 'Waze', 'BuddyRide Navigation'].map((app) =>
               optionButton(app, navigationApp === app, () => setNavigationApp(app)),
             )}
             <h3 style={{ margin: '22px 0 4px', fontSize: 15 }}>Language</h3>

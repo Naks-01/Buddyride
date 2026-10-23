@@ -65,7 +65,7 @@ export function PassengerDocuments({ profile, user, onBack }: any){
     <div style={{ background:'#0e0e10', minHeight:'100vh', color:'white', padding:'16px', fontFamily:'system-ui' }}>
       <button onClick={onBack} style={{ background:'none', border:'none', color:'#9ca3af', marginBottom:'12px' }}>← Back</button>
       <h2 style={{fontWeight:700, fontSize:'20px'}}>Passenger Verification - 4 Fields</h2>
-      <p style={{color:'#9ca3af', fontSize:'13px', marginTop:'4px'}}>Bolt compliance for Limpopo: Selfie + ID Number + ID Doc + Cellphone</p>
+      <p style={{color:'#9ca3af', fontSize:'13px', marginTop:'4px'}}>BuddyRide compliance for Limpopo: Selfie + ID Number + ID Doc + Cellphone</p>
 
       <div style={{marginTop:'20px', display:'flex', flexDirection:'column', gap:'12px'}}>
         <div style={{background:'#18181b', padding:'12px', borderRadius:'12px', border: phone.length>=10? '1px solid #00d181':'1px solid #333'}}>
