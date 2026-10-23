@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomSheet'
 import { OsmMapView } from '../components/OsmMapView'
-import { NavigationMenu } from '../components/NavigationMenu'
+import { PassengerNavigationMenu } from '../components/PassengerNavigationMenu'
 import { RideChat } from '../components/RideChat'
 import { getOSMRoute, reverseOSM } from '../lib/osm'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
@@ -271,7 +271,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}`, transform: uiVisible ? 'translateY(0)' : 'translateY(-110%)', transition: 'transform 300ms ease' }}>
-      <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
+      <PassengerNavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide1</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
     </header>
