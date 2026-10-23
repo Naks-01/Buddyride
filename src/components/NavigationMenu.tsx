@@ -28,19 +28,10 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
   const open = () => setInternalOpen(true)
 
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden'
-    } else {
-      document.body.style.overflow = ''
-    }
+    if (isOpen) document.body.style.overflow = 'hidden'
+    else document.body.style.overflow = ''
     return () => { document.body.style.overflow = '' }
   }, [isOpen])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
 
   const userName = propName || profile?.full_name || "Nakampe Trevor Mokgalaka"
   const phone = profile?.phone || "+27793051213"
@@ -49,75 +40,65 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
   return (
     <>
       {!isControlled && (
-        <button 
-          onClick={open} 
-          aria-label="Open menu"
-          className="w-10 h-10 rounded-full bg-[#242428] border border-white/10 text-white text-lg flex items-center justify-center"
-          style={{ isolation: 'isolate', zIndex: 50 }}
-        >
-          ☰
-        </button>
+        <button onClick={open} style={{width:42,height:42,borderRadius:21,background:'#242428',border:'1px solid rgba(255,255,255,0.1)',color:'white',fontSize:18}}>☰</button>
       )}
 
       {isOpen && (
-        <div className="fixed inset-0 z-[99999] flex" style={{ isolation: 'isolate' }}>
-          <div className="absolute inset-0 bg-black/70" onClick={close} />
+        <div style={{position:'fixed',inset:0,zIndex:99999,display:'flex'}}>
+          <div onClick={close} style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.7)'}} />
           
-          <div className="relative w-[88%] max-w-[380px] h-full bg-[#151a28] text-white flex flex-col overflow-hidden shadow-2xl">
-            <button onClick={close} className="absolute top-3 right-3 w-8 h-8 rounded-full bg-[#242b3d] text-white flex items-center justify-center z-10">✕</button>
+          <div style={{position:'relative',width:'88%',maxWidth:380,height:'100%',background:'#151a28',color:'white',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 0 50px rgba(0,0,0,0.8)'}}>
+            <button onClick={close} style={{position:'absolute',top:12,right:12,width:32,height:32,borderRadius:16,background:'#242b3d',color:'white',display:'flex',alignItems:'center',justifyContent:'center',zIndex:10}}>✕</button>
             
-            <div className="p-5 pt-8">
-              <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('profile')}>
-                <img src={"https://i.pravatar.cc/100?u=" + userName} className="w-10 h-10 rounded-full" alt="" />
-                <div className="flex-1">
-                  <div className="font-bold text-[15px]">{userName}</div>
-                  <div className="text-[12px] text-[#7a8196]">◆ Silver ›</div>
+            <div style={{padding:20,paddingTop:32}}>
+              <div style={{display:'flex',alignItems:'center',gap:12,cursor:'pointer'}} onClick={() => setView('profile')}>
+                <img src={"https://i.pravatar.cc/100?u="+userName} style={{width:40,height:40,borderRadius:20}} alt="" />
+                <div>
+                  <div style={{fontWeight:700,fontSize:15}}>{userName}</div>
+                  <div style={{fontSize:12,color:'#7a8196'}}>◆ Silver ›</div>
                 </div>
               </div>
               {view === 'main' && (
                 <>
-                  <div className="grid grid-cols-2 gap-2 mt-4">
-                    <div className="bg-[#242b3d] rounded-xl p-3"><div className="font-bold">89%</div><div className="text-[11px] text-[#7a8196]">Driver score</div></div>
-                    <div className="bg-[#242b3d] rounded-xl p-3"><div className="font-bold">4.70</div><div className="text-[11px] text-[#7a8196]">Star rating</div></div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:16}}>
+                    <div style={{background:'#242b3d',borderRadius:12,padding:12}}><div style={{fontWeight:700}}>89%</div><div style={{fontSize:11,color:'#7a8196'}}>Driver score</div></div>
+                    <div style={{background:'#242b3d',borderRadius:12,padding:12}}><div style={{fontWeight:700}}>4.70</div><div style={{fontSize:11,color:'#7a8196'}}>Star rating</div></div>
                   </div>
-                  <div className="bg-[#242b3d] rounded-xl p-3 mt-2 w-[48%]"><div className="font-bold">70%</div><div className="text-[11px] text-[#7a8196]">Acceptance rate</div></div>
+                  <div style={{background:'#242b3d',borderRadius:12,padding:12,marginTop:8,width:'48%'}}><div style={{fontWeight:700}}>70%</div><div style={{fontSize:11,color:'#7a8196'}}>Acceptance rate</div></div>
                 </>
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto px-2 pb-6">
+            <div style={{flex:1,overflowY:'auto',padding:'0 8px 24px'}}>
               {view === 'main' && (
-                <div className="space-y-1">
-                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>💰</span><b>Earnings</b></button>
-                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>🏷️</span><b>Campaigns</b></button>
-                  <button onClick={()=>setView('profile')} className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>⚙️</span><b>Settings</b></button>
-                  <div className="pt-6 px-4 space-y-4 text-[14px] text-[#8b92a8]"><div>Invite friends to drive</div><div>Driver Portal</div><div>Privacy</div></div>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  <button style={{width:'100%',display:'flex',gap:16,padding:'14px 16px',borderRadius:12,background:'#242b3d',textAlign:'left',color:'white'}}><span>💰</span><b>Earnings</b></button>
+                  <button style={{width:'100%',display:'flex',gap:16,padding:'14px 16px',borderRadius:12,background:'#242b3d',textAlign:'left',color:'white'}}><span>🏷️</span><b>Campaigns</b></button>
+                  <button onClick={()=>setView('profile')} style={{width:'100%',display:'flex',gap:16,padding:'14px 16px',borderRadius:12,background:'#242b3d',textAlign:'left',color:'white'}}><span>⚙️</span><b>Settings</b></button>
+                  <div style={{padding:'24px 16px',display:'flex',flexDirection:'column',gap:16,fontSize:14,color:'#8b92a8'}}><div>Invite friends to drive</div><div>Driver Portal</div><div>Privacy</div></div>
                 </div>
               )}
 
               {view === 'profile' && (
                 <div>
-                  <button onClick={()=>setView('main')} className="px-4 py-2 text-sm text-[#8b92a8]">← Back</button>
-                  <div className="px-4 py-3 border-b border-[#242b3d]"><div className="font-bold">{userName}</div><div className="text-xs text-[#7a8196]">{phone}</div></div>
-                  <button onClick={()=>setView('vehicles' as View)} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Vehicles<span className="block text-xs text-[#7a8196]">{vehicle}</span></span><span>›</span></button>
-                  <button onClick={()=>setView('navigation')} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Navigation</span><span>›</span></button>
-                  <button onClick={()=>setView('safety')} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Safety</span><span>›</span></button>
-                  <button onClick={()=>setView('account')} className="w-full flex justify-between px-4 py-4 border-b border-[#1f2536] text-left"><span>Account</span><span>›</span></button>
-                  <button onClick={()=>setView('about')} className="w-full flex justify-between px-4 py-4 text-left"><span>About</span><span>›</span></button>
+                  <button onClick={()=>setView('main')} style={{padding:'8px 16px',fontSize:14,color:'#8b92a8'}}>← Back</button>
+                  <div style={{padding:'12px 16px',borderBottom:'1px solid #242b3d'}}><div style={{fontWeight:700}}>{userName}</div><div style={{fontSize:12,color:'#7a8196'}}>{phone}</div></div>
+                  <button onClick={()=>setView('vehicles' as View)} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'16px',borderBottom:'1px solid #1f2536',textAlign:'left',color:'white',background:'transparent'}}><span>Vehicles<span style={{display:'block',fontSize:12,color:'#7a8196'}}>{vehicle}</span></span><span>›</span></button>
+                  <button onClick={()=>setView('navigation')} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'16px',borderBottom:'1px solid #1f2536',textAlign:'left',color:'white',background:'transparent'}}><span>Navigation</span><span>›</span></button>
+                  <button onClick={()=>setView('safety')} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'16px',borderBottom:'1px solid #1f2536',textAlign:'left',color:'white',background:'transparent'}}><span>Safety</span><span>›</span></button>
+                  <button onClick={()=>setView('account')} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'16px',borderBottom:'1px solid #1f2536',textAlign:'left',color:'white',background:'transparent'}}><span>Account</span><span>›</span></button>
+                  <button onClick={()=>setView('about')} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'16px',textAlign:'left',color:'white',background:'transparent'}}><span>About</span><span>›</span></button>
                 </div>
               )}
 
               {view === 'navigation' && (
                 <div>
-                  <button onClick={()=>setView('profile')} className="px-4 py-3 font-bold">← Navigation</button>
-                  <button onClick={()=>setView('defaultnav')} className="w-full flex justify-between px-4 py-3 border-y border-[#242b3d] text-left"><div><div className="text-sm">Default navigation</div><div className="text-xs text-[#7a8196]">{defaultNav}</div></div><span>›</span></button>
-                  <div className="px-4 py-4 flex justify-between items-center">
-                    <span className="text-sm">Navigation auto-start</span>
-                    <button 
-                      onClick={()=>setAutoStart(!autoStart)} 
-                      className={autoStart ? "w-12 h-7 rounded-full p-1 bg-green-400" : "w-12 h-7 rounded-full p-1 bg-gray-700"}
-                    >
-                      <div className={autoStart ? "w-5 h-5 bg-white rounded-full translate-x-5 transition-all" : "w-5 h-5 bg-white rounded-full transition-all"} />
+                  <button onClick={()=>setView('profile')} style={{padding:'12px 16px',fontWeight:700,color:'white',background:'transparent'}}>← Navigation</button>
+                  <button onClick={()=>setView('defaultnav')} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'12px 16px',borderTop:'1px solid #242b3d',borderBottom:'1px solid #242b3d',textAlign:'left',color:'white',background:'transparent'}}><div><div style={{fontSize:14}}>Default navigation</div><div style={{fontSize:12,color:'#7a8196'}}>{defaultNav}</div></div><span>›</span></button>
+                  <div style={{padding:'16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:14}}>Navigation auto-start</span>
+                    <button onClick={()=>setAutoStart(!autoStart)} style={{width:48,height:28,borderRadius:14,padding:2,background:autoStart?'#1de28f':'#2a344d',transition:'all 0.2s'}}>
+                      <div style={{width:20,height:20,background:'white',borderRadius:10,transform:autoStart?'translateX(20px)':'translateX(0)',transition:'all 0.2s'}} />
                     </button>
                   </div>
                 </div>
@@ -125,18 +106,18 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
 
               {view === 'defaultnav' && (
                 <div>
-                  <button onClick={()=>setView('navigation')} className="px-4 py-3 font-bold">← Default navigation</button>
+                  <button onClick={()=>setView('navigation')} style={{padding:'12px 16px',fontWeight:700,color:'white',background:'transparent'}}>← Default navigation</button>
                   {['Bolt Navigation','Google Maps','Waze'].map(n=>(
-                    <label key={n} className="flex gap-3 px-4 py-4 cursor-pointer"><input type="radio" checked={defaultNav===n} onChange={()=>{setDefaultNav(n); setView('navigation')}} className="accent-green-400" />{n}</label>
+                    <label key={n} style={{display:'flex',gap:12,padding:'16px',cursor:'pointer'}}><input type="radio" checked={defaultNav===n} onChange={()=>{setDefaultNav(n); setView('navigation')}} />{n}</label>
                   ))}
                 </div>
               )}
 
               {view === 'account' && (
                 <div>
-                  <button onClick={()=>setView('profile')} className="px-4 py-3 font-bold">← Account</button>
-                  <div className="m-3 bg-[#1e2538] p-3 rounded-xl"><div className="text-sm">🎁 Earn up to</div><div className="font-bold">R 510 by inviting drivers</div></div>
-                  <button onClick={onSignOut} className="w-full text-left px-4 py-4 text-[#ff6b6b]">↪ Log out</button>
+                  <button onClick={()=>setView('profile')} style={{padding:'12px 16px',fontWeight:700,color:'white',background:'transparent'}}>← Account</button>
+                  <div style={{margin:12,background:'#1e2538',padding:12,borderRadius:12}}><div style={{fontSize:14}}>🎁 Earn up to</div><div style={{fontWeight:700}}>R 510 by inviting drivers</div></div>
+                  <button onClick={onSignOut} style={{width:'100%',textAlign:'left',padding:'16px',color:'#ff6b6b',background:'transparent'}}>↪ Log out</button>
                 </div>
               )}
             </div>
