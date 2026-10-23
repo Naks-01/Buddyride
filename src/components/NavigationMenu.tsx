@@ -27,7 +27,6 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
   }
   const open = () => setInternalOpen(true)
 
-  // FIX #1 - Lock body scroll when menu open (was scrolling map behind)
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
@@ -37,7 +36,6 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
     return () => { document.body.style.overflow = '' }
   }, [isOpen])
 
-  // FIX #2 - Close on ESC
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
     window.addEventListener('keydown', onKey)
@@ -46,16 +44,15 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
 
   const userName = propName || profile?.full_name || "Nakampe Trevor Mokgalaka"
   const phone = profile?.phone || "+27793051213"
-  const vehicle = "HCM339L • Renault Kwid 2022"
+  const vehicle = "HCM339L - Renault Kwid 2022"
 
   return (
     <>
-      {/* Burger button - FIX #3 always show if not controlled */}
       {!isControlled && (
         <button 
           onClick={open} 
           aria-label="Open menu"
-          className="w-[42px] h-[42px] rounded-full bg-[#242428] border border-white/10 text-white text-[18px] flex items-center justify-center active:scale-95 transition-transform"
+          className="w-10 h-10 rounded-full bg-[#242428] border border-white/10 text-white text-lg flex items-center justify-center"
           style={{ isolation: 'isolate', zIndex: 50 }}
         >
           ☰
@@ -63,19 +60,15 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
       )}
 
       {isOpen && (
-        // FIX #4 - Root now has fixed z-index 99999 and isolation
         <div className="fixed inset-0 z-[99999] flex" style={{ isolation: 'isolate' }}>
-          {/* Overlay - closes on click */}
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-[2px]" onClick={close} />
+          <div className="absolute inset-0 bg-black/70" onClick={close} />
           
-          {/* Drawer - now definitely on top */}
-          <div className="relative w-[88%] max-w-[380px] h-full bg-[#151a28] text-white flex flex-col overflow-hidden shadow-2xl animate-slideIn">
-            {/* Close X - FIX #5 added visible close button you were missing */}
+          <div className="relative w-[88%] max-w-[380px] h-full bg-[#151a28] text-white flex flex-col overflow-hidden shadow-2xl">
             <button onClick={close} className="absolute top-3 right-3 w-8 h-8 rounded-full bg-[#242b3d] text-white flex items-center justify-center z-10">✕</button>
             
             <div className="p-5 pt-8">
               <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('profile')}>
-                <img src={`https://i.pravatar.cc/100?u=${userName}`} className="w-10 h-10 rounded-full" alt="" />
+                <img src={"https://i.pravatar.cc/100?u=" + userName} className="w-10 h-10 rounded-full" alt="" />
                 <div className="flex-1">
                   <div className="font-bold text-[15px]">{userName}</div>
                   <div className="text-[12px] text-[#7a8196]">◆ Silver ›</div>
@@ -95,9 +88,9 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
             <div className="flex-1 overflow-y-auto px-2 pb-6">
               {view === 'main' && (
                 <div className="space-y-1">
-                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left hover:bg-[#2d354d] transition-colors"><span>💰</span><b>Earnings</b></button>
-                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left hover:bg-[#2d354d] transition-colors"><span>🏷️</span><b>Campaigns</b></button>
-                  <button onClick={()=>setView('profile')} className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left hover:bg-[#2d354d] transition-colors"><span>⚙️</span><b>Settings</b></button>
+                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>💰</span><b>Earnings</b></button>
+                  <button className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>🏷️</span><b>Campaigns</b></button>
+                  <button onClick={()=>setView('profile')} className="w-full flex gap-4 px-4 py-3.5 rounded-xl bg-[#242b3d] text-left"><span>⚙️</span><b>Settings</b></button>
                   <div className="pt-6 px-4 space-y-4 text-[14px] text-[#8b92a8]"><div>Invite friends to drive</div><div>Driver Portal</div><div>Privacy</div></div>
                 </div>
               )}
@@ -118,7 +111,15 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
                 <div>
                   <button onClick={()=>setView('profile')} className="px-4 py-3 font-bold">← Navigation</button>
                   <button onClick={()=>setView('defaultnav')} className="w-full flex justify-between px-4 py-3 border-y border-[#242b3d] text-left"><div><div className="text-sm">Default navigation</div><div className="text-xs text-[#7a8196]">{defaultNav}</div></div><span>›</span></button>
-                  <div className="px-4 py-4 flex justify-between items-center"><span className="text-sm">Navigation auto-start</span><button onClick={()=>setAutoStart(!autoStart)} className={`w-12 h-7 rounded-full p-1 ${autoStart?'bg-[#1de28f]':'bg-[#2a344d]}`}><div className={`w-5 h-5 bg-white rounded-full ${autoStart?'translate-x-5':''} transition-all`} /></button></div>
+                  <div className="px-4 py-4 flex justify-between items-center">
+                    <span className="text-sm">Navigation auto-start</span>
+                    <button 
+                      onClick={()=>setAutoStart(!autoStart)} 
+                      className={autoStart ? "w-12 h-7 rounded-full p-1 bg-green-400" : "w-12 h-7 rounded-full p-1 bg-gray-700"}
+                    >
+                      <div className={autoStart ? "w-5 h-5 bg-white rounded-full translate-x-5 transition-all" : "w-5 h-5 bg-white rounded-full transition-all"} />
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -126,7 +127,7 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
                 <div>
                   <button onClick={()=>setView('navigation')} className="px-4 py-3 font-bold">← Default navigation</button>
                   {['Bolt Navigation','Google Maps','Waze'].map(n=>(
-                    <label key={n} className="flex gap-3 px-4 py-4 cursor-pointer"><input type="radio" checked={defaultNav===n} onChange={()=>{setDefaultNav(n); setView('navigation')}} className="accent-[#1de28f]" />{n}</label>
+                    <label key={n} className="flex gap-3 px-4 py-4 cursor-pointer"><input type="radio" checked={defaultNav===n} onChange={()=>{setDefaultNav(n); setView('navigation')}} className="accent-green-400" />{n}</label>
                   ))}
                 </div>
               )}
@@ -142,14 +143,6 @@ export function NavigationMenu({ profile, onSignOut, isOpen: propIsOpen, onClose
           </div>
         </div>
       )}
-
-      <style>{`
-        @keyframes slideIn {
-          from { transform: translateX(-100%); }
-          to { transform: translateX(0); }
-        }
-        .animate-slideIn { animation: slideIn 0.25s ease-out; }
-      `}</style>
     </>
   )
 }
