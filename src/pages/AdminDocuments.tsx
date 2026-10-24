@@ -70,26 +70,63 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function load(){
     setError('')
-    const {data:d, error: driverError}= await supabase.from('driver_documents').select('*, profiles!driver_documents_driver_id_fkey(full_name,email,is_verified)').order('created_at',{ascending:false})
-    const {data:p, error: passengerError}= await supabase.from('passenger_documents').select('*, profiles!passenger_documents_passenger_id_fkey(full_name,email)').order('created_at',{ascending:false})
-    if(driverError || passengerError) {
-      setError(driverError?.message || passengerError?.message || 'Could not load documents.')
-      return
+    const [driverResult, passengerResult] = await Promise.all([
+      supabase.from('driver_documents').select('*, profiles!driver_documents_driver_id_fkey(full_name,email,is_verified)').order('created_at',{ascending:false}),
+      supabase.from('passenger_documents').select('*, profiles!passenger_documents_passenger_id_fkey(full_name,email)').order('created_at',{ascending:false}),
+    ])
+    if (!driverResult.error) setDriverDocs((driverResult.data || []) as StoredDocument[])
+    if (!passengerResult.error) setPassengerDocs((passengerResult.data || []) as StoredDocument[])
+    const loadErrors = [driverResult.error, passengerResult.error].filter(Boolean)
+    if (loadErrors.length) {
+      setError(loadErrors.map(loadError=>loadError?.message).join(' · '))
     }
-    setDriverDocs((d || []) as StoredDocument[])
-    setPassengerDocs((p || []) as StoredDocument[])
   }
 
-  async function approve(doc:StoredDocument, table:'driver_documents'|'passenger_documents'){
+  async function updateDocumentStatus(
+    doc:StoredDocument,
+    table:'driver_documents'|'passenger_documents',
+    status:'approved'|'rejected',
+    driverEmail:string
+  ): Promise<boolean> {
+    console.log(status==='approved'?'Approving':'Rejecting', doc.id, driverEmail, doc.doc_type)
     setLoadingId(doc.id)
+    setError('')
     try {
-      const { error: docErr } = await supabase.from(table).update({ status:'approved', rejection_reason: null } as any).eq('id',doc.id)
-      if (docErr) throw docErr
+      const update = (changes: Record<string, string | null>) => supabase.from(table).update(changes as any).eq('id',doc.id)
+      const changes: Record<string, string | null> = status==='approved'
+        ? { status, verified_at:new Date().toISOString() }
+        : { status, rejection_reason:reason.trim() || null }
+      let { error: updateError } = await update(changes)
+      let metadataColumnMissing = false
+      if (updateError) {
+        const optionalColumn = status==='approved' ? 'verified_at' : 'rejection_reason'
+        const errorText = `${updateError.message} ${updateError.details || ''}`.toLowerCase()
+        if (errorText.includes(optionalColumn.toLowerCase()) && (errorText.includes('column') || errorText.includes('schema cache'))) {
+          metadataColumnMissing = true
+          const fallback = await update({ status })
+          updateError = fallback.error
+        }
+      }
+      if (updateError) throw updateError
 
+      const updateLocal = (documents: StoredDocument[]) => documents.map(item =>
+        item.id===doc.id ? { ...item, status, rejection_reason:status==='rejected' ? reason.trim() || null : null } : item
+      )
+      if (table==='driver_documents') setDriverDocs(updateLocal)
+      else setPassengerDocs(updateLocal)
+      if (metadataColumnMissing) {
+        console.warn(`Document status updated, but ${status==='approved'?'verified_at':'rejection_reason'} is not available in ${table}.`)
+      }
       await load()
+      if (metadataColumnMissing) {
+        alert(`Document status updated, but ${status==='approved'?'verified_at':'rejection_reason'} is not available in the ${table} table.`)
+      }
+      return true
     } catch (e:any) {
-      alert('Approve failed: ' + e.message)
+      const action = status==='approved'?'Approve':'Reject'
+      alert(`${action} failed: ${e.message} - Check the ${table} UPDATE RLS policy for the authenticated admin role.`)
       console.error(e)
+      return false
     } finally {
       setLoadingId(null)
     }
@@ -113,18 +150,16 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   async function doReject(){
     if (!rejectModal) return
     if (!reason.trim()) { alert('Enter reason'); return }
-    setLoadingId(rejectModal.id)
-    try {
-      const { error: updateError } = await supabase.from(rejectModal.table).update({ status:'rejected', rejection_reason: reason } as any).eq('id', rejectModal.id)
-      if (updateError) throw updateError
+    const docs = rejectModal.table==='driver_documents' ? driverDocs : passengerDocs
+    const doc = docs.find(item=>item.id===rejectModal.id)
+    if (!doc) {
+      setError('Could not reject document: it is no longer in the loaded document list. Refresh and try again.')
+      return
+    }
+    const succeeded = await updateDocumentStatus(doc,rejectModal.table,'rejected',doc.profiles?.email || doc.user_email || doc.email || '')
+    if (succeeded) {
       setRejectModal(null)
       setReason('')
-      await load()
-    } catch (e:any) {
-      alert('Reject failed: ' + e.message + '\n\nRun this SQL if column missing:\nALTER TABLE driver_documents ADD COLUMN IF NOT EXISTS rejection_reason TEXT;')
-      console.error(e)
-    } finally {
-      setLoadingId(null)
     }
   }
 
@@ -156,7 +191,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
         <button disabled={!doc} onClick={()=>doc && window.open(doc.file_url,'_blank')} style={{background:'#333', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>View Doc</button>
-        <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && approve(doc,table)} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
+        <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,table})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>
     </div>
@@ -178,10 +213,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           Show only drivers who are not yet approved
         </label>
         {Object.entries(driverGroups).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([email, docs]) => {
-          const approvedCount = DRIVER_DOCUMENTS.filter(requirement => {
-            const doc = docs.find(item=>item.doc_type===requirement.id)
-            return displayStatus(doc)==='APPROVED'
-          }).length
+          const approvedCount = docs.filter(doc=>doc.status.toLowerCase()==='approved').length
           const requiredDocs = DRIVER_DOCUMENTS.filter(requirement=>requirement.required)
           const missingRequired = requiredDocs.filter(requirement => {
             const doc = docs.find(item=>item.doc_type===requirement.id)
