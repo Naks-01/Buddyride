@@ -2,13 +2,27 @@ import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-export function OsmMapView({ center, route, driverLocation, availableCars, theme = 'light' }: any) {
+type OsmMapViewProps = {
+  center: [number, number]
+  route?: any
+  driverLocation?: [number, number]
+  availableCars?: any[]
+  theme?: 'dark' | 'light'
+  onMapMove?: (center: [number, number]) => void
+}
+
+export function OsmMapView({ center, route, driverLocation, availableCars, theme = 'light', onMapMove }: OsmMapViewProps) {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const routeLineRef = useRef<L.Polyline | null>(null)
   const driverMarkerRef = useRef<L.Marker | null>(null)
   const tileLayerRef = useRef<L.TileLayer | null>(null)
   const carsRef = useRef<Map<string, L.Marker>>(new Map())
+  const onMapMoveRef = useRef(onMapMove)
+
+  useEffect(() => {
+    onMapMoveRef.current = onMapMove
+  }, [onMapMove])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -18,6 +32,10 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     }).setView([center[1], center[0]], 14)
 
     L.control.zoom({ position: 'bottomright' }).addTo(map)
+    map.on('dragend', () => {
+      const mapCenter = map.getCenter()
+      onMapMoveRef.current?.([mapCenter.lng, mapCenter.lat])
+    })
 
     mapRef.current = map
     setTimeout(() => map.invalidateSize(), 500)
@@ -43,7 +61,10 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
   // center update
   useEffect(() => {
     if (mapRef.current && center) {
-      mapRef.current.setView([center[1], center[0]], mapRef.current.getZoom())
+      const currentCenter = mapRef.current.getCenter()
+      if (Math.abs(currentCenter.lat - center[1]) > 0.000001 || Math.abs(currentCenter.lng - center[0]) > 0.000001) {
+        mapRef.current.setView([center[1], center[0]], mapRef.current.getZoom())
+      }
     }
   }, [center])
 

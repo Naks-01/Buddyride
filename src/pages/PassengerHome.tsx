@@ -66,6 +66,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [lastTouch, setLastTouch] = useState(Date.now())
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
+  const pickupAddressRequest = useRef(0)
+  const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const prevStatusRef = useRef<string>('')
@@ -101,6 +103,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }, [rideStatus, uiVisible, lastTouch])
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
+  useEffect(() => () => {
+    if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current)
+  }, [])
   useEffect(() => {
     audioRef.current = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3')
     audioRef.current.volume = 1.0
@@ -209,6 +214,20 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   function onDropoffChange(val: string) { setDropoff(val); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
   function selectPickupSuggestion(item: any) { setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setShowPickupSug(false) }
   function selectDropoffSuggestion(item: any) { setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setShowDropoffSug(false); setSheetSnap(90) }
+  function onPickupMapMove(coords: [number, number]) {
+    setPickupCoords(coords)
+    setShowEstimate(false)
+    setDistance(null)
+    setPrice(null)
+    setRoute(undefined)
+    setShowPickupSug(false)
+    if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current)
+    const requestId = ++pickupAddressRequest.current
+    mapAddressTimeout.current = setTimeout(async () => {
+      const address = await reverseOSM(coords)
+      if (requestId === pickupAddressRequest.current) setPickup(address)
+    }, 250)
+  }
   async function ensureCoords() {
     let pCoords = pickupCoords; let dCoords = dropoffCoords
     const findLocal = (name: string) => { if (!name) return null; const l = name.toLowerCase(); return LOCAL_PLACES.find((p:any) => l.includes(p.text.toLowerCase()) || p.text.toLowerCase().includes(l)) }
@@ -271,7 +290,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}`, transform: uiVisible ? 'translateY(0)' : 'translateY(-110%)', transition: 'transform 300ms ease' }}>
-      <PassengerNavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
+      <PassengerNavigationMenu
+        profile={profile}
+        theme={theme}
+        onThemeChange={setTheme}
+        onSignOut={() => { void supabase.auth.signOut() }}
+      />
       <strong>BuddyRide1</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
     </header>
@@ -283,8 +307,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       </div>
     )}
     <div onClick={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
-      <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} availableCars={nearbyCars as any} theme={theme} />
-      {uiVisible && <button onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: isDark? 'white' : 'black', color: isDark? 'black' : 'white', border: 'none', fontSize: '22px' }}>📍</button>}
+      <OsmMapView center={pickupCoords || location} route={route} driverLocation={driverProfile?.current_lat? [driverProfile.current_lng, driverProfile.current_lat] as any : undefined} availableCars={nearbyCars as any} theme={theme} onMapMove={ride ? undefined : onPickupMapMove} />
+      {!ride && <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: 'translate(-50%, -100%)', fontSize: '34px', lineHeight: 1, pointerEvents: 'none', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.35))' }}>📍</div>}
+      {uiVisible && <button aria-label="Center map on my location" title="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', color: 'white', border: 'none', fontSize: '22px' }}>📍</button>}
     </div>
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, transform: uiVisible || !['picked_up', 'en_route', 'in_progress'].includes(rideStatus) ? 'translateY(0)' : 'translateY(calc(100% - 20px))', transition: 'transform 300ms ease' }}>
     <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap}>
