@@ -22,7 +22,7 @@ type StoredDocument = {
   status: string
   expiry_date?: string | null
   rejection_reason?: string | null
-  profiles?: { full_name: string | null, email: string | null } | null
+  profiles?: { full_name: string | null, email: string | null, is_verified?: boolean | null } | null
 }
 
 const PASSENGER_DOCUMENTS = [
@@ -49,8 +49,8 @@ function isExpired(expiryDate?: string | null) {
   return expiry < today
 }
 
-function displayStatus(doc?: StoredDocument) {
-  if (!doc) return 'PENDING'
+function displayStatus(doc?: StoredDocument, optional = false) {
+  if (!doc) return optional ? 'OPTIONAL' : 'MISSING'
   if (doc.status.toLowerCase() === 'expired' || isExpired(doc.expiry_date)) return 'EXPIRED'
   const status = doc.status.toUpperCase()
   return status === 'APPROVED' || status === 'REJECTED' ? status : 'PENDING'
@@ -60,6 +60,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   const [driverDocs,setDriverDocs]=useState<StoredDocument[]>([])
   const [passengerDocs,setPassengerDocs]=useState<StoredDocument[]>([])
   const [tab,setTab]=useState<'driver'|'passenger'>('driver')
+  const [showUnapprovedOnly, setShowUnapprovedOnly] = useState(false)
   const [loadingId, setLoadingId] = useState<string|null>(null)
   const [rejectModal, setRejectModal] = useState<{id:string, table:'driver_documents'|'passenger_documents'}|null>(null)
   const [reason, setReason] = useState('')
@@ -69,7 +70,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function load(){
     setError('')
-    const {data:d, error: driverError}= await supabase.from('driver_documents').select('*, profiles!driver_documents_driver_id_fkey(full_name,email)').order('created_at',{ascending:false})
+    const {data:d, error: driverError}= await supabase.from('driver_documents').select('*, profiles!driver_documents_driver_id_fkey(full_name,email,is_verified)').order('created_at',{ascending:false})
     const {data:p, error: passengerError}= await supabase.from('passenger_documents').select('*, profiles!passenger_documents_passenger_id_fkey(full_name,email)').order('created_at',{ascending:false})
     if(driverError || passengerError) {
       setError(driverError?.message || passengerError?.message || 'Could not load documents.')
@@ -85,15 +86,25 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       const { error: docErr } = await supabase.from(table).update({ status:'approved', rejection_reason: null } as any).eq('id',doc.id)
       if (docErr) throw docErr
 
-      const userId = doc.driver_id || doc.passenger_id
-      if (userId) {
-        const { error: profErr } = await supabase.from('profiles').update({ is_verified: true } as any).eq('id', userId)
-        if (profErr) console.warn('Profile verify failed (non-critical):', profErr.message)
-      }
       await load()
     } catch (e:any) {
       alert('Approve failed: ' + e.message)
       console.error(e)
+    } finally {
+      setLoadingId(null)
+    }
+  }
+
+  async function approveToDrive(driverId: string) {
+    const loadingKey = `approval:${driverId}`
+    setLoadingId(loadingKey)
+    setError('')
+    try {
+      const { error: profileError } = await supabase.from('profiles').update({ is_verified: true } as any).eq('id', driverId)
+      if (profileError) throw profileError
+      await load()
+    } catch (approvalError: any) {
+      setError('Could not approve driver to go online: ' + approvalError.message)
     } finally {
       setLoadingId(null)
     }
@@ -127,11 +138,20 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     table: 'driver_documents'|'passenger_documents',
     required: boolean
   ) {
-    const status = displayStatus(doc)
+    const status = displayStatus(doc, !required)
+    const badgeColors: Record<string, { color: string, background: string }> = {
+      APPROVED: { color:'#86efac', background:'#14532d' },
+      MISSING: { color:'#fca5a5', background:'#7f1d1d' },
+      OPTIONAL: { color:'#d1d5db', background:'#374151' },
+      PENDING: { color:'#fde68a', background:'#713f12' },
+      REJECTED: { color:'#fca5a5', background:'#7f1d1d' },
+      EXPIRED: { color:'#fca5a5', background:'#7f1d1d' },
+    }
+    const badge = badgeColors[status] || badgeColors.PENDING
     return <div key={id} style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', padding:'10px 0', borderTop:'1px solid #333'}}>
       <div style={{minWidth:0}}>
         <strong>{label}</strong>{!required && <span style={{fontSize:'11px', color:'#9ca3af'}}> (Optional)</span>}
-        <div style={{fontSize:'12px', color:status==='APPROVED'?'#00d181':status==='REJECTED'||status==='EXPIRED'?'#ff6b6b':'#ff9500'}}>{status}</div>
+        <span style={{display:'inline-block', marginTop:'4px', padding:'3px 8px', borderRadius:'999px', fontSize:'11px', fontWeight:700, color:badge.color, background:badge.background}}>{status}</span>
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
@@ -153,14 +173,34 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
     {tab==='driver' ? (
       <div>
-        {Object.entries(driverGroups).map(([email, docs]) => {
+        <label style={{display:'flex', alignItems:'center', gap:'8px', margin:'8px 0 12px', color:'#d1d5db', fontSize:'14px'}}>
+          <input type="checkbox" checked={showUnapprovedOnly} onChange={event=>setShowUnapprovedOnly(event.target.checked)} />
+          Show only drivers who are not yet approved
+        </label>
+        {Object.entries(driverGroups).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([email, docs]) => {
           const approvedCount = DRIVER_DOCUMENTS.filter(requirement => {
             const doc = docs.find(item=>item.doc_type===requirement.id)
             return displayStatus(doc)==='APPROVED'
           }).length
+          const requiredDocs = DRIVER_DOCUMENTS.filter(requirement=>requirement.required)
+          const missingRequired = requiredDocs.filter(requirement => {
+            const doc = docs.find(item=>item.doc_type===requirement.id)
+            return displayStatus(doc)!=='APPROVED'
+          })
+          const canApproveToDrive = missingRequired.length===0
+          const prdpApproved = displayStatus(docs.find(item=>item.doc_type==='prdp'))==='APPROVED'
+          const progressColor = !prdpApproved ? '#ef4444' : canApproveToDrive ? '#22c55e' : '#f59e0b'
+          const progressPercent = Math.round(approvedCount / DRIVER_DOCUMENTS.length * 100)
+          const driverId = docs.find(doc=>doc.driver_id)?.driver_id
+          const isApproved = docs[0]?.profiles?.is_verified === true
+          const approvalReason = missingRequired.length
+            ? `Missing approval: ${missingRequired.map(requirement=>requirement.label).join(', ')}`
+            : ''
           return <section key={email} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
-            <h3 style={{margin:'0 0 4px'}}>{email}</h3>
-            <div style={{fontSize:'12px', color:'#9ca3af', marginBottom:'8px'}}>Progress: {approvedCount}/7 approved</div>
+            <h3 style={{margin:'0 0 4px'}}>{email} - {approvedCount}/7 approved ({progressPercent}%)</h3>
+            <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={7} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
+              <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
+            </div>
             {DRIVER_DOCUMENTS.map(requirement => renderDocumentRow(
               docs.find(item=>item.doc_type===requirement.id),
               requirement.id,
@@ -168,9 +208,20 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
               'driver_documents',
               requirement.required
             ))}
+            <div style={{borderTop:'1px solid #333', marginTop:'8px', paddingTop:'12px'}}>
+              <button
+                disabled={!canApproveToDrive || !driverId || loadingId===`approval:${driverId}` || isApproved}
+                onClick={()=>driverId && void approveToDrive(driverId)}
+                style={{width:'100%', padding:'14px', borderRadius:'9px', border:'none', color:'white', fontWeight:700, fontSize:'15px', background:canApproveToDrive?'#15803d':'#4b5563', cursor:canApproveToDrive && !isApproved?'pointer':'not-allowed'}}
+              >
+                {driverId && loadingId===`approval:${driverId}` ? 'Approving…' : isApproved ? 'Approved to Drive' : 'Approve to Drive - Go Online'}
+              </button>
+              {!canApproveToDrive && <div style={{fontSize:'12px', color:'#fca5a5', marginTop:'6px'}}>{approvalReason}</div>}
+              {canApproveToDrive && !isApproved && <div style={{fontSize:'12px', color:'#9ca3af', marginTop:'6px'}}>Huru is optional and may be uploaded within 7 days.</div>}
+            </div>
           </section>
         })}
-        {Object.keys(driverGroups).length===0 && <p style={{color:'#9ca3af'}}>No driver documents uploaded yet.</p>}
+        {Object.entries(driverGroups).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).length===0 && <p style={{color:'#9ca3af'}}>{showUnapprovedOnly?'No unapproved drivers.':'No driver documents uploaded yet.'}</p>}
       </div>
     ) : (
       <div>
