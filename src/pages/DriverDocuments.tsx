@@ -4,9 +4,9 @@ import { supabase } from '../lib/supabase'
 const DRIVER_DOCUMENTS = [
   { id: 'profile_photo', label: 'Profile Photo', icon: '🧑', accept: 'image/*' },
   { id: 'sa_id', label: 'SA ID', icon: '🪪', accept: 'image/*,application/pdf' },
-  { id: 'drivers_license', label: "Driver's License", icon: '🚘', accept: 'image/*,application/pdf' },
+  { id: 'driver_license', label: "Driver's License", icon: '🚘', accept: 'image/*,application/pdf' },
   { id: 'prdp', label: 'PrDP', icon: '📋', accept: 'image/*,application/pdf' },
-  { id: 'vehicle_papers', label: 'Vehicle Papers', icon: '📄', accept: 'image/*,application/pdf' },
+  { id: 'vehicle_registration', label: 'Vehicle Papers', icon: '📄', accept: 'image/*,application/pdf' },
   { id: 'license_disc', label: 'License Disc', icon: '🚗', accept: 'image/*,application/pdf' },
   { id: 'huru_check', label: 'Huru Check - Selfie', icon: '🤳', accept: 'image/*,application/pdf' },
 ] as const

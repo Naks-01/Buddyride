@@ -11,6 +11,15 @@ export const DRIVER_DOCUMENTS = [
   { id: 'huru_check', label: 'Police Clearance / Huru Check', helper: 'Huru criminal check report. Less than 3 months old. If you dont have it, we run Huru for R150 from first trip', accept: '.pdf,.jpg,.jpeg', required: false, graceDays: 7, order: 7 },
 ] as const
 
+const docMap: Record<string, string> = {
+  drivers_license: 'driver_license',
+  vehicle_papers: 'vehicle_registration',
+  driver_license: 'driver_license',
+  vehicle_registration: 'vehicle_registration',
+}
+
+const normalizeDriverDocType = (docType: string) => docMap[docType] || docType
+
 type StoredDocument = {
   id: string
   driver_id?: string
@@ -213,14 +222,18 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           Show only drivers who are not yet approved
         </label>
         {Object.entries(driverGroups).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([email, docs]) => {
-          const approvedCount = docs.filter(doc=>doc.status.toLowerCase()==='approved').length
+          const approvedCount = DRIVER_DOCUMENTS.filter(requirement => docs.some(doc =>
+            normalizeDriverDocType(doc.doc_type)===requirement.id && doc.status.toLowerCase()==='approved'
+          )).length
           const requiredDocs = DRIVER_DOCUMENTS.filter(requirement=>requirement.required)
           const missingRequired = requiredDocs.filter(requirement => {
-            const doc = docs.find(item=>item.doc_type===requirement.id)
+            const matchingDocs = docs.filter(item=>normalizeDriverDocType(item.doc_type)===requirement.id)
+            const doc = matchingDocs.find(item=>item.status.toLowerCase()==='approved') || matchingDocs[0]
             return displayStatus(doc)!=='APPROVED'
           })
           const canApproveToDrive = missingRequired.length===0
-          const prdpApproved = displayStatus(docs.find(item=>item.doc_type==='prdp'))==='APPROVED'
+          const prdpDocs = docs.filter(item=>normalizeDriverDocType(item.doc_type)==='prdp')
+          const prdpApproved = displayStatus(prdpDocs.find(item=>item.status.toLowerCase()==='approved') || prdpDocs[0])==='APPROVED'
           const progressColor = !prdpApproved ? '#ef4444' : canApproveToDrive ? '#22c55e' : '#f59e0b'
           const progressPercent = Math.round(approvedCount / DRIVER_DOCUMENTS.length * 100)
           const driverId = docs.find(doc=>doc.driver_id)?.driver_id
@@ -234,7 +247,8 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
             {DRIVER_DOCUMENTS.map(requirement => renderDocumentRow(
-              docs.find(item=>item.doc_type===requirement.id),
+              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.id && item.status.toLowerCase()==='approved')
+                || docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.id),
               requirement.id,
               requirement.label,
               'driver_documents',
