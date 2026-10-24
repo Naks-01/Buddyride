@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Profile } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import { createDriverDocumentSignedUrl } from '../lib/driverDocuments'
 
 type View =
   | 'main'
   | 'profile'
+  | 'documents'
   | 'trips'
   | 'wallet'
   | 'promos'
@@ -14,6 +17,19 @@ type View =
   | 'about'
 
 type Theme = 'light' | 'dark'
+type PassengerDocumentType = 'profile_photo' | 'sa_id'
+type PassengerDocument = {
+  id: string
+  doc_type: PassengerDocumentType
+  file_url: string
+  status: string
+  rejection_reason?: string | null
+}
+
+const PASSENGER_DOCUMENTS: { type: PassengerDocumentType; label: string; accept: string }[] = [
+  { type: 'profile_photo', label: 'Profile Photo', accept: 'image/*' },
+  { type: 'sa_id', label: 'SA ID or Passport', accept: 'image/*,application/pdf' },
+]
 
 interface Props {
   isOpen?: boolean
@@ -42,6 +58,11 @@ export function PassengerNavigationMenu({
   const [internalTheme, setInternalTheme] = useState<Theme>('light')
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
   const [promoCode, setPromoCode] = useState('')
+  const [passengerDocuments, setPassengerDocuments] = useState<PassengerDocument[]>([])
+  const [documentsLoading, setDocumentsLoading] = useState(false)
+  const [uploadingDocument, setUploadingDocument] = useState<PassengerDocumentType | null>(null)
+  const [documentsError, setDocumentsError] = useState('')
+  const [documentsNotice, setDocumentsNotice] = useState('')
 
   const isControlled = propIsOpen !== undefined
   const isOpen = isControlled ? propIsOpen : internalOpen
@@ -91,6 +112,98 @@ export function PassengerNavigationMenu({
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [isOpen])
+
+  useEffect(() => {
+    if (view !== 'documents' || !profile?.id) return
+    let active = true
+    const loadDocuments = async () => {
+      setDocumentsLoading(true)
+      setDocumentsError('')
+      try {
+        const { data, error } = await supabase
+          .from('passenger_documents')
+          .select('id,doc_type,file_url,status,rejection_reason')
+          .eq('passenger_id', profile.id)
+          .in('doc_type', PASSENGER_DOCUMENTS.map(document => document.type))
+        if (!active) return
+        if (error) {
+          setDocumentsError(`Could not load your documents: ${error.message}`)
+          return
+        }
+        setPassengerDocuments((data || []) as PassengerDocument[])
+      } catch (loadError: unknown) {
+        if (active) {
+          const message = loadError instanceof Error ? loadError.message : String(loadError)
+          setDocumentsError(`Could not load your documents: ${message}`)
+        }
+      } finally {
+        if (active) setDocumentsLoading(false)
+      }
+    }
+    void loadDocuments()
+    return () => { active = false }
+  }, [view, profile?.id])
+
+  const uploadPassengerDocument = async (type: PassengerDocumentType, file: File) => {
+    if (!profile?.id) {
+      setDocumentsError('Sign in again before uploading documents.')
+      return
+    }
+
+    setUploadingDocument(type)
+    setDocumentsError('')
+    setDocumentsNotice('')
+    const extension = file.name.split('.').pop()?.toLowerCase() || (file.type === 'application/pdf' ? 'pdf' : 'jpg')
+    const objectPath = `${profile.id}/passenger/${type}-${Date.now()}.${extension}`
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from('driver-documents')
+        .upload(objectPath, file, { contentType: file.type, upsert: false })
+      if (uploadError) throw uploadError
+
+      const { data, error: saveError } = await supabase
+        .from('passenger_documents')
+        .upsert({
+          passenger_id: profile.id,
+          doc_type: type,
+          file_url: objectPath,
+          status: 'pending',
+        } as any, { onConflict: 'passenger_id,doc_type' })
+        .select('id,doc_type,file_url,status,rejection_reason')
+        .single()
+      if (saveError) {
+        const { error: cleanupError } = await supabase.storage.from('driver-documents').remove([objectPath])
+        if (cleanupError) {
+          throw new Error(`${saveError.message}. Uploaded file cleanup failed: ${cleanupError.message}`)
+        }
+        throw saveError
+      }
+
+      setPassengerDocuments(previous => [
+        ...previous.filter(document => document.doc_type !== type),
+        data as PassengerDocument,
+      ])
+      setDocumentsNotice('Submitted — waiting for admin approval.')
+    } catch (uploadError: unknown) {
+      const message = uploadError instanceof Error ? uploadError.message : String(uploadError)
+      setDocumentsError(`Upload failed: ${message}`)
+    } finally {
+      setUploadingDocument(null)
+    }
+  }
+
+  const viewPassengerDocument = async (fileUrl: string) => {
+    const newWindow = window.open('about:blank', '_blank')
+    try {
+      const signedUrl = await createDriverDocumentSignedUrl(fileUrl)
+      if (newWindow) newWindow.location.href = signedUrl
+      else window.location.href = signedUrl
+    } catch (viewError: unknown) {
+      newWindow?.close()
+      const message = viewError instanceof Error ? viewError.message : String(viewError)
+      setDocumentsError(`Could not open document: ${message}`)
+    }
+  }
 
   const itemStyle = {
     width: '100%',
@@ -187,6 +300,96 @@ export function PassengerNavigationMenu({
 
   const renderView = () => {
     switch (view) {
+      case 'documents':
+        return (
+          <>
+            {backButton}
+            <h2 style={{ margin: '0 0 8px', fontSize: 24 }}>Documents</h2>
+            <p style={{ color: muted, lineHeight: 1.5, marginTop: 0 }}>
+              Upload your profile photo and SA ID or passport for verification.
+            </p>
+            {documentsLoading && <p style={{ color: muted }}>Loading document status…</p>}
+            {documentsError && <p role="alert" style={{ color: danger, fontSize: 14 }}>{documentsError}</p>}
+            {documentsNotice && <p role="status" style={{ color: success, fontSize: 14 }}>{documentsNotice}</p>}
+            <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>
+              {PASSENGER_DOCUMENTS.map(({ type, label, accept }) => {
+                const document = passengerDocuments.find(item => item.doc_type === type)
+                const status = document?.status?.toLowerCase() === 'approved'
+                  ? 'Approved'
+                  : document?.status?.toLowerCase() === 'rejected'
+                    ? 'Rejected'
+                    : document
+                      ? 'Pending'
+                      : 'Missing'
+                const badgeColor = status === 'Approved'
+                  ? (isDark ? '#4ade80' : '#16834f')
+                  : status === 'Rejected'
+                    ? danger
+                    : status === 'Pending'
+                      ? (isDark ? '#93c5fd' : '#1d4ed8')
+                      : (isDark ? '#fcd34d' : '#92400e')
+                const badgeBackground = status === 'Approved'
+                  ? (isDark ? '#14532d' : '#dcfce7')
+                  : status === 'Rejected'
+                    ? (isDark ? '#7f1d1d' : '#fee2e2')
+                    : status === 'Pending'
+                      ? (isDark ? '#1e3a8a' : '#dbeafe')
+                      : (isDark ? '#713f12' : '#fef3c7')
+                return (
+                  <div key={type} style={{ padding: 14, borderRadius: 14, background: soft, border: `1px solid ${border}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                      <strong>{label}</strong>
+                      <span style={{ flexShrink: 0, padding: '4px 9px', borderRadius: 999, color: badgeColor, background: badgeBackground, fontSize: 12, fontWeight: 700 }}>
+                        {status}
+                      </span>
+                    </div>
+                    {document?.rejection_reason && (
+                      <p style={{ margin: '8px 0 0', color: danger, fontSize: 13 }}>Reason: {document.rejection_reason}</p>
+                    )}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                      {document && status !== 'Missing' && (
+                        <button
+                          type="button"
+                          onClick={() => void viewPassengerDocument(document.file_url)}
+                          style={{ flex: 1, background: soft, color: ink, border: `1px solid ${border}` }}
+                        >
+                          View
+                        </button>
+                      )}
+                      {status !== 'Approved' && (
+                        <label style={{
+                          flex: 1,
+                          display: 'grid',
+                          placeItems: 'center',
+                          minHeight: 44,
+                          margin: 0,
+                          padding: '10px 14px',
+                          borderRadius: 12,
+                          background: isDark ? '#f8fafc' : '#111827',
+                          color: isDark ? '#111827' : '#ffffff',
+                          cursor: uploadingDocument === type ? 'wait' : 'pointer',
+                        }}>
+                          {uploadingDocument === type ? 'Uploading…' : status === 'Rejected' ? 'Re-upload' : 'Upload'}
+                          <input
+                            type="file"
+                            accept={accept}
+                            disabled={uploadingDocument !== null}
+                            onChange={event => {
+                              const file = event.target.files?.[0]
+                              if (file) void uploadPassengerDocument(type, file)
+                              event.currentTarget.value = ''
+                            }}
+                            style={{ display: 'none' }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )
       case 'profile':
         return (
           <>
@@ -427,6 +630,7 @@ export function PassengerNavigationMenu({
 
             <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 20px 20px' }}>
               {menuItem('👤', 'Manage Account / Profile', 'profile')}
+              {menuItem('📄', 'Documents', 'documents')}
               {menuItem('🕘', 'My Trips / Ride History', 'trips')}
               {menuItem('💳', 'Wallet / Payment', 'wallet')}
               {menuItem('🎟️', 'Promotions / Promo Code', 'promos')}
