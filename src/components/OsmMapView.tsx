@@ -68,34 +68,50 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     }
   }, [center])
 
-  // BLUE LINE - guides driver like Google Maps
+  // Passenger route line
   useEffect(() => {
-    if (!mapRef.current) return
+    const map = mapRef.current
+    if (!map) return
 
     if (!route) {
-      if (routeLineRef.current) {
-        mapRef.current.removeLayer(routeLineRef.current)
-        routeLineRef.current = null
-      }
+      if (routeLineRef.current) map.removeLayer(routeLineRef.current)
+      routeLineRef.current = null
       return
     }
 
-    const coords = route.type === 'Feature'? route.geometry.coordinates : route.coordinates
-    const latLngs = coords.map((c: any) => [c[1], c[0]])
+    const geometry = route.type === 'Feature' ? route.geometry : route
+    const coordinates = geometry?.coordinates
+    const latLngs = Array.isArray(coordinates)
+      ? coordinates
+          .filter((coordinate: unknown) =>
+            Array.isArray(coordinate) &&
+            coordinate.length >= 2 &&
+            Number.isFinite(coordinate[0]) &&
+            Number.isFinite(coordinate[1]),
+          )
+          .map((coordinate: [number, number]) => [coordinate[1], coordinate[0]] as [number, number])
+      : []
 
-    if (routeLineRef.current) {
-      routeLineRef.current.setLatLngs(latLngs)
-    } else {
-      // Blue line - Google Maps style
-      routeLineRef.current = L.polyline(latLngs, { 
+    if (latLngs.length < 2) {
+      if (routeLineRef.current) map.removeLayer(routeLineRef.current)
+      routeLineRef.current = null
+      return
+    }
+
+    if (!routeLineRef.current) {
+      routeLineRef.current = L.polyline(latLngs, {
         color: '#2962FF', 
         weight: 7, 
         opacity: 1,
         lineJoin: 'round',
         lineCap: 'round'
-      }).addTo(mapRef.current)
-      mapRef.current.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50] })
+      }).addTo(map)
+    } else {
+      routeLineRef.current.setLatLngs(latLngs)
     }
+
+    routeLineRef.current.bringToFront()
+    map.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50], maxZoom: 16 })
   }, [route])
 
   // driver marker - follows like Google Maps
