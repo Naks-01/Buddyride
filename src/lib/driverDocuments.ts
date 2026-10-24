@@ -1,3 +1,5 @@
+import { supabase } from './supabase'
+
 export const REQUIRED_DOCS = [
   { label: 'Profile Photo', type: 'profile_photo' },
   { label: 'SA ID', type: 'sa_id' },
@@ -30,4 +32,22 @@ const docMap: Record<string, string> = {
 
 export function normalizeDriverDocType(docType: string) {
   return docMap[docType] || docType
+}
+
+export async function createDriverDocumentSignedUrl(fileUrlOrPath: string) {
+  const bucketMarker = '/driver-documents/'
+  let objectPath = fileUrlOrPath
+
+  if (/^https?:\/\//i.test(fileUrlOrPath)) {
+    const parsedUrl = new URL(fileUrlOrPath)
+    const markerIndex = parsedUrl.pathname.indexOf(bucketMarker)
+    if (markerIndex < 0) return fileUrlOrPath
+    objectPath = decodeURIComponent(parsedUrl.pathname.slice(markerIndex + bucketMarker.length))
+  }
+
+  const { data, error } = await supabase.storage
+    .from('driver-documents')
+    .createSignedUrl(objectPath, 60)
+  if (error) throw error
+  return data.signedUrl
 }

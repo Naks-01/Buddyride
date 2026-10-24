@@ -146,6 +146,45 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute procedure public.handle_new_user();
 
+-- Driver identity documents stay private; users can access only their own folder.
+insert into storage.buckets (id, name, public)
+values ('driver-documents', 'driver-documents', false)
+on conflict (id) do update set public = false;
+
+drop policy if exists "driver_documents_storage_select" on storage.objects;
+create policy "driver_documents_storage_select" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'driver-documents'
+  and (
+    (storage.foldername(name))[1] = auth.uid()::text
+    or exists (
+      select 1 from public.profiles
+      where profiles.id = auth.uid() and profiles.role = 'admin'
+    )
+  )
+);
+
+drop policy if exists "driver_documents_storage_insert" on storage.objects;
+create policy "driver_documents_storage_insert" on storage.objects
+for insert to authenticated
+with check (
+  bucket_id = 'driver-documents'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "driver_documents_storage_update" on storage.objects;
+create policy "driver_documents_storage_update" on storage.objects
+for update to authenticated
+using (
+  bucket_id = 'driver-documents'
+  and (storage.foldername(name))[1] = auth.uid()::text
+)
+with check (
+  bucket_id = 'driver-documents'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
 -- IMPORTANT:
 -- For production, move fare calculation and driver assignment into trusted
 -- Edge Functions/RPCs so clients cannot manipulate fare/commission values.

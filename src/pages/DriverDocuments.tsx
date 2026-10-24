@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
+import { createDriverDocumentSignedUrl, REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
 type StoredDocument = {
   id: string
@@ -58,11 +58,10 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         })
       if (uploadError) throw uploadError
 
-      const { data: urlData } = supabase.storage.from('driver-documents').getPublicUrl(path)
       const { error: dbError } = await supabase.from('driver_documents').upsert({
         driver_id: driverId,
         doc_type: docType,
-        file_url: urlData.publicUrl,
+        file_url: path,
         status: 'pending',
         rejection_reason: null,
       }, { onConflict: 'driver_id,doc_type' })
@@ -75,6 +74,19 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       setError(`Upload failed: ${message}`)
     } finally {
       setUploading(null)
+    }
+  }
+
+  async function viewDocument(fileUrl: string) {
+    const newWindow = window.open('about:blank', '_blank')
+    try {
+      const signedUrl = await createDriverDocumentSignedUrl(fileUrl)
+      if (newWindow) newWindow.location.href = signedUrl
+      else window.location.href = signedUrl
+    } catch (viewError: unknown) {
+      newWindow?.close()
+      const message = viewError instanceof Error ? viewError.message : String(viewError)
+      setError(`Could not open document: ${message}`)
     }
   }
 
@@ -141,14 +153,13 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
               )}
             </div>
             {doc && status !== 'rejected' ? (
-              <a
-                href={doc?.file_url}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                onClick={() => void viewDocument(doc.file_url)}
                 style={{ flexShrink: 0, color: 'white', background: '#374151', padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: 'none' }}
               >
                 View
-              </a>
+              </button>
             ) : (
               <label style={{ flexShrink: 0, color: 'white', background: uploading === requirement.type ? '#555' : '#00a86b', padding: '8px 12px', borderRadius: 8, fontSize: 12, cursor: uploading === requirement.type ? 'wait' : 'pointer', fontWeight: 700 }}>
                 {uploading === requirement.type ? 'Uploading…' : action}

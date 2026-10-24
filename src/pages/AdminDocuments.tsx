@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
-import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
+import { createDriverDocumentSignedUrl, REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
 export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
   id: document.type,
@@ -74,6 +74,19 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   const [rejectModal, setRejectModal] = useState<{id:string, table:'driver_documents'|'passenger_documents'}|null>(null)
   const [reason, setReason] = useState('')
   const [error, setError] = useState('')
+
+  async function viewDriverDocument(fileUrl: string) {
+    const newWindow = window.open('about:blank', '_blank')
+    try {
+      const signedUrl = await createDriverDocumentSignedUrl(fileUrl)
+      if (newWindow) newWindow.location.href = signedUrl
+      else window.location.href = signedUrl
+    } catch (viewError: unknown) {
+      newWindow?.close()
+      const message = viewError instanceof Error ? viewError.message : String(viewError)
+      setError(`Could not open document: ${message}`)
+    }
+  }
 
   useEffect(()=>{ void load() },[])
 
@@ -199,7 +212,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
-        <button disabled={!doc} onClick={()=>doc && window.open(doc.file_url,'_blank')} style={{background:'#333', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>View Doc</button>
+        <button disabled={!doc} onClick={()=>doc && void viewDriverDocument(doc.file_url)} style={{background:'#333', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>View Doc</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,table})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>
