@@ -50,6 +50,12 @@ type DriverRide = {
   status: string | null
 }
 
+type DriverStatRide = {
+  status: string | null
+  driver_rating: number | string | null
+  cancelled_by: string | null
+}
+
 type DriverDocument = {
   doc_type: string
   status: string
@@ -75,16 +81,31 @@ export function NavigationMenu({
   const [driverDocuments, setDriverDocuments] = useState<DriverDocument[]>([])
   const [documentsLoading, setDocumentsLoading] = useState(false)
   const [documentsError, setDocumentsError] = useState('')
-  const acceptanceRate = 70
-  const cancellationRate = 2.5
-  const driverScore = 89
-  const rating = 4.70
+  const [driverStatRides, setDriverStatRides] = useState<DriverStatRide[]>([])
+  const [driverStatRating, setDriverStatRating] = useState<number | null>(null)
+  const [driverStatsLoading, setDriverStatsLoading] = useState(false)
+  const [driverStatsError, setDriverStatsError] = useState('')
 
   const isControlled = propIsOpen !== undefined
   const isOpen = isControlled ? propIsOpen : internalOpen
   const userName = propName || profile?.full_name || 'Driver'
   const phone = propPhone || profile?.phone || 'Phone number not available'
   const balance = Number(profile?.wallet_balance || 0)
+  const totalTrips = driverStatRides.length
+  const acceptedTrips = driverStatRides.filter((trip) => ['completed', 'accepted', 'in_progress'].includes(trip.status || '')).length
+  const cancelledByDriver = driverStatRides.filter((trip) =>
+    trip.status === 'cancelled_by_driver' || (trip.status === 'cancelled' && trip.cancelled_by === 'driver'),
+  ).length
+  const rating = driverStatRating !== null
+    ? driverStatRating.toFixed(2)
+    : profile?.rating != null
+      ? Number(profile.rating).toFixed(2)
+      : '4.70'
+  const acceptanceRate = totalTrips > 0 ? Math.round((acceptedTrips / totalTrips) * 100) : 70
+  const cancellationRate = totalTrips > 0 ? ((cancelledByDriver / totalTrips) * 100).toFixed(1) : '0.0'
+  const driverScore = totalTrips > 0
+    ? Math.round((Number(rating) * 20 * 0.4) + (acceptanceRate * 0.3) + ((100 - Number(cancellationRate)) * 0.3))
+    : 89
   const completedRides = rides.filter((ride) => ['completed', 'rated'].includes(ride.status || ''))
   const earningsFor = (ride: DriverRide) => Number(ride.driver_earnings ?? Number(ride.fare || 0) * 0.8)
   const today = new Date()
@@ -133,6 +154,44 @@ export function NavigationMenu({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen || !profile?.id) return
+
+    let active = true
+    setDriverStatsLoading(true)
+    setDriverStatsError('')
+    void Promise.all([
+      supabase.from('rides').select('*').eq('driver_id', profile.id),
+      supabase.from('profiles').select('rating').eq('id', profile.id).single(),
+    ]).then(([ridesResult, profileResult]) => {
+      if (!active) return
+      if (ridesResult.error) {
+        setDriverStatsError(`Could not load trip stats: ${ridesResult.error.message}`)
+        setDriverStatRides([])
+      } else {
+        setDriverStatRides((ridesResult.data || []) as DriverStatRide[])
+      }
+      if (profileResult.error) {
+        setDriverStatsError((current) => current
+          ? `${current} Could not load profile rating: ${profileResult.error.message}`
+          : `Could not load profile rating: ${profileResult.error.message}`)
+        setDriverStatRating(null)
+      } else {
+        const value = profileResult.data?.rating
+        setDriverStatRating(value == null ? null : Number(value))
+      }
+      setDriverStatsLoading(false)
+    }).catch((error: unknown) => {
+      if (!active) return
+      setDriverStatsError(`Could not load driver stats: ${error instanceof Error ? error.message : String(error)}`)
+      setDriverStatsLoading(false)
+    })
+
+    return () => {
+      active = false
+    }
+  }, [isOpen, profile?.id])
 
   useEffect(() => {
     if (!isOpen || !profile?.id || !['trips', 'earnings'].includes(view)) return
@@ -604,7 +663,7 @@ export function NavigationMenu({
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 18 }}>
                 {[
                   { key: 'score' as const, icon: '↗️', value: `${driverScore}%`, label: 'Driver Score' },
-                  { key: 'rating' as const, icon: '⭐', value: rating.toFixed(2), label: 'Rating' },
+                  { key: 'rating' as const, icon: '⭐', value: rating, label: 'Rating' },
                   { key: 'accept' as const, icon: '%', value: `${acceptanceRate}%`, label: 'Acceptance' },
                   { key: 'cancel' as const, icon: '×', value: `${cancellationRate}%`, label: 'Cancellation' },
                 ].map(({ key, icon, value, label }) => (
@@ -676,12 +735,14 @@ export function NavigationMenu({
               {openStat === 'cancel' && 'Cancellation'}
             </h2>
             <p style={{ margin: '0 0 18px', color: '#d0d6e8' }}>
-              {openStat === 'score' && `${driverScore}%`}
-              {openStat === 'rating' && rating.toFixed(2)}
-              {openStat === 'accept' && `${acceptanceRate}%`}
-              {openStat === 'cancel' && `${cancellationRate}%`}
+                {openStat === 'score' && `${driverScore}% Driver Score — Rating ${rating} (40%) + Acceptance ${acceptanceRate}% (30%) + Non-cancel ${100 - Number(cancellationRate)}% (30%)`}
+                {openStat === 'rating' && `${rating} Rating — Based on ${totalTrips} trips`}
+                {openStat === 'accept' && `${acceptanceRate}% Acceptance — Accepted ${acceptedTrips} of ${totalTrips} trips`}
+                {openStat === 'cancel' && `${cancellationRate}% Cancellation — Cancelled ${cancelledByDriver} of ${totalTrips} trips; keep below 5%`}
             </p>
-            <button type="button" onClick={() => setOpenStat(null)} style={{ ...cardStyle, justifyContent: 'center' }}>Close</button>
+              {driverStatsLoading && <p style={{ margin: '0 0 12px', color: '#d0d6e8' }}>Refreshing stats…</p>}
+              {driverStatsError && <p role="alert" style={{ margin: '0 0 12px', color: '#ffc7cb' }}>{driverStatsError}</p>}
+              <button type="button" onClick={() => setOpenStat(null)} style={{ ...cardStyle, justifyContent: 'center' }}>Close</button>
           </section>
         </div>
       )}
