@@ -296,7 +296,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         onThemeChange={setTheme}
         onSignOut={() => { void supabase.auth.signOut() }}
       />
-      <strong>BuddyRide1</strong>
+      <strong>BuddyRide</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
     </header>
     {cancelledNotification && (
@@ -312,7 +312,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       {uiVisible && <button aria-label="Center map on my location" title="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', color: 'white', border: 'none', fontSize: '22px' }}>📍</button>}
     </div>
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, transform: uiVisible || !['picked_up', 'en_route', 'in_progress'].includes(rideStatus) ? 'translateY(0)' : 'translateY(calc(100% - 20px))', transition: 'transform 300ms ease' }}>
-    <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap}>
+    <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
         {!ride && (<>
           <h2 style={{ margin: '0 0 12px' }}>Where are you going?</h2>
           {!isVerified && (
@@ -335,12 +335,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
               {CATEGORIES.map(cat => {
                 const fare = distance? calcFareForCategory(cat.id, distance) : null; const isSel = selectedCat === cat.id
-                return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); if (distance) setPrice(calcFareForCategory(cat.id, distance)) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, textAlign: 'left' }}><div style={{ fontSize: '20px' }}>{cat.icon}</div><div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>{fare && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px' }}>R {fare}</div>}</button>
+                return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); if (distance) setPrice(calcFareForCategory(cat.id, distance)) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, color: text, textAlign: 'left' }}><div style={{ fontSize: '20px' }}>{cat.icon}</div><div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>{fare && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px' }}>R {fare}</div>}</button>
               })}
             </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={calculateEstimate} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={requestRide} disabled={loading ||!isVerified} style={{ flex: 1.5, padding: '14px', borderRadius: '14px', border: 'none', background:!isVerified? '#555' : '#000', color: 'white', fontWeight: 'bold', opacity:!isVerified? 0.6 : 1 }}>
+            <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: `10px 0 calc(10px + env(safe-area-inset-bottom))`, background: bg, borderTop: `1px solid ${border}` }}>
+              <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '52px', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
+              <button onClick={requestRide} disabled={loading ||!isVerified} style={{ flex: 1.5, minHeight: '52px', padding: '14px', borderRadius: '14px', border: 'none', background:!isVerified? '#555' : '#000', color: 'white', fontWeight: 'bold', opacity:!isVerified? 0.6 : 1 }}>
                 {!isVerified? 'Pending Approval' : loading? 'Finding...' : 'Confirm Ride'}
               </button>
             </div>

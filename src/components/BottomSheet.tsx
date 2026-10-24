@@ -6,13 +6,20 @@ type BottomSheetProps = {
   children: ReactNode
   snapPoint: BottomSheetSnapPoint
   onSnapChange: (snapPoint: BottomSheetSnapPoint) => void
+  theme?: 'dark' | 'light'
+  fitToSnap?: boolean
 }
 
 const SNAP_POINTS: BottomSheetSnapPoint[] = [25, 50, 80, 90]
 
-export function BottomSheet({ children, snapPoint, onSnapChange }: BottomSheetProps) {
+export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark', fitToSnap = false }: BottomSheetProps) {
   const [dragHeight, setDragHeight] = useState<number | null>(null)
   const dragStartRef = useRef<{ y: number; height: number } | null>(null)
+  const isDark = theme === 'dark'
+  const surface = isDark ? '#121212' : '#ffffff'
+  const text = isDark ? '#ffffff' : '#000000'
+  const border = isDark ? '#383838' : '#e5e5e5'
+  const handle = isDark ? '#666666' : '#c7c7c7'
 
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     dragStartRef.current = {
@@ -51,32 +58,35 @@ export function BottomSheet({ children, snapPoint, onSnapChange }: BottomSheetPr
 
   return (
     <section
-      className="uber-bottom-sheet"
+      className={`uber-bottom-sheet uber-bottom-sheet--${theme}`}
       style={{
         position: 'absolute',
         inset: 'auto 0 0',
         zIndex: 60,
-        height: '90dvh',
-        transform: `translateY(${translateY}dvh)`,
+        height: fitToSnap ? `${height}dvh` : '90dvh',
+        transform: fitToSnap ? 'none' : `translateY(${translateY}dvh)`,
         overflowY: 'auto',
         overscrollBehavior: 'contain',
-        background: 'rgba(28,28,30,.96)',
-        color: '#F5F5F7',
+        background: surface,
+        color: text,
+        border: `1px solid ${border}`,
         borderRadius: '28px 28px 0 0',
-        boxShadow: '0 -8px 32px rgba(0,0,0,.4)',
+        boxShadow: isDark ? '0 -8px 32px rgba(0,0,0,.4)' : '0 -8px 32px rgba(0,0,0,.12)',
         backdropFilter: 'blur(24px)',
-        transition: dragHeight === null ? 'transform 400ms cubic-bezier(.32,.72,0,1)' : 'none',
+        transition: dragHeight === null
+          ? `${fitToSnap ? 'height' : 'transform'} 400ms cubic-bezier(.32,.72,0,1)`
+          : 'none',
         touchAction: 'pan-y',
       }}
     >
       <style>{`
-        .uber-bottom-sheet { color: #F5F5F7 !important; }
-        .uber-bottom-sheet * { color: #F5F5F7 !important; }
-        .uber-bottom-sheet .ride-card, .uber-bottom-sheet .ride-status,
-        .uber-bottom-sheet .fare-card { background: #2C2C2E !important; border-color: #3A3A3C !important; }
-        .uber-bottom-sheet input { color: #F5F5F7 !important; background: #2C2C2E !important; border: 0 !important; }
         .uber-bottom-sheet button { border-radius: 14px; }
-        .uber-bottom-sheet-handle { width: 40px; height: 5px; border-radius: 999px; background: #3A3A3C; margin: 0 auto; }
+        .uber-bottom-sheet--dark .ride-card,
+        .uber-bottom-sheet--dark .ride-status,
+        .uber-bottom-sheet--dark .fare-card {
+          background: #2c2c2e !important;
+          border-color: #3a3a3c !important;
+        }
       `}</style>
       <div
         aria-label="Resize ride details"
@@ -103,13 +113,13 @@ export function BottomSheet({ children, snapPoint, onSnapChange }: BottomSheetPr
           alignItems: 'center',
           justifyContent: 'center',
           cursor: 'grab',
-          background: '#1C1C1E',
+          background: surface,
           touchAction: 'none',
         }}
       >
-        <div className="uber-bottom-sheet-handle" />
+        <div className="uber-bottom-sheet-handle" style={{ width: 40, height: 5, borderRadius: 999, background: handle }} />
       </div>
-      <div style={{ padding: '8px 16px 24px' }}>{children}</div>
+      <div style={{ padding: '8px 16px calc(24px + env(safe-area-inset-bottom))' }}>{children}</div>
     </section>
   )
 }
