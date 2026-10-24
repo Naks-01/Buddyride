@@ -63,6 +63,7 @@ export function NavigationMenu({
   userName: propName,
   phone: propPhone,
 }: Props) {
+  const [openStat, setOpenStat] = useState<'score' | 'rating' | 'accept' | 'cancel' | null>(null)
   const [internalOpen, setInternalOpen] = useState(false)
   const [view, setView] = useState<View>('main')
   const [defaultNavigation, setDefaultNavigation] = useState('BuddyRide Navigation')
@@ -74,6 +75,10 @@ export function NavigationMenu({
   const [driverDocuments, setDriverDocuments] = useState<DriverDocument[]>([])
   const [documentsLoading, setDocumentsLoading] = useState(false)
   const [documentsError, setDocumentsError] = useState('')
+  const acceptanceRate = 70
+  const cancellationRate = 2.5
+  const driverScore = 89
+  const rating = 4.70
 
   const isControlled = propIsOpen !== undefined
   const isOpen = isControlled ? propIsOpen : internalOpen
@@ -596,13 +601,14 @@ export function NavigationMenu({
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginTop: 18 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 18 }}>
                 {[
-                  ['↗️', '89%', 'Driver Score'],
-                  ['⭐', '4.70', 'Rating'],
-                  ['%', '70%', 'Acceptance'],
-                ].map(([icon, value, label]) => (
-                  <div key={label} style={{ background: cardBackground, borderRadius: 12, padding: '11px 5px', textAlign: 'center' }}>
+                  { key: 'score' as const, icon: '↗️', value: `${driverScore}%`, label: 'Driver Score' },
+                  { key: 'rating' as const, icon: '⭐', value: rating.toFixed(2), label: 'Rating' },
+                  { key: 'accept' as const, icon: '%', value: `${acceptanceRate}%`, label: 'Acceptance' },
+                  { key: 'cancel' as const, icon: '×', value: `${cancellationRate}%`, label: 'Cancellation' },
+                ].map(({ key, icon, value, label }) => (
+                  <div key={label} onClick={() => setOpenStat(key)} style={{ background: cardBackground, borderRadius: 12, padding: '11px 5px', textAlign: 'center', cursor: 'pointer' }}>
                     <div style={{ color: teal, fontSize: 17 }}>{icon}</div>
                     <div style={{ fontWeight: 800, fontSize: 18, marginTop: 3 }}>{value}</div>
                     <div style={{ fontSize: 10, color: muted, marginTop: 3 }}>{label}</div>
@@ -654,6 +660,30 @@ export function NavigationMenu({
           </aside>
         </div>,
         document.body,
+      )}
+      {openStat && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="driver-stat-title"
+          style={{ position: 'fixed', inset: 0, zIndex: 100001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(0,0,0,0.65)', color: 'white' }}
+        >
+          <section style={{ width: 'min(360px, 100%)', padding: 20, borderRadius: 16, background: '#151a28' }}>
+            <h2 id="driver-stat-title" style={{ margin: '0 0 12px', fontSize: 18 }}>
+              {openStat === 'score' && 'Driver Score'}
+              {openStat === 'rating' && 'Rating'}
+              {openStat === 'accept' && 'Acceptance'}
+              {openStat === 'cancel' && 'Cancellation'}
+            </h2>
+            <p style={{ margin: '0 0 18px', color: '#d0d6e8' }}>
+              {openStat === 'score' && `${driverScore}%`}
+              {openStat === 'rating' && rating.toFixed(2)}
+              {openStat === 'accept' && `${acceptanceRate}%`}
+              {openStat === 'cancel' && `${cancellationRate}%`}
+            </p>
+            <button type="button" onClick={() => setOpenStat(null)} style={{ ...cardStyle, justifyContent: 'center' }}>Close</button>
+          </section>
+        </div>
       )}
     </>
   )
