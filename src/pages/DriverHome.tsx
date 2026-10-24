@@ -3,11 +3,11 @@ import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomShee
 import { MapboxMapView } from '../components/MapboxMapView'
 import { NavigationMenu } from '../components/NavigationMenu'
 import { RideChat } from '../components/RideChat'
+import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 import { getRoute } from '../lib/mapbox'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
-const REQUIRED_DOCS = ['id','license','pdp','car_papers','disc','selfie','huru'] as const
 const TEST_DRIVER_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgafaka.nt@gmail.com', 'testdriver@buddyride.co.za', 'TestDriver@buddyride.co.za', 'test@buddyride.co.za']
 
 const COMMISSION = 0.20
@@ -197,13 +197,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
     })
   }, [profile.id])
   useEffect(() => {
-    if (isTestDriver) { setDocStatus('approved'); setApprovedDocs([...REQUIRED_DOCS]); return }
+    if (isTestDriver) { setDocStatus('approved'); setApprovedDocs(REQUIRED_DOCS.map(doc => doc.type)); return }
     async function checkDocs() {
       const { data } = await supabase.from('driver_documents').select('doc_type,status').eq('driver_id', profile.id)
       if (!data || data.length === 0) { setDocStatus('missing'); setApprovedDocs([]); return }
-      const approved = data.filter((d:any) => d.status === 'approved').map((d:any)=>d.doc_type)
+      const approved = data.filter((d:any) => d.status === 'approved').map((d:any)=>normalizeDriverDocType(d.doc_type))
       setApprovedDocs(approved)
-      const hasAll = REQUIRED_DOCS.every(r => approved.includes(r))
+      const hasAll = REQUIRED_DOCS.every(r => approved.includes(r.type))
       if (hasAll) setDocStatus('approved'); else setDocStatus('pending')
     }
     checkDocs()
@@ -357,7 +357,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     return () => clearInterval(interval)
   }, [ride?.id, ride?.status, location, isNavigating])
   async function toggleOnline() {
-    if (!isTestDriver && docStatus!== 'approved') { alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d)).join(', ')}`); return }
+    if (!isTestDriver && docStatus!== 'approved') { alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d.type)).map(doc=>doc.label).join(', ')}`); return }
     const next =!isOnline; setIsOnline(next)
     await supabase.from('profiles').update({ is_online: next } as any).eq('id', profile.id)
     try {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { CANONICAL_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
+import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
 type StoredDocument = {
   id: string
@@ -48,12 +48,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     setError('')
     setToast('')
     try {
-      const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg'
-      const path = `${driverId}/${docType}-${Date.now()}`
+      const path = `${driverId}/${docType}.jpg`
       const { error: uploadError } = await supabase.storage
         .from('driver-documents')
         .upload(path, file, {
-          upsert: false,
+          upsert: true,
           contentType: file.type || 'application/octet-stream',
           cacheControl: '3600',
         })
@@ -79,8 +78,8 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     }
   }
 
-  const approvedCount = CANONICAL_DOCS.filter((requirement) => docs.some((doc) =>
-    normalizeDriverDocType(doc.doc_type) === requirement.doc_type && doc.status.toLowerCase() === 'approved',
+  const approvedCount = REQUIRED_DOCS.filter((requirement) => docs.some((doc) =>
+    normalizeDriverDocType(doc.doc_type) === requirement.type && doc.status.toLowerCase() === 'approved',
   )).length
 
   return (
@@ -89,15 +88,15 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         ← Back
       </button>
       <h2 style={{ margin: '0 0 4px' }}>My Documents</h2>
-      <p style={{ color: '#9ca3af', marginTop: 6 }}>Profile progress: {approvedCount}/7 approved</p>
+      <p style={{ color: '#9ca3af', marginTop: 6 }}>Your 7 driver verification documents. {approvedCount}/7 Approved</p>
       {error && <p role="alert" style={{ color: '#fca5a5' }}>{error}</p>}
       {toast && <p role="status" style={{ color: '#86efac' }}>{toast}</p>}
       {loading && <p style={{ color: '#9ca3af' }}>Loading documents…</p>}
 
-      {CANONICAL_DOCS.map((requirement) => {
-        const matchingDocs = docs.filter((item) => normalizeDriverDocType(item.doc_type) === requirement.doc_type)
+      {REQUIRED_DOCS.map((requirement) => {
+        const matchingDocs = docs.filter((item) => normalizeDriverDocType(item.doc_type) === requirement.type)
         const doc = matchingDocs.find((item) => item.status.toLowerCase() === 'approved')
-          || matchingDocs.find((item) => item.doc_type === requirement.doc_type)
+          || matchingDocs.find((item) => item.doc_type === requirement.type)
           || matchingDocs[0]
         const status = doc?.status.toLowerCase() === 'approved'
           ? 'approved'
@@ -115,7 +114,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
         return (
           <div
-            key={requirement.doc_type}
+            key={requirement.type}
             style={{
               background: '#18181b',
               border: '1px solid rgba(255,255,255,0.1)',
@@ -151,8 +150,8 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
                 View
               </a>
             ) : (
-              <label style={{ flexShrink: 0, color: 'white', background: uploading === requirement.doc_type ? '#555' : '#00a86b', padding: '8px 12px', borderRadius: 8, fontSize: 12, cursor: uploading === requirement.doc_type ? 'wait' : 'pointer', fontWeight: 700 }}>
-                {uploading === requirement.doc_type ? 'Uploading…' : action}
+              <label style={{ flexShrink: 0, color: 'white', background: uploading === requirement.type ? '#555' : '#00a86b', padding: '8px 12px', borderRadius: 8, fontSize: 12, cursor: uploading === requirement.type ? 'wait' : 'pointer', fontWeight: 700 }}>
+                {uploading === requirement.type ? 'Uploading…' : action}
                 <input
                   hidden
                   type="file"
@@ -160,7 +159,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
                   disabled={uploading !== null}
                   onChange={(event) => {
                     const file = event.target.files?.[0]
-                    if (file) void doUpload(requirement.doc_type, file)
+                    if (file) void doUpload(requirement.type, file)
                     event.target.value = ''
                   }}
                 />

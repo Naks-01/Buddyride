@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../lib/supabase'
+import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
 type View =
   | 'main'
@@ -28,16 +29,6 @@ interface Props {
 const teal = '#1de28f'
 const cardBackground = '#232b41'
 const muted = '#8b92a8'
-const documentTypes = [
-  { label: 'SA ID', types: ['id', 'sa_id', 'identity'] },
-  { label: 'License', types: ['license', 'drivers_license'] },
-  { label: 'PrDP', types: ['pdp', 'prdp'] },
-  { label: 'Vehicle Disc', types: ['disc', 'vehicle_disc'] },
-  { label: 'Insurance', types: ['insurance', 'huru'] },
-  { label: 'Car Papers', types: ['car_papers', 'vehicle_registration'] },
-  { label: 'Selfie', types: ['selfie'] },
-]
-
 type DriverRide = {
   id: string
   pickup_address: string | null
@@ -435,25 +426,31 @@ export function NavigationMenu({
             {backButton}
             <h2>Documents</h2>
             <p style={{ color: muted }}>Your 7 driver verification documents.</p>
+            <p style={{ color: muted }}>{REQUIRED_DOCS.filter(requirement => driverDocuments.some(document =>
+              normalizeDriverDocType(document.doc_type.toLowerCase()) === requirement.type
+              && document.status.toLowerCase() === 'approved',
+            )).length}/7 Approved</p>
             {documentsLoading && <p style={{ color: muted }}>Loading document statuses…</p>}
             {documentsError && <p role="alert" style={{ color: '#ff9b9b' }}>{documentsError}</p>}
-            {documentTypes.map(({ label, types }) => {
-              const record = driverDocuments.find((document) => types.includes(document.doc_type.toLowerCase()))
+            {REQUIRED_DOCS.map(({ label, type }) => {
+              const record = driverDocuments.find((document) => normalizeDriverDocType(document.doc_type.toLowerCase()) === type)
               const status = record?.status || 'missing'
-              const approved = status.toLowerCase() === 'approved'
+              const normalizedStatus = status.toLowerCase()
+              const approved = normalizedStatus === 'approved'
+              const rejected = normalizedStatus === 'rejected'
               return (
                 <div key={label} style={{ ...detailStyle, alignItems: 'center' }}>
                   <span>{label}</span>
                   <span
                     style={{
-                      color: approved ? teal : '#ffcc66',
-                      background: approved ? '#173d32' : '#44361f',
+                      color: approved ? teal : rejected ? '#ffc7cb' : normalizedStatus === 'pending' ? '#93c5fd' : '#fde68a',
+                      background: approved ? '#173d32' : rejected ? '#45303a' : normalizedStatus === 'pending' ? '#1e3a8a' : '#44361f',
                       padding: '5px 9px',
                       borderRadius: 20,
                       fontSize: 12,
                     }}
                   >
-                    {approved ? 'Approved' : status === 'missing' ? 'Missing' : 'Pending'}
+                    {approved ? 'Approved' : rejected ? 'Rejected' : normalizedStatus === 'missing' ? 'Missing' : 'Pending'}
                   </span>
                 </div>
               )

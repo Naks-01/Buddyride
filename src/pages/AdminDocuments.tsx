@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
-import { CANONICAL_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
+import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
-export const DRIVER_DOCUMENTS = CANONICAL_DOCS.map((document, index) => ({
-  id: document.doc_type,
+export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
+  id: document.type,
   label: document.label,
   helper: document.label,
   accept: 'image/*,application/pdf',
-  required: index < 6,
+  required: true,
   order: index + 1,
 }))
 
@@ -226,8 +226,8 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             || docs.find(doc=>doc.user_email || doc.email)?.user_email
             || docs.find(doc=>doc.email)?.email
             || driverId
-          const approvedCount = CANONICAL_DOCS.filter(requirement => docs.some(doc =>
-            normalizeDriverDocType(doc.doc_type)===requirement.doc_type && doc.status.toLowerCase()==='approved'
+          const approvedCount = REQUIRED_DOCS.filter(requirement => docs.some(doc =>
+            normalizeDriverDocType(doc.doc_type)===requirement.type && doc.status.toLowerCase()==='approved'
           )).length
           const requiredDocs = DRIVER_DOCUMENTS.filter(requirement=>requirement.required)
           const missingRequired = requiredDocs.filter(requirement => {
@@ -237,7 +237,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           })
           const canApproveToDrive = missingRequired.length===0
           const progressColor = canApproveToDrive ? '#22c55e' : '#f59e0b'
-          const progressPercent = Math.round(approvedCount / CANONICAL_DOCS.length * 100)
+          const progressPercent = Math.round(approvedCount / REQUIRED_DOCS.length * 100)
           const isApproved = docs[0]?.profiles?.is_verified === true
           const approvalReason = missingRequired.length
             ? `Missing approval: ${missingRequired.map(requirement=>requirement.label).join(', ')}`
@@ -247,13 +247,13 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={7} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
-            {CANONICAL_DOCS.map(requirement => renderDocumentRow(
-              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.doc_type && item.status.toLowerCase()==='approved')
-                || docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.doc_type),
-              requirement.doc_type,
+            {REQUIRED_DOCS.map(requirement => renderDocumentRow(
+              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.type && item.status.toLowerCase()==='approved')
+                || docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.type),
+              requirement.type,
               requirement.label,
               'driver_documents',
-              requirement.doc_type !== 'huru_check'
+              true
             ))}
             <div style={{borderTop:'1px solid #333', marginTop:'8px', paddingTop:'12px'}}>
               <button
@@ -264,7 +264,6 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
                 {driverId && loadingId===`approval:${driverId}` ? 'Approving…' : isApproved ? 'Approved to Drive' : 'Approve to Drive - Go Online'}
               </button>
               {!canApproveToDrive && <div style={{fontSize:'12px', color:'#fca5a5', marginTop:'6px'}}>{approvalReason}</div>}
-              {canApproveToDrive && !isApproved && <div style={{fontSize:'12px', color:'#9ca3af', marginTop:'6px'}}>Huru is optional and may be uploaded within 7 days.</div>}
             </div>
           </section>
         })}
