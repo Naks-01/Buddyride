@@ -1,24 +1,15 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
+import { CANONICAL_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
-export const DRIVER_DOCUMENTS = [
-  { id: 'profile_photo', label: 'Profile Photo', helper: 'Clear selfie, white background, no cap', accept: '.jpg,.jpeg', required: true, order: 1 },
-  { id: 'sa_id', label: 'SA ID / Passport', helper: 'Front and back of ID in one photo', accept: '.jpg,.jpeg,.pdf', required: true, order: 2 },
-  { id: 'driver_license', label: "Driver's License", helper: 'Code B license, front and back, must not be expired', accept: '.jpg,.jpeg,.pdf', required: true, order: 3 },
-  { id: 'prdp', label: 'PrDP - Professional Driving Permit', helper: 'PrDP card to carry passengers. Must be valid. Without this you cannot go online in Polokwane', accept: '.jpg,.jpeg,.pdf', required: true, order: 4 },
-  { id: 'vehicle_registration', label: 'Vehicle Papers (Natis)', helper: 'Registration certificate showing owner and car', accept: '.jpg,.jpeg,.pdf', required: true, order: 5 },
-  { id: 'license_disc', label: 'Vehicle License Disc', helper: 'Photo of disc on windscreen, must be valid', accept: '.jpg,.jpeg', required: true, order: 6 },
-  { id: 'huru_check', label: 'Police Clearance / Huru Check', helper: 'Huru criminal check report. Less than 3 months old. If you dont have it, we run Huru for R150 from first trip', accept: '.pdf,.jpg,.jpeg', required: false, graceDays: 7, order: 7 },
-] as const
-
-const docMap: Record<string, string> = {
-  drivers_license: 'driver_license',
-  vehicle_papers: 'vehicle_registration',
-  driver_license: 'driver_license',
-  vehicle_registration: 'vehicle_registration',
-}
-
-const normalizeDriverDocType = (docType: string) => docMap[docType] || docType
+export const DRIVER_DOCUMENTS = CANONICAL_DOCS.map((document, index) => ({
+  id: document.doc_type,
+  label: document.label,
+  helper: document.label,
+  accept: 'image/*,application/pdf',
+  required: index < 6,
+  order: index + 1,
+}))
 
 type StoredDocument = {
   id: string
@@ -45,6 +36,15 @@ function groupByUser(docs: StoredDocument[]) {
     const key = doc.user_email || doc.email || doc.profiles?.email || doc.driver_id || doc.passenger_id || doc.id
     if (!groups[key]) groups[key] = []
     groups[key].push(doc)
+    return groups
+  }, {})
+}
+
+function groupDriversById(docs: StoredDocument[]) {
+  return docs.reduce<Record<string, StoredDocument[]>>((groups, doc) => {
+    if (!doc.driver_id) return groups
+    if (!groups[doc.driver_id]) groups[doc.driver_id] = []
+    groups[doc.driver_id].push(doc)
     return groups
   }, {})
 }
@@ -172,7 +172,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     }
   }
 
-  const driverGroups = groupByUser(driverDocs)
+  const driversById = groupDriversById(driverDocs)
   const passengerGroups = groupByUser(passengerDocs)
 
   function renderDocumentRow(
@@ -182,12 +182,12 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     table: 'driver_documents'|'passenger_documents',
     required: boolean
   ) {
-    const status = displayStatus(doc, !required)
+    const status = displayStatus(doc)
     const badgeColors: Record<string, { color: string, background: string }> = {
       APPROVED: { color:'#86efac', background:'#14532d' },
-      MISSING: { color:'#fca5a5', background:'#7f1d1d' },
+      MISSING: { color:'#fde68a', background:'#713f12' },
       OPTIONAL: { color:'#d1d5db', background:'#374151' },
-      PENDING: { color:'#fde68a', background:'#713f12' },
+      PENDING: { color:'#93c5fd', background:'#1e3a8a' },
       REJECTED: { color:'#fca5a5', background:'#7f1d1d' },
       EXPIRED: { color:'#fca5a5', background:'#7f1d1d' },
     }
@@ -210,7 +210,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     <button onClick={onBack} style={{ background:'#242428', color:'white', border:'1px solid #333', padding:'8px 12px', borderRadius:'8px' }}>⬅ Back</button>
     <h2>👑 Admin Docs</h2>
     <div style={{ display:'flex', gap:'8px', margin:'12px 0' }}>
-      <button onClick={()=> setTab('driver')} style={{ flex:1, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers ({Object.keys(driverGroups).length})</button>
+      <button onClick={()=> setTab('driver')} style={{ flex:1, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers ({Object.keys(driversById).length})</button>
       <button onClick={()=> setTab('passenger')} style={{ flex:1, padding:'12px', background: tab==='passenger'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passengers ({Object.keys(passengerGroups).length})</button>
     </div>
     {error && <p role="alert" style={{color:'#ff6b6b'}}>{error}</p>}
@@ -221,9 +221,13 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           <input type="checkbox" checked={showUnapprovedOnly} onChange={event=>setShowUnapprovedOnly(event.target.checked)} />
           Show only drivers who are not yet approved
         </label>
-        {Object.entries(driverGroups).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([email, docs]) => {
-          const approvedCount = DRIVER_DOCUMENTS.filter(requirement => docs.some(doc =>
-            normalizeDriverDocType(doc.doc_type)===requirement.id && doc.status.toLowerCase()==='approved'
+        {Object.entries(driversById).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([driverId, docs]) => {
+          const email = docs.find(doc=>doc.profiles?.email || doc.user_email || doc.email)?.profiles?.email
+            || docs.find(doc=>doc.user_email || doc.email)?.user_email
+            || docs.find(doc=>doc.email)?.email
+            || driverId
+          const approvedCount = CANONICAL_DOCS.filter(requirement => docs.some(doc =>
+            normalizeDriverDocType(doc.doc_type)===requirement.doc_type && doc.status.toLowerCase()==='approved'
           )).length
           const requiredDocs = DRIVER_DOCUMENTS.filter(requirement=>requirement.required)
           const missingRequired = requiredDocs.filter(requirement => {
@@ -232,31 +236,28 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             return displayStatus(doc)!=='APPROVED'
           })
           const canApproveToDrive = missingRequired.length===0
-          const prdpDocs = docs.filter(item=>normalizeDriverDocType(item.doc_type)==='prdp')
-          const prdpApproved = displayStatus(prdpDocs.find(item=>item.status.toLowerCase()==='approved') || prdpDocs[0])==='APPROVED'
-          const progressColor = !prdpApproved ? '#ef4444' : canApproveToDrive ? '#22c55e' : '#f59e0b'
-          const progressPercent = Math.round(approvedCount / DRIVER_DOCUMENTS.length * 100)
-          const driverId = docs.find(doc=>doc.driver_id)?.driver_id
+          const progressColor = canApproveToDrive ? '#22c55e' : '#f59e0b'
+          const progressPercent = Math.round(approvedCount / CANONICAL_DOCS.length * 100)
           const isApproved = docs[0]?.profiles?.is_verified === true
           const approvalReason = missingRequired.length
             ? `Missing approval: ${missingRequired.map(requirement=>requirement.label).join(', ')}`
             : ''
-          return <section key={email} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
+          return <section key={driverId} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
             <h3 style={{margin:'0 0 4px'}}>{email} - {approvedCount}/7 approved ({progressPercent}%)</h3>
             <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={7} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
-            {DRIVER_DOCUMENTS.map(requirement => renderDocumentRow(
-              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.id && item.status.toLowerCase()==='approved')
-                || docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.id),
-              requirement.id,
+            {CANONICAL_DOCS.map(requirement => renderDocumentRow(
+              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.doc_type && item.status.toLowerCase()==='approved')
+                || docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.doc_type),
+              requirement.doc_type,
               requirement.label,
               'driver_documents',
-              requirement.required
+              requirement.doc_type !== 'huru_check'
             ))}
             <div style={{borderTop:'1px solid #333', marginTop:'8px', paddingTop:'12px'}}>
               <button
-                disabled={!canApproveToDrive || !driverId || loadingId===`approval:${driverId}` || isApproved}
+                disabled={!canApproveToDrive || loadingId===`approval:${driverId}` || isApproved}
                 onClick={()=>driverId && void approveToDrive(driverId)}
                 style={{width:'100%', padding:'14px', borderRadius:'9px', border:'none', color:'white', fontWeight:700, fontSize:'15px', background:canApproveToDrive?'#15803d':'#4b5563', cursor:canApproveToDrive && !isApproved?'pointer':'not-allowed'}}
               >
@@ -267,7 +268,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             </div>
           </section>
         })}
-        {Object.entries(driverGroups).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).length===0 && <p style={{color:'#9ca3af'}}>{showUnapprovedOnly?'No unapproved drivers.':'No driver documents uploaded yet.'}</p>}
+        {Object.entries(driversById).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).length===0 && <p style={{color:'#9ca3af'}}>{showUnapprovedOnly?'No unapproved drivers.':'No driver documents uploaded yet.'}</p>}
       </div>
     ) : (
       <div>

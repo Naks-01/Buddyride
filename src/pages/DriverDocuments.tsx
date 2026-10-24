@@ -1,15 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-
-const DRIVER_DOCUMENTS = [
-  { id: 'profile_photo', label: 'Profile Photo', icon: '🧑', accept: 'image/*' },
-  { id: 'sa_id', label: 'SA ID', icon: '🪪', accept: 'image/*,application/pdf' },
-  { id: 'driver_license', label: "Driver's License", icon: '🚘', accept: 'image/*,application/pdf' },
-  { id: 'prdp', label: 'PrDP', icon: '📋', accept: 'image/*,application/pdf' },
-  { id: 'vehicle_registration', label: 'Vehicle Papers', icon: '📄', accept: 'image/*,application/pdf' },
-  { id: 'license_disc', label: 'License Disc', icon: '🚗', accept: 'image/*,application/pdf' },
-  { id: 'huru_check', label: 'Huru Check - Selfie', icon: '🤳', accept: 'image/*,application/pdf' },
-] as const
+import { CANONICAL_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
 type StoredDocument = {
   id: string
@@ -20,8 +11,8 @@ type StoredDocument = {
 }
 
 const statusStyles = {
-  missing: { label: 'Missing', color: '#9ca3af', background: '#374151' },
-  pending: { label: 'Pending', color: '#fcd34d', background: '#422006' },
+  missing: { label: 'Missing', color: '#fde68a', background: '#713f12' },
+  pending: { label: 'Pending', color: '#93c5fd', background: '#1e3a8a' },
   approved: { label: 'Approved', color: '#86efac', background: '#14532d' },
   rejected: { label: 'Rejected', color: '#fca5a5', background: '#7f1d1d' },
 }
@@ -58,11 +49,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     setToast('')
     try {
       const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg'
-      const path = `${driverId}/${docType}.${extension}`
+      const path = `${driverId}/${docType}-${Date.now()}`
       const { error: uploadError } = await supabase.storage
         .from('driver-documents')
         .upload(path, file, {
-          upsert: true,
+          upsert: false,
           contentType: file.type || 'application/octet-stream',
           cacheControl: '3600',
         })
@@ -88,7 +79,9 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     }
   }
 
-  const approvedCount = docs.filter((doc) => doc.status.toLowerCase() === 'approved').length
+  const approvedCount = CANONICAL_DOCS.filter((requirement) => docs.some((doc) =>
+    normalizeDriverDocType(doc.doc_type) === requirement.doc_type && doc.status.toLowerCase() === 'approved',
+  )).length
 
   return (
     <div style={{ padding: '16px', background: '#0e0e10', minHeight: '100vh', color: 'white' }}>
@@ -101,8 +94,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       {toast && <p role="status" style={{ color: '#86efac' }}>{toast}</p>}
       {loading && <p style={{ color: '#9ca3af' }}>Loading documents…</p>}
 
-      {DRIVER_DOCUMENTS.map((requirement) => {
-        const doc = docs.find((item) => item.doc_type === requirement.id)
+      {CANONICAL_DOCS.map((requirement) => {
+        const matchingDocs = docs.filter((item) => normalizeDriverDocType(item.doc_type) === requirement.doc_type)
+        const doc = matchingDocs.find((item) => item.status.toLowerCase() === 'approved')
+          || matchingDocs.find((item) => item.doc_type === requirement.doc_type)
+          || matchingDocs[0]
         const status = doc?.status.toLowerCase() === 'approved'
           ? 'approved'
           : doc?.status.toLowerCase() === 'rejected'
@@ -119,7 +115,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
         return (
           <div
-            key={requirement.id}
+            key={requirement.doc_type}
             style={{
               background: '#18181b',
               border: '1px solid rgba(255,255,255,0.1)',
@@ -133,7 +129,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
             }}
           >
             <div style={{ minWidth: 0 }}>
-              <strong>{requirement.icon} {requirement.label}</strong>
+              <strong>{requirement.label}</strong>
               <div style={{ marginTop: 6 }}>
                 <span style={{ color: badge.color, background: badge.background, padding: '3px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
                   {badge.label}
@@ -145,7 +141,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
                 </div>
               )}
             </div>
-            {status === 'pending' || status === 'approved' ? (
+            {doc && status !== 'rejected' ? (
               <a
                 href={doc?.file_url}
                 target="_blank"
@@ -155,16 +151,16 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
                 View
               </a>
             ) : (
-              <label style={{ flexShrink: 0, color: 'white', background: uploading === requirement.id ? '#555' : '#00a86b', padding: '8px 12px', borderRadius: 8, fontSize: 12, cursor: uploading === requirement.id ? 'wait' : 'pointer', fontWeight: 700 }}>
-                {uploading === requirement.id ? 'Uploading…' : action}
+              <label style={{ flexShrink: 0, color: 'white', background: uploading === requirement.doc_type ? '#555' : '#00a86b', padding: '8px 12px', borderRadius: 8, fontSize: 12, cursor: uploading === requirement.doc_type ? 'wait' : 'pointer', fontWeight: 700 }}>
+                {uploading === requirement.doc_type ? 'Uploading…' : action}
                 <input
                   hidden
                   type="file"
-                  accept={requirement.accept}
+                  accept="image/*,application/pdf"
                   disabled={uploading !== null}
                   onChange={(event) => {
                     const file = event.target.files?.[0]
-                    if (file) void doUpload(requirement.id, file)
+                    if (file) void doUpload(requirement.doc_type, file)
                     event.target.value = ''
                   }}
                 />
