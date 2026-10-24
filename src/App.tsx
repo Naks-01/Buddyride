@@ -7,6 +7,14 @@ import { getProfile, checkSelfieLock } from './lib/auth'
 import { DriverDocuments } from './pages/DriverDocuments'
 import PassengerDocuments from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
+import { AdminDashboard } from './pages/AdminDashboard'
+import { AdminRides } from './pages/AdminRides'
+import { AdminDrivers } from './pages/AdminDrivers'
+import { AdminPassengers } from './pages/AdminPassengers'
+import { AdminFinance } from './pages/AdminFinance'
+import { AdminSupport } from './pages/AdminSupport'
+import { AdminZones } from './pages/AdminZones'
+import { AdminSettings } from './pages/AdminSettings'
 import LandingPage from './pages/LandingPage'
 
 const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com']
@@ -39,7 +47,7 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'>('landing')
+  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'|'admin-dashboard'|'admin-rides'|'admin-drivers'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'>('landing')
   const [showLanding, setShowLanding] = useState(true)
   const [showSelfieCheck, setShowSelfieCheck] = useState(false)
   const [selfieBusy, setSelfieBusy] = useState(false)
@@ -166,10 +174,18 @@ export default function App() {
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
     if (page === 'admin-docs') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-dashboard') return <AdminDashboard onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-rides') return <AdminRides onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-drivers') return <AdminDrivers onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-passengers') return <AdminPassengers onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-finance') return <AdminFinance onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-support') return <AdminSupport onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-zones') return <AdminZones onBack={()=> setPage('home')} />
+    if (profile.role === 'admin' && page === 'admin-settings') return <AdminSettings onBack={()=> setPage('home')} />
 
     // FIXED: No DocsButton on main screen - My Documents is inside burger menu ☰ NavigationMenu
     if (profile.role === 'driver') return <DriverHome profile={profile} />
-    if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} />
+    if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={setPage} />
     return <PassengerHome profile={profile} />
   }
 
