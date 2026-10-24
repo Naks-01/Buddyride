@@ -108,6 +108,9 @@ export function NavigationMenu({
     : 89
   const completedRides = rides.filter((ride) => ['completed', 'rated'].includes(ride.status || ''))
   const earningsFor = (ride: DriverRide) => Number(ride.driver_earnings ?? Number(ride.fare || 0) * 0.8)
+  const totalEarned = completedRides.reduce((total, ride) => total + earningsFor(ride), 0)
+  const totalPayouts = 0
+  const walletBalance = totalEarned - totalPayouts
   const today = new Date()
   const todayEarnings = completedRides
     .filter((ride) => {
@@ -199,13 +202,13 @@ export function NavigationMenu({
     let active = true
     setRidesLoading(true)
     setRidesError('')
-    void supabase
+    let query = supabase
       .from('rides')
       .select('id,pickup_address,dropoff_address,fare,driver_earnings,created_at,started_at,ended_at,status')
       .eq('driver_id', profile.id)
       .order('created_at', { ascending: false })
-      .limit(50)
-      .then(({ data, error }) => {
+    if (view === 'trips') query = query.limit(50)
+    void query.then(({ data, error }) => {
         if (!active) return
         if (error) {
           setRidesError(error.message)
@@ -349,7 +352,7 @@ export function NavigationMenu({
               <span style={iconStyle}>💳</span>
               <div>
                 <div style={{ color: muted, fontSize: 13 }}>Available wallet balance</div>
-                <strong style={{ fontSize: 24 }}>R {balance.toFixed(2)}</strong>
+                <strong style={{ fontSize: 24 }}>R {walletBalance.toFixed(2)}</strong>
               </div>
             </div>
             {detail('Today', `R ${todayEarnings.toFixed(2)}`)}
