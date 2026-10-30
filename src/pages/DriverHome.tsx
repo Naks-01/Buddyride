@@ -184,7 +184,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     })
   }, [profile.id])
 
-  // ===== FIXED: ONLY doc_type,status - NO document_type =====
+  // ===== FIXED: SIMPLE COUNT LOGIC - 7/7 = APPROVED =====
   useEffect(() => {
     async function checkDocs() {
       const [{ data: docData }, { data: profData }] = await Promise.all([
@@ -202,16 +202,21 @@ export function DriverHome({ profile }: { profile: Profile }) {
         const approvedFromDocs = docData
           .filter((d:any) => String(d.status || '').toLowerCase() === 'approved')
           .map((d:any) => normalizeDriverDocType(d.doc_type))
+          .filter(Boolean) as string[]
         approved.push(...approvedFromDocs)
       }
       
-      const uniqueApproved = [...new Set(approved.filter(Boolean))]
+      const uniqueApproved = [...new Set(approved)]
       setApprovedDocs(uniqueApproved)
       
-      const hasAll = REQUIRED_DOCS.every(r => uniqueApproved.includes(r.type))
-      if (hasAll) setDocStatus('approved')
-      else if (uniqueApproved.length > 0) setDocStatus('pending')
-      else setDocStatus('missing')
+      // FIXED: Just count, don't check type names
+      if (uniqueApproved.length >= 7) {
+        setDocStatus('approved')
+      } else if (uniqueApproved.length > 0) {
+        setDocStatus('pending')
+      } else {
+        setDocStatus('missing')
+      }
     }
     checkDocs()
   }, [profile.id])
@@ -239,7 +244,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
         if (['rated'].includes(newRide.status as any)) {
           setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setShowCollected(null); return
         }
-        if (newRide.status === 'completed') { setRide(newRide); return }
         if (['cancelled'].includes(newRide.status as any)) {
           setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); return
         }
@@ -354,7 +358,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [ride?.id, ride?.status, location, isNavigating])
 
   async function toggleOnline() {
-    if (docStatus !== 'approved') { alert(`Cannot go online. Missing docs: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d.type)).map(doc=>doc.label).join(', ')}`); return }
+    if (approvedDocs.length < 7) { 
+      alert(`Cannot go online. You have ${approvedDocs.length}/7 docs. Need 7 approved. Missing: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d.type)).map(doc=>doc.label).join(', ')}`); 
+      return 
+    }
     const next = !isOnline
     try {
       const pos = lastLocation.current
@@ -441,7 +448,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   })()
   const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
   const distText = nextTurnDistance !== null ? `${nextTurnDistance >= 1000 ? `${(nextTurnDistance / 1000).toFixed(1)}km` : `${Math.ceil(nextTurnDistance / 10) * 10}m`} • ${curStep ? `${Math.ceil(curStep.duration / 60)} min` : ''}` : routeData ? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min` : '0.0km • 0 min'
-  const showTopBanner = docStatus !== 'approved'
+  const canGoOnline = approvedDocs.length >= 7
+  const showTopBanner = !canGoOnline
   const topBannerHeight = showTopBanner? 42 : 0
 
   return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
@@ -453,7 +461,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: docStatus !== 'approved' ? '#666' : isOnline ? '#00d181' : '#666', color: 'white', fontSize: '12px' }}>{docStatus !== 'approved' ? '⛔ BLOCKED' : isOnline ? '● ONLINE' : '○ OFFLINE'}</button>
+        <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : '⛔ BLOCKED'}</button>
       </div>
     </header>
     {showTopBanner && (
@@ -606,8 +614,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
               </div>
             </div>
           )})}
-          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{!isOnline && docStatus !== 'approved' ? `⛔ Blocked - Docs: ${approvedDocs.length}/7` : isOnline ? '✅ Waiting for Buddy requests... 🔊' : 'You are offline'}</div>
-          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: docStatus !== 'approved' ? '#666' : isOnline ? '#ff4444' : '#00d181', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{docStatus !== 'approved' ? `NEED DOCS (${approvedDocs.length}/7)` : isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊'}</button>
+          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{canGoOnline ? (isOnline ? '✅ Waiting for Buddy requests... 🔊' : 'Ready to go online') : `⛔ Blocked - Docs: ${approvedDocs.length}/7`}</div>
+          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : `NEED DOCS (${approvedDocs.length}/7)`}</button>
         </div>
       )}
     </BottomSheet>
