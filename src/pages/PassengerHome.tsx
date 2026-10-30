@@ -10,7 +10,6 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
-// FIX: never show [object Object]
 function errMsg(e: any) {
   return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e))
 }
@@ -239,17 +238,39 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
+  // FIXED: Instant dispatch - was 5s, now 2s with quick retries
   useEffect(() => {
     if (!ride || ride.status !== 'searching') return
+    let cancelled = false
+
     const dispatch = async () => {
+      if (cancelled) return
       const { data, error } = await supabase.rpc('dispatch_ride', { p_ride_id: ride.id })
-      if (error) setRideError(`Driver matching failed: ${errMsg(error)}`)
-      else if (!data) setRideError('No verified drivers are available yet. We will keep searching.')
-      else setRideError('')
+      if (cancelled) return
+      if (error) {
+        setRideError(`Driver matching failed: ${errMsg(error)}`)
+      } else if (!data) {
+        // Keep searching silently - don't spam UI
+        console.log('No driver yet, retrying...')
+      } else {
+        setRideError('')
+      }
     }
+
+    // Try instantly + 1.5s + 3s for instant feel
     void dispatch()
-    const timer = window.setInterval(() => { void dispatch() }, 5000)
-    return () => window.clearInterval(timer)
+    const t1 = setTimeout(() => void dispatch(), 1500)
+    const t2 = setTimeout(() => void dispatch(), 3000)
+
+    // Then every 2 seconds (was 5s)
+    const timer = window.setInterval(() => { void dispatch() }, 2000)
+
+    return () => {
+      cancelled = true
+      clearTimeout(t1)
+      clearTimeout(t2)
+      window.clearInterval(timer)
+    }
   }, [ride?.id, ride?.status])
 
   useEffect(() => {
