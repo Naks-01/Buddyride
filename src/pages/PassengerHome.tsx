@@ -14,26 +14,6 @@ function errMsg(e: any) {
   return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e))
 }
 
-function compress(file: File): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const objectUrl = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl)
-      const c = document.createElement('canvas')
-      const max = 1280
-      let w = img.width, h = img.height
-      if (w > h) { if (w > max) { h *= max/w; w = max } }
-      else { if (h > max) { w *= max/h; h = max } }
-      c.width = w; c.height = h
-      c.getContext('2d')!.drawImage(img, 0, 0, w, h)
-      c.toBlob(b => b ? resolve(b) : reject(new Error('compress')), 'image/jpeg', 0.75)
-    }
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('load')) }
-    img.src = objectUrl
-  })
-}
-
 const LOCAL_PLACES = [
   { text: 'Thabo Mbeki Street', place_name: 'Thabo Mbeki Street, Polokwane Central', center: [29.4589, -23.9045] as [number, number] },
   { text: 'Grobler Street', place_name: 'Grobler Street, Polokwane Central', center: [29.4550, -23.9040] as [number, number] },
@@ -92,8 +72,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [nearbyCars, setNearbyCars] = useState<any[]>([])
   const [showChat, setShowChat] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(50)
-  const [uiVisible, setUiVisible] = useState(true)
-  const [lastTouch, setLastTouch] = useState(Date.now())
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
   const pickupAddressRequest = useRef(0)
@@ -117,14 +95,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) setSheetSnap(50)
     else if (rideStatus === 'completed') setSheetSnap(90)
   }, [rideStatus])
-
-  useEffect(() => {
-    const isDriving = ['picked_up', 'en_route', 'in_progress'].includes(rideStatus)
-    if (!isDriving) { setUiVisible(true); return }
-    if (!uiVisible) return
-    const timer = setTimeout(() => setUiVisible(false), 3000)
-    return () => clearTimeout(timer)
-  }, [rideStatus, uiVisible, lastTouch])
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
 
@@ -238,33 +208,24 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
-  // FIXED: Instant dispatch - was 5s, now 2s with quick retries
+  // FIXED: Instant dispatch with retry
   useEffect(() => {
     if (!ride || ride.status !== 'searching') return
     let cancelled = false
-
     const dispatch = async () => {
       if (cancelled) return
-      const { data, error } = await supabase.rpc('dispatch_ride', { p_ride_id: ride.id })
-      if (cancelled) return
-      if (error) {
-        setRideError(`Driver matching failed: ${errMsg(error)}`)
-      } else if (!data) {
-        // Keep searching silently - don't spam UI
-        console.log('No driver yet, retrying...')
-      } else {
-        setRideError('')
-      }
+      try {
+        const { data, error } = await supabase.rpc('dispatch_ride', { p_ride_id: ride.id })
+        if (cancelled) return
+        if (error) console.log('Dispatch error:', error)
+        else if (!data) console.log('No driver yet, retrying...')
+        else setRideError('')
+      } catch (e) { console.log('Dispatch failed to fetch, retrying', e) }
     }
-
-    // Try instantly + 1.5s + 3s for instant feel
     void dispatch()
-    const t1 = setTimeout(() => void dispatch(), 1500)
-    const t2 = setTimeout(() => void dispatch(), 3000)
-
-    // Then every 2 seconds (was 5s)
+    const t1 = setTimeout(() => void dispatch(), 1200)
+    const t2 = setTimeout(() => void dispatch(), 2500)
     const timer = window.setInterval(() => { void dispatch() }, 2000)
-
     return () => {
       cancelled = true
       clearTimeout(t1)
@@ -272,30 +233,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       window.clearInterval(timer)
     }
   }, [ride?.id, ride?.status])
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('paystack') !== 'verify') return
-    const rideId = params.get('ride_id')
-    const reference = params.get('reference')
-    if (!rideId || !reference) { setRideError('Payment return URL is missing ride/payment details.'); return }
-    let active = true
-    setLoading(true)
-    void supabase.functions.invoke('verify-paystack-payment', { body: { ride_id: rideId, reference } }).then(async ({ error }) => {
-      if (error) throw error
-      const { data, error: rideLoadError } = await supabase.from('rides').select('*').eq('id', rideId).single()
-      if (rideLoadError) throw rideLoadError
-      if (active) { setRide(data as Ride); setRideError(''); setSheetSnap(50) }
-    }).catch(error => {
-      if (active) {
-        setRideError(`Payment confirmation failed: ${errMsg(error)}`)
-        void supabase.from('rides').select('*').eq('id', rideId).eq('passenger_id', profile.id).maybeSingle().then(({ data }) => { if (data && active) setRide(data as Ride) })
-      }
-    }).finally(() => {
-      if (active) { setLoading(false); window.history.replaceState({}, '', window.location.pathname) }
-    })
-    return () => { active = false }
-  }, [])
 
   async function searchPlaces(query: string, setter: any, setShow: any) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
@@ -371,6 +308,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       } as any).select().single()
       if (error) throw error
       setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = data.status
+      
+      // FIXED: Immediately dispatch to driver
+      if (paymentMethod !== 'paystack') {
+        try {
+          await supabase.rpc('dispatch_ride', { p_ride_id: data.id })
+        } catch (e) {
+          console.log('Initial dispatch failed, will retry', e)
+        }
+      }
+
       if (paymentMethod === 'paystack') {
         const { data: checkout, error: checkoutError } = await supabase.functions.invoke('start-paystack-checkout', { body: { ride_id: data.id } })
         if (checkoutError) throw checkoutError
@@ -401,8 +348,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
-  return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}`, transform: uiVisible ? 'translateY(0)' : 'translateY(-110%)', transition: 'transform 300ms ease' }}>
+  return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    {/* FIXED: Header always visible - no transform hide */}
+    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
       <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide<br/>{profile.full_name || 'Passenger'}</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
@@ -416,13 +364,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       </div>
     )}
 
-    <div onClick={() => { setUiVisible(true); setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
+    <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
       <OsmMapView center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride ? undefined : onPickupMapMove} />
       {!ride && <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: 'translate(-50%, -100%)', fontSize: '34px', lineHeight: 1, pointerEvents: 'none' }}>📍</div>}
-      {uiVisible && <button aria-label="Center map on my location" title="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', color: 'white', border: 'none', fontSize: '22px' }}>📍</button>}
+      <button aria-label="Center map on my location" title="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', color: 'white', border: 'none', fontSize: '22px' }}>📍</button>
     </div>
 
-    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, transform: uiVisible || !['picked_up', 'en_route', 'in_progress'].includes(rideStatus) ? 'translateY(0)' : 'translateY(calc(100% - 20px))', transition: 'transform 300ms ease' }}>
+    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60 }}>
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
         {!ride && (<>
           <h2 style={{ margin: '0 0 12px' }}>Where are you going? {profile.full_name ? `Hi ${profile.full_name.split(' ')[0]}` : ''}</h2>
