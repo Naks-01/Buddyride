@@ -14,6 +14,26 @@ function errMsg(e: any) {
   return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e))
 }
 
+function compress(file: File): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const objectUrl = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      const c = document.createElement('canvas')
+      const max = 1280
+      let w = img.width, h = img.height
+      if (w > h) { if (w > max) { h *= max/w; w = max } }
+      else { if (h > max) { w *= max/h; h = max } }
+      c.width = w; c.height = h
+      c.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      c.toBlob(b => b ? resolve(b) : reject(new Error('compress')), 'image/jpeg', 0.75)
+    }
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('load')) }
+    img.src = objectUrl
+  })
+}
+
 const LOCAL_PLACES = [
   { text: 'Thabo Mbeki Street', place_name: 'Thabo Mbeki Street, Polokwane Central', center: [29.4589, -23.9045] as [number, number] },
   { text: 'Grobler Street', place_name: 'Grobler Street, Polokwane Central', center: [29.4550, -23.9040] as [number, number] },
@@ -208,31 +228,64 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
-  // FIXED: Instant dispatch with retry
+  // FIXED: polling + dispatch - no .catch() chaining (fixes TS2551)
   useEffect(() => {
-    if (!ride || ride.status !== 'searching') return
+    if (!ride) return
     let cancelled = false
-    const dispatch = async () => {
+    const tick = async () => {
       if (cancelled) return
       try {
-        const { data, error } = await supabase.rpc('dispatch_ride', { p_ride_id: ride.id })
-        if (cancelled) return
-        if (error) console.log('Dispatch error:', error)
-        else if (!data) console.log('No driver yet, retrying...')
-        else setRideError('')
-      } catch (e) { console.log('Dispatch failed to fetch, retrying', e) }
+        if (ride.status === 'searching') {
+          try {
+            await supabase.rpc('dispatch_ride', { p_ride_id: ride.id })
+          } catch {}
+        }
+        const { data } = await supabase.from('rides').select('*').eq('id', ride.id).single()
+        if (!cancelled && data) {
+          const typedData = data as any
+          if (typedData.status !== ride.status) {
+            const oldStatus = ride.status
+            const newStatus = typedData.status
+            if (oldStatus !== newStatus) {
+              if (newStatus === 'accepted') playSound('accept')
+              else if (newStatus === 'arrived') playSound('arrived')
+              else if (['picked_up','in_progress','en_route'].includes(newStatus)) playSound('start')
+              else if (newStatus === 'completed') playSound('complete')
+            }
+            setRide(typedData as Ride)
+            prevStatusRef.current = typedData.status
+          }
+        }
+      } catch {}
     }
-    void dispatch()
-    const t1 = setTimeout(() => void dispatch(), 1200)
-    const t2 = setTimeout(() => void dispatch(), 2500)
-    const timer = window.setInterval(() => { void dispatch() }, 2000)
-    return () => {
-      cancelled = true
-      clearTimeout(t1)
-      clearTimeout(t2)
-      window.clearInterval(timer)
-    }
+    void tick()
+    const interval = window.setInterval(() => void tick(), 3000)
+    return () => { cancelled = true; window.clearInterval(interval) }
   }, [ride?.id, ride?.status])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('paystack') !== 'verify') return
+    const rideId = params.get('ride_id')
+    const reference = params.get('reference')
+    if (!rideId || !reference) { setRideError('Payment return URL is missing ride/payment details.'); return }
+    let active = true
+    setLoading(true)
+    void supabase.functions.invoke('verify-paystack-payment', { body: { ride_id: rideId, reference } }).then(async ({ error }) => {
+      if (error) throw error
+      const { data, error: rideLoadError } = await supabase.from('rides').select('*').eq('id', rideId).single()
+      if (rideLoadError) throw rideLoadError
+      if (active) { setRide(data as Ride); setRideError(''); setSheetSnap(50) }
+    }).catch(error => {
+      if (active) {
+        setRideError(`Payment confirmation failed: ${errMsg(error)}`)
+        void supabase.from('rides').select('*').eq('id', rideId).eq('passenger_id', profile.id).maybeSingle().then(({ data }) => { if (data && active) setRide(data as Ride) })
+      }
+    }).finally(() => {
+      if (active) { setLoading(false); window.history.replaceState({}, '', window.location.pathname) }
+    })
+    return () => { active = false }
+  }, [])
 
   async function searchPlaces(query: string, setter: any, setShow: any) {
     if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
@@ -308,16 +361,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       } as any).select().single()
       if (error) throw error
       setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = data.status
-      
-      // FIXED: Immediately dispatch to driver
       if (paymentMethod !== 'paystack') {
         try {
           await supabase.rpc('dispatch_ride', { p_ride_id: data.id })
-        } catch (e) {
-          console.log('Initial dispatch failed, will retry', e)
-        }
+        } catch {}
       }
-
       if (paymentMethod === 'paystack') {
         const { data: checkout, error: checkoutError } = await supabase.functions.invoke('start-paystack-checkout', { body: { ride_id: data.id } })
         if (checkoutError) throw checkoutError
@@ -349,7 +397,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
   return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    {/* FIXED: Header always visible - no transform hide */}
     <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
       <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide<br/>{profile.full_name || 'Passenger'}</strong>
