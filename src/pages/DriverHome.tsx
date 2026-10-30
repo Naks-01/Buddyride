@@ -113,9 +113,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     else if (rideStatus === 'completed') { setSheetSnap(90); setIsMinimized(false) }
   }, [rideStatus])
 
-  // REMOVED auto-hide logic - keep header visible always
-  // useEffect for uiVisible removed
-
   useEffect(() => {
     if (!ride?.passenger_id) { setPassengerProfile(null); return }
     supabase.from('profiles').select('full_name, rating, phone, phone_number, avatar_url').eq('id', ride.passenger_id).single().then(({data}) => { if (data) setPassengerProfile(data) })
@@ -204,11 +201,19 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     async function loadRide() {
-      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
-      if (data) { setRide(data); setIsNavigating(true); setZoom(17); setIsMinimized(true) }
+      const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
+      if (data) { 
+        setRide(data); 
+        setIsNavigating(true); 
+        setZoom(17); 
+        setIsMinimized(true);
+        await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: false, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' })
+        setIsOnline(false)
+      }
     }
     loadRide()
   }, [profile.id])
+
   useEffect(() => {
     const ch = supabase.channel(`driver-${profile.id}`)
 .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
@@ -229,14 +234,22 @@ export function DriverHome({ profile }: { profile: Profile }) {
           setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); return
         }
         setRide(newRide)
-        if (['accepted','arrived','picked_up','in_progress','en_route'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
+        if (['driver_assigned','accepted','arrived','picked_up','in_progress','en_route'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) }
+        if (['driver_assigned','accepted','arrived','picked_up','in_progress','en_route'].includes(newRide.status as any)) {
+          supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: false, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' }).then(()=>{})
+          setIsOnline(false)
+        }
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [profile.id])
+
   useEffect(() => {
     if (!isOnline || ride) { setSearchingRides([]); return }
     async function loadSearching() {
       try {
+        const { data: activeCheck } = await supabase.from('rides').select('id').eq('driver_id', profile.id).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress'] as any).limit(1).maybeSingle()
+        if (activeCheck) { setSearchingRides([]); setIsOnline(false); return }
+
         let query = supabase.from('rides').select('*').eq('status','searching').order('created_at',{ascending:false}).limit(1)
         query = query.eq('offered_driver_id', profile.id)
         const { data } = await query
@@ -267,6 +280,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const interval = setInterval(loadSearching, 2000)
     return () => { supabase.removeChannel(ch2); clearInterval(interval) }
   }, [isOnline, ride, profile.id, declinedIds])
+
   useEffect(() => {
     clearRequestTimer()
     if (!incomingRide || incomingRide.status !== 'searching') return
@@ -282,6 +296,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     }, 1000)
     return clearRequestTimer
   }, [incomingRide?.id])
+
   useEffect(() => {
     if (!isNavigating &&!isOnline) return
     watchId.current = navigator.geolocation.watchPosition(pos => {
@@ -298,7 +313,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
         if (nowTs - lastSupabaseUpdate.current > 3000) {
           lastSupabaseUpdate.current = nowTs
           if (ride) supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
-          if (isOnline) {
+          if (isOnline && !ride) {
             supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
             supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: true, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' }).then(()=>{})
             supabase.from('driver_locations').upsert({ driver_id: profile.id, lat: pos.coords.latitude, lng: pos.coords.longitude, heading: pos.coords.heading ?? bearing, speed: pos.coords.speed ?? 0, is_online: true, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' }).then(()=>{})
@@ -308,6 +323,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     ) as any
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isNavigating, isOnline, ride?.id, profile.id])
+
   useEffect(() => {
     let interval: any
     async function buildRoute() {
@@ -332,6 +348,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   async function toggleOnline() {
     if (approvedDocs.length < 7) { alert(`Cannot go online. You have ${approvedDocs.length}/7 docs. Need 7 approved. Missing: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d.type)).map(doc=>doc.label).join(', ')}`); return }
+    const { data: activeRide } = await supabase.from('rides').select('id').eq('driver_id', profile.id).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress'] as any).limit(1).maybeSingle()
+    if (activeRide) {
+      alert('You have an active trip. Complete it first before going online.')
+      setIsOnline(false)
+      await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: false, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' })
+      return
+    }
     const next = !isOnline
     try {
       const pos = lastLocation.current
@@ -342,6 +365,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       setIsOnline(next)
     } catch (error: any) { alert(`Could not change your availability: ${errMsg(error)}`) }
   }
+
   async function acceptRide(rideId: string) {
     clearRequestTimer()
     if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
@@ -355,8 +379,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
     } catch {}
     const { error } = await supabase.from('rides').update({ driver_id: profile.id, status: 'accepted', accepted_at: new Date().toISOString(), offered_driver_id: null, offer_expires_at: null } as any).eq('id', rideId).eq('offered_driver_id', profile.id)
     if (error) { alert(`Could not accept this ride: ${errMsg(error)}`); return }
+    await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: false, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' })
+    await supabase.from('profiles').update({ is_online: false } as any).eq('id', profile.id)
+    setIsOnline(false)
     setSearchingRides([]); setIsNavigating(true); setZoom(17); setIsMinimized(true)
   }
+
   async function declineRide(rideId: string) {
     clearRequestTimer()
     if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
@@ -367,6 +395,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     localStorage.setItem('declined_rides', JSON.stringify(newDeclined))
     setSearchingRides(prev => prev.filter(r => r.id!== rideId))
   }
+
   async function completeRide() {
     if (!ride) return
     const rideId = ride.id
@@ -376,6 +405,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setShowCollected(fare)
     setTimeout(() => { setShowCollected(null); setShowDriverRating(true) }, 1200)
   }
+
   async function submitDriverRating() {
     if (!ride || driverRating === 0) return
     const rideId = ride.id
@@ -383,16 +413,19 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (error) { alert(`Could not submit rating: ${errMsg(error)}`); return }
     setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setShowCollected(null)
   }
+
   async function skipRating() {
     if (!ride) return
     setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setShowCollected(null)
   }
+
   function openDriverCancel(targetRide: Ride | null) {
     if (!targetRide &&!ride) return
     setRideToCancel(targetRide || ride)
     setDriverCancelReason('')
     setShowDriverCancelReason(true)
   }
+
   async function executeDriverCancel() {
     if (!driverCancelReason) { alert('Please select a reason'); return }
     const target = rideToCancel || ride
@@ -417,7 +450,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     <div onClick={() => { setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: 0 }}>
       <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={true} theme={theme} />
     </div>
-    {/* FIXED: Header always visible - no transform hide */}
     <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />
       <strong>BuddyRide<br/>Driver</strong>
