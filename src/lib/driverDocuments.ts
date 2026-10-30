@@ -1,43 +1,30 @@
+﻿import { supabase } from './supabase'
 export const REQUIRED_DOCS = [
   { type: 'profile_photo', label: 'Profile Photo' },
   { type: 'sa_id', label: 'SA ID' },
-  { type: 'drivers_license', label: "Driver's License" },
-  { type: 'prdp', label: 'PrDP' },
-  { type: 'vehicle_papers', label: 'Vehicle Papers' },
-  { type: 'license_disc', label: 'License Disc' },
-  { type: 'huru_check', label: 'Huru Check' },
-] as const
-
-export function normalizeDriverDocType(input: string): string {
-  if (!input) return ''
-  const lower = input.toLowerCase().trim().replace(/\s+/g, '_')
-  const map: Record<string, string> = {
-    'profile_photo': 'profile_photo',
-    'profile-photo': 'profile_photo',
-    'profile_photo': 'profile_photo',
-    'sa_id': 'sa_id',
-    'sa-id': 'sa_id',
-    'drivers_license': 'drivers_license',
-    'driver_license': 'drivers_license',
-    'prdp': 'prdp',
-    'vehicle_papers': 'vehicle_papers',
-    'vehicle_registration': 'vehicle_papers',
-    'license_disc': 'license_disc',
-    'huru_check': 'huru_check',
-  }
-  // direct map or fallback
-  if (map[lower]) return map[lower]
-  // handle with spaces
-  const spaceKey = input.toLowerCase().trim()
-  const spaceMap: Record<string, string> = {
-    'profile photo': 'profile_photo',
-    'sa id': 'sa_id',
-    'drivers license': 'drivers_license',
-    "driver's license": 'drivers_license',
-    'vehicle papers': 'vehicle_papers',
-    'vehicle registration': 'vehicle_papers',
-    'license disc': 'license_disc',
-    'huru check': 'huru_check',
-  }
-  return spaceMap[spaceKey] || lower
+  { type: 'drivers_license', label: 'Drivers License' },
+  { type: 'vehicle_registration', label: 'Vehicle Registration' },
+  { type: 'vehicle_photo', label: 'Vehicle Photo' },
+  { type: 'pdp', label: 'PrDP' },
+  { type: 'insurance', label: 'Insurance' },
+]
+export const REQUIRED_DOCS_ALL = REQUIRED_DOCS
+export const DRIVER_DOCUMENTS = REQUIRED_DOCS
+export const PASSENGER_DOCUMENTS = REQUIRED_DOCS
+export type DriverDocumentType = string
+export type DocumentRequirement = { type: string; label: string }
+export function normalizeDocType(type: any): string { return String(type || '').toLowerCase().trim() }
+export const normalizeDriverDocType = normalizeDocType
+export const normalizedDocType = normalizeDocType
+export const normalizedDriverDocType = normalizeDocType
+export const normalizeDoc = normalizeDocType
+export const normalizeDriverDoc = normalizeDocType
+export async function createDriverDocumentSignedUrl(filePath: string): Promise<string> {
+  try {
+    const { data, error } = await supabase.storage.from('driver-documents').createSignedUrl(filePath, 60)
+    if (error) throw error
+    return data.signedUrl
+  } catch { return '' }
 }
+export async function createPassengerDocumentSignedUrl(filePath: string): Promise<string> { return createDriverDocumentSignedUrl(filePath) }
+export function getRequiredDocsForRole(_role: string) { return REQUIRED_DOCS }

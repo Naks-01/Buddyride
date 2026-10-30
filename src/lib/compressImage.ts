@@ -1,32 +1,24 @@
-/** Compress an image to JPEG, bounding its longest side to 1280px at 0.75 quality. */
-export async function compressImageFile(file: File): Promise<Blob | File> {
-  if (!file.type.startsWith('image/')) return file
+﻿export function compressImageFile(file: File): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file)
-    const image = new Image()
-    image.onload = () => {
-      try {
-        const maxSide = 1280
-        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight))
-        const width = Math.max(1, Math.round(image.naturalWidth * scale))
-        const height = Math.max(1, Math.round(image.naturalHeight * scale))
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const context = canvas.getContext('2d')
-        if (!context) throw new Error('Image compression is unavailable in this browser.')
-        context.drawImage(image, 0, 0, width, height)
-        canvas.toBlob(blob => {
-          URL.revokeObjectURL(objectUrl)
-          if (blob) resolve(blob)
-          else reject(new Error('Could not compress this image. Please choose another photo.'))
-        }, 'image/jpeg', 0.75)
-      } catch (error) {
-        URL.revokeObjectURL(objectUrl)
-        reject(error)
-      }
+    if (!file.type.startsWith('image/')) { resolve(file); return }
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const canvas = document.createElement('canvas')
+      const max = 1280
+      let w = img.width, h = img.height
+      if (w > h) { if (w > max) { h *= max / w; w = max } }
+      else { if (h > max) { w *= max / h; h = max } }
+      canvas.width = w
+      canvas.height = h
+      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('compress failed')), 'image/jpeg', 0.75)
     }
-    image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('This image could not be opened.')) }
-    image.src = objectUrl
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('load')) }
+    img.src = url
   })
 }
+export const compressImage = compressImageFile
+export const compressFile = compressImageFile
+export default compressImageFile
