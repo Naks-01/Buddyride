@@ -178,7 +178,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       try { const real = await reverseOSM(p); setPickup(real) } catch { setPickup('My Location - Polokwane') }
     })
     async function loadActiveRide() {
-      const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
+      const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).single()
       if (data) { setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = (data as any).status }
     }
     loadActiveRide()
@@ -215,27 +215,26 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         setTimeout(() => { setCancelledNotification(null); setRide(null); setRoute(undefined); setDriverProfile(null); setShowChat(false); setSheetSnap(50) }, 5000)
       } else {
         if (oldStatus!== newStatus) {
-          if (newStatus === 'accepted') playSound('accept')
+          if (newStatus === 'accepted' || newStatus === 'driver_assigned') playSound('accept')
           else if (newStatus === 'arrived') playSound('arrived')
-          else if (['picked_up','in_progress','en_route'].includes(newStatus)) playSound('start')
+          else if (['picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(newStatus as any)) playSound('start')
           else if (newStatus === 'completed') playSound('complete')
         }
       }
       prevStatusRef.current = newStatus
       setRide(newR as Ride)
-      if (['picked_up','in_progress','en_route'].includes(newR.status)) { setSheetSnap(50) }
+      if (['picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(newR.status as any)) { setSheetSnap(50) }
     }).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
-  // FIXED: polling + dispatch - no .catch() chaining (fixes TS2551)
   useEffect(() => {
     if (!ride) return
     let cancelled = false
     const tick = async () => {
       if (cancelled) return
       try {
-        if (ride.status === 'searching') {
+        if ((ride.status as any) === 'searching') {
           try {
             await supabase.rpc('dispatch_ride', { p_ride_id: ride.id })
           } catch {}
@@ -247,9 +246,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             const oldStatus = ride.status
             const newStatus = typedData.status
             if (oldStatus !== newStatus) {
-              if (newStatus === 'accepted') playSound('accept')
+              if (newStatus === 'accepted' || newStatus === 'driver_assigned') playSound('accept')
               else if (newStatus === 'arrived') playSound('arrived')
-              else if (['picked_up','in_progress','en_route'].includes(newStatus)) playSound('start')
+              else if (['picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(newStatus as any)) playSound('start')
               else if (newStatus === 'completed') playSound('complete')
             }
             setRide(typedData as Ride)
@@ -462,11 +461,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
-        {ride && ride.status === 'awaiting_payment' && (
+        {ride && (ride.status as any) === 'awaiting_payment' && (
           <>
             <h3>Complete payment to request your ride</h3>
             <p style={{ fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
-            <p style={{ fontSize: '20px', fontWeight: 'bold' }}>R {Number(ride.total_fare ?? ride.fare).toFixed(2)}</p>
+            <p style={{ fontSize: '20px', fontWeight: 'bold' }}>R {Number((ride as any).total_fare ?? ride.fare).toFixed(2)}</p>
             {rideError && <p role="alert" style={{ color: '#b91c1c', fontSize: 13 }}>{rideError}</p>}
             <button disabled={loading} onClick={async () => {
               setLoading(true); setRideError('')
@@ -482,7 +481,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '8px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
           </>
         )}
-        {ride && ride.status === 'searching' && (
+        {ride && (ride.status as any) === 'searching' && (
           <>
             <h3>Searching driver... ●</h3>
             <p style={{ fontSize: '13px' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
@@ -490,23 +489,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <button onClick={() => setShowCancelReason(true)} style={{ width: '100%', marginTop: '12px', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button>
           </>
         )}
-        {ride && driverProfile && ['accepted','arrived','picked_up','en_route','in_progress'].includes(ride.status as any) && (
+        {ride && ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'].includes(ride.status as any) && (
           <div style={{ display: 'grid', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ padding: '7px 11px', borderRadius: '999px', background: '#2C2C2E', color: '#fff', fontSize: '11px', fontWeight: 700 }}>PREMIUM</span>
+              <span style={{ padding: '7px 11px', borderRadius: '999px', background: '#2C2C2E', color: '#fff', fontSize: '11px', fontWeight: 700 }}>{(ride.status as any) === 'driver_assigned' ? 'DRIVER FOUND' : 'PREMIUM'}</span>
               <span style={{ color: '#c7c7cc', fontSize: '13px', fontWeight: 600 }}>
-                {ride.status === 'arrived' ? 'Driver arrived' : ['picked_up','en_route','in_progress'].includes(ride.status as any) ? 'On your trip' : '4 min away'}
+                {(ride.status as any) === 'driver_assigned' ? 'Driver assigned' : (ride.status as any) === 'accepted' ? 'Driver on way' : ride.status === 'arrived' ? 'Driver arrived' : ['picked_up','en_route','in_progress','on_trip','driving_to_destination'].includes(ride.status as any) ? 'On your trip' : ride.status}
               </span>
             </div>
             {liveDriverLocationError && <p role="alert" style={{ margin: 0, color: '#fca5a5', fontSize: 12 }}>{liveDriverLocationError}</p>}
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              {driverProfile.avatar_url && typeof driverProfile.avatar_url === 'string' && driverProfile.avatar_url.startsWith('http')
+              {driverProfile?.avatar_url && typeof driverProfile.avatar_url === 'string' && driverProfile.avatar_url.startsWith('http')
                 ? <img src={driverProfile.avatar_url} alt="Driver profile" style={{ width: '52px', height: '52px', borderRadius: '50%', objectFit: 'cover', background: '#3A3A3C' }} />
                 : <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: '#3A3A3C', display: 'grid', placeItems: 'center', fontSize: '24px' }}>👨</div>}
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: '17px' }}>{driverProfile.full_name || 'Your driver'} <span style={{ color: '#c7c7cc', fontSize: '13px' }}>★ {driverProfile.rating?.toFixed(1) || '—'}</span></div>
-                <div style={{ color: '#c7c7cc', fontSize: '13px', marginTop: '3px' }}>{driverProfile.car_model || 'BuddyRide'} · {driverProfile.car_plate || 'Vehicle details'}</div>
-                <div style={{ color: '#c7c7cc', fontSize: '12px', marginTop: '3px' }}>{driverProfile.phone_number || driverProfile.phone || 'Phone not provided'}</div>
+                <div style={{ fontWeight: 700, fontSize: '17px' }}>{driverProfile?.full_name || 'Your driver loading...'} <span style={{ color: '#c7c7cc', fontSize: '13px' }}>★ {driverProfile?.rating?.toFixed(1) || '—'}</span></div>
+                <div style={{ color: '#c7c7cc', fontSize: '13px', marginTop: '3px' }}>{driverProfile?.car_model || 'BuddyRide'} · {driverProfile?.car_plate || 'Vehicle'}</div>
+                <div style={{ color: '#c7c7cc', fontSize: '12px', marginTop: '3px' }}>{driverProfile?.phone_number || (driverProfile as any)?.phone || 'Loading phone...'}</div>
               </div>
             </div>
             <div style={{ fontSize: '30px', fontWeight: 700 }}>R {ride.fare}</div>
@@ -515,15 +514,15 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#000', border: '1px solid #8e8e93', flex: 'none' }} /><span style={{ fontSize: '14px' }}>{ride.dropoff_address}</span></div>
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
-              {(driverProfile.phone_number || driverProfile.phone) && <a href={`tel:${driverProfile.phone_number || driverProfile.phone}`} style={{ flex: 1, display: 'grid', placeItems: 'center', minHeight: '48px', borderRadius: '14px', background: '#2C2C2E', color: '#fff', textDecoration: 'none', fontWeight: 600 }}>Call</a>}
-              {(driverProfile.phone_number || driverProfile.phone) && <a target="_blank" rel="noreferrer" href={`https://wa.me/${String(driverProfile.phone_number || driverProfile.phone).replace(/\D/g, '').replace(/^0/, '27')}`} style={{ flex: 1, display: 'grid', placeItems: 'center', minHeight: '48px', borderRadius: '14px', background: '#166534', color: '#fff', textDecoration: 'none', fontWeight: 600 }}>WhatsApp</a>}
+              {(driverProfile?.phone_number || (driverProfile as any)?.phone) && <a href={`tel:${driverProfile.phone_number || (driverProfile as any).phone}`} style={{ flex: 1, display: 'grid', placeItems: 'center', minHeight: '48px', borderRadius: '14px', background: '#2C2C2E', color: '#fff', textDecoration: 'none', fontWeight: 600 }}>Call</a>}
+              {(driverProfile?.phone_number || (driverProfile as any)?.phone) && <a target="_blank" rel="noreferrer" href={`https://wa.me/${String(driverProfile.phone_number || (driverProfile as any).phone).replace(/\D/g, '').replace(/^0/, '27')}`} style={{ flex: 1, display: 'grid', placeItems: 'center', minHeight: '48px', borderRadius: '14px', background: '#166534', color: '#fff', textDecoration: 'none', fontWeight: 600 }}>WhatsApp</a>}
               <button onClick={() => setShowChat(true)} style={{ flex: 1, minHeight: '48px', borderRadius: '14px', background: '#2C2C2E', color: '#fff', border: 0, fontWeight: 600 }}>Message</button>
-              {['accepted','arrived'].includes(ride.status as any) && <button onClick={() => setShowCancelReason(true)} style={{ flex: 1, minHeight: '48px', borderRadius: '14px', background: '#2C2C2E', color: '#fff', border: 0, fontWeight: 600 }}>Cancel</button>}
+              {['driver_assigned','accepted','arrived'].includes(ride.status as any) && <button onClick={() => setShowCancelReason(true)} style={{ flex: 1, minHeight: '48px', borderRadius: '14px', background: '#2C2C2E', color: '#fff', border: 0, fontWeight: 600 }}>Cancel</button>}
             </div>
-            {['picked_up','en_route','in_progress'].includes(ride.status as any) && <div className="ride-status" style={{ padding: '12px', borderRadius: '16px', textAlign: 'center', fontWeight: 'bold' }}>🧭 Driving to destination...</div>}
+            {['picked_up','en_route','in_progress','on_trip','driving_to_destination'].includes(ride.status as any) && <div className="ride-status" style={{ padding: '12px', borderRadius: '16px', textAlign: 'center', fontWeight: 'bold' }}>🧭 Driving to destination...</div>}
           </div>
         )}
-        {ride && ride.status === 'completed' && (
+        {ride && (ride.status as any) === 'completed' && (
           <>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '48px' }}>✅</div>
