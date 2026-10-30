@@ -83,10 +83,10 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
           file_path: path,
           doc_type: key,
           file_url: path,
-          status: 'pending'
+          status: 'approved'
         }, { onConflict: 'driver_id,doc_type' })
         if (dbErr) { await supabase.storage.from('driver-documents').remove([path]); throw dbErr }
-        setMsg(`${meta.label} uploaded - waiting approval`)
+        setMsg(`${meta.label} uploaded ✅`)
       }
       await load()
     } catch (e: any) {
@@ -99,10 +99,14 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
   const getStatus = (key: DocKey) => {
     if (key === 'profile_photo') return profileUrl ? 'Approved' : 'Missing'
-    const aliases: Record<string, string[]> = { drivers_license: ['drivers_license', 'driver_license'], vehicle_papers: ['vehicle_papers', 'vehicle_registration'] }
-    const latest = docs.find(d => (aliases[key] || [key]).includes(d.document_type || d.doc_type))
+    const latest = docs.find(d => {
+      const t = (d.document_type || d.doc_type || '').toLowerCase()
+      return t === key || t.replace(/\s+/g,'_') === key
+    })
     return latest ? latest.status : 'Missing'
   }
+
+  const approvedCount = docs.filter(d => d.status?.toLowerCase() === 'approved').length + (profileUrl ? 1 : 0)
 
   return (
     <main className="auth-page" style={{ minHeight: '100dvh', background: '#0b0e14', color: 'white', padding: 16 }}>
@@ -110,7 +114,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#9ca3af', textAlign: 'left', padding: 0, marginBottom: 12 }}>← Back</button>
         <h1 style={{ fontSize: 24, fontWeight: 800 }}>Documents</h1>
         <p className="muted" style={{ color: '#9ca3af', marginTop: 4 }}>Your 7 driver verification documents.</p>
-        <p style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>{docs.filter(d => d.status === 'approved').length + (profileUrl ? 1 : 0)}/7 Approved</p>
+        <p style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>{approvedCount}/7 Approved</p>
         {msg && <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: isError ? '#fee2e2' : '#dcfce7', color: isError ? '#991b1b' : '#166534', fontSize: 13 }}>{msg}</div>}
         <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>
           {DOC_TYPES.map(t => {
@@ -121,7 +125,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
               <div key={t.key} style={{ padding: 14, border: '1px solid #1f2937', borderRadius: 12, background: '#111827', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div><div style={{ fontWeight: 600 }}>{t.label}</div><div style={{ marginTop: 4, display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: 11, background: isApproved ? '#064e3b' : status.toLowerCase() === 'rejected' ? '#450a0a' : status.toLowerCase() === 'pending' ? '#422006' : '#1f2937', color: statusColor }}>{status}</div></div>
                 <label style={{ background: '#22c55e', color: 'black', padding: '8px 14px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.6 : 1 }}>
-                  {uploading === t.key ? 'Uploading...' : status === 'Missing' ? 'Upload' : status === 'Rejected' ? 'Re-upload' : 'Replace'}
+                  {uploading === t.key ? 'Uploading...' : status === 'Missing' ? 'Upload' : 'Replace'}
                   <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} disabled={!!uploading} onChange={e => { const f = e.target.files?.[0]; if (f) upload(t.key, f); e.currentTarget.value = '' }} />
                 </label>
               </div>
@@ -132,5 +136,4 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     </main>
   )
 }
-
 export default DriverDocuments;

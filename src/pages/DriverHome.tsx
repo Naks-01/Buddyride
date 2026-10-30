@@ -10,7 +10,6 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const EXPIRE_SECONDS = 15
 
-// FIX: helper to never show [object Object]
 function errMsg(e: any) {
   return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e))
 }
@@ -206,17 +205,39 @@ export function DriverHome({ profile }: { profile: Profile }) {
       setLocation(pos); lastLocation.current = pos
     })
   }, [profile.id])
+
+  // ===== FIXED: MATCHES SUPABASE - CASE INSENSITIVE + PROFILE PHOTO =====
   useEffect(() => {
     async function checkDocs() {
-      const { data } = await supabase.from('driver_documents').select('doc_type,status').eq('driver_id', profile.id)
-      if (!data || data.length === 0) { setDocStatus('missing'); setApprovedDocs([]); return }
-      const approved = data.filter((d:any) => d.status === 'approved').map((d:any)=>normalizeDriverDocType(d.doc_type))
-      setApprovedDocs(approved)
-      const hasAll = REQUIRED_DOCS.every(r => approved.includes(r.type))
-      if (hasAll) setDocStatus('approved'); else setDocStatus('pending')
+      const [{ data: docData }, { data: profData }] = await Promise.all([
+        supabase.from('driver_documents').select('doc_type,document_type,status').eq('driver_id', profile.id),
+        supabase.from('profiles').select('avatar_url').eq('id', profile.id).single()
+      ])
+      
+      const approved: string[] = []
+      
+      if (profData?.avatar_url && typeof profData.avatar_url === 'string' && profData.avatar_url.startsWith('http')) {
+        approved.push('profile_photo')
+      }
+      
+      if (docData && docData.length > 0) {
+        const approvedFromDocs = docData
+          .filter((d:any) => d.status?.toLowerCase() === 'approved')
+          .map((d:any) => normalizeDriverDocType(d.doc_type || d.document_type))
+        approved.push(...approvedFromDocs)
+      }
+      
+      const uniqueApproved = [...new Set(approved)]
+      setApprovedDocs(uniqueApproved)
+      
+      const hasAll = REQUIRED_DOCS.every(r => uniqueApproved.includes(r.type))
+      if (hasAll) setDocStatus('approved')
+      else if (uniqueApproved.length > 0) setDocStatus('pending')
+      else setDocStatus('missing')
     }
     checkDocs()
   }, [profile.id])
+
   useEffect(() => {
     async function loadRide() {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['accepted','arrived','picked_up','en_route','in_progress'] as any).order('created_at', { ascending: false }).limit(1).single()
