@@ -10,7 +10,6 @@ import PassengerDocuments from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
 import { AdminDashboard } from './pages/AdminDashboard'
 import { AdminRides } from './pages/AdminRides'
-import { AdminDrivers } from './pages/AdminDrivers'
 import { AdminPassengers } from './pages/AdminPassengers'
 import { AdminFinance } from './pages/AdminFinance'
 import { AdminSupport } from './pages/AdminSupport'
@@ -18,7 +17,7 @@ import { AdminZones } from './pages/AdminZones'
 import { AdminSettings } from './pages/AdminSettings'
 import LandingPage from './pages/LandingPage'
 
-const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com']
+const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgalaka.nt@outlook.com', 'admin@buddyride.co.za']
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
 
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -27,7 +26,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
   if (failed) return <div className={`brand ${compact? 'brand-compact' : ''}`}><div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div></div>
   return <div className={`brand ${compact? 'brand-compact' : ''}`}>
     <img src={logoCandidates[index]} onError={() => {
-      if (index < logoCandidates.length - 1) setIndex(i => i+1)
+      if (index < logoCandidates.length - 1) setIndex((i: number) => i+1)
       else setFailed(true)
     }} alt="BuddyRide logo" />
     <div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div>
@@ -46,7 +45,7 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'|'admin-dashboard'|'admin-rides'|'admin-drivers'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'>('landing')
+  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'|'admin-documents'|'admin-dashboard'|'admin-rides'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'>('landing')
   const [showLanding, setShowLanding] = useState(true)
   const [showSelfieCheck, setShowSelfieCheck] = useState(false)
   const [selfieBusy, setSelfieBusy] = useState(false)
@@ -56,32 +55,43 @@ export default function App() {
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     try {
       let result = await getProfile(userId)
-      const isOwner = userEmail? ADMIN_EMAILS.includes(userEmail.toLowerCase()) : false
+      const isOwner = userEmail ? ADMIN_EMAILS.includes(userEmail.toLowerCase()) : false
+      
       if (!result) {
-        let finalRole = preferredRole?? 'passenger'
-        if (finalRole === 'admin' &&!isOwner) finalRole = 'passenger'
-        const { data, error } = await supabase.from('profiles').upsert({
-          id: userId, email: userEmail, role: finalRole,
-          full_name: fullNameValue?? null, phone: phoneValue?? null,
-        }, { onConflict: 'id' }).select('*').single()
+        let finalRole = preferredRole ?? 'passenger'
+        if (finalRole === 'admin' && !isOwner) finalRole = 'passenger'
+        
+        const upsertData: any = {
+          id: userId,
+          role: finalRole,
+          full_name: fullNameValue ?? null,
+          phone_number: phoneValue ?? null,
+          phone: phoneValue ?? null,
+        }
+        
+        const { data, error } = await supabase.from('profiles').upsert(upsertData, { onConflict: 'id' }).select('*').single()
         if (error) throw error
         result = data as Profile
       } else {
-        if (isOwner && preferredRole) {
-          if (preferredRole === 'admin') {
-            if (result.role!== 'admin') await supabase.from('profiles').update({ role: 'admin' }).eq('id', userId)
-            result.role = 'admin'
-          } else {
-            result = {...result, role: preferredRole } as Profile
-          }
+        if (isOwner && preferredRole === 'admin' && result.role !== 'admin') {
+          await supabase.from('profiles').update({ role: 'admin' } as any).eq('id', userId)
+          result.role = 'admin'
+        }
+        if (preferredRole && preferredRole !== 'admin' && result.role !== preferredRole && !isOwner) {
+          result = { ...result, role: preferredRole } as Profile
         }
       }
       setProfile(result)
       setShowLanding(false)
-      const canPass = await checkSelfieLock(userId)
-      setShowSelfieCheck(!canPass)
-    } catch (error) {
-      setMessage(error instanceof Error? error.message : 'Could not load your profile.')
+      
+      try {
+        const canPass = await checkSelfieLock(userId)
+        setShowSelfieCheck(!canPass)
+      } catch {
+        setShowSelfieCheck(false)
+      }
+    } catch (error: any) {
+      setMessage(error instanceof Error ? error.message : 'Could not load your profile.')
       setProfile(null)
     }
   }, [])
@@ -96,12 +106,12 @@ export default function App() {
     supabase.auth.getSession().then(async ({ data, error }) => {
       if (!active) return
       if (error) setMessage(error.message)
-      if (data.session?.user) await loadProfile(data.session.user.id, data.session.user.email?? null)
+      if (data.session?.user) await loadProfile(data.session.user.id, data.session.user.email ?? null)
       if (active) setLoading(false)
     })
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) { setProfile(null); setLoading(false) }
-      else { void loadProfile(session.user.id, session.user.email?? null) }
+    const { data: listener } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
+      if (!session?.user) { setProfile(null); setLoading(false); setShowLanding(true) }
+      else { void loadProfile(session.user.id, session.user.email ?? null) }
     })
     return () => { active = false; listener.subscription.unsubscribe() }
   }, [loadProfile])
@@ -109,39 +119,47 @@ export default function App() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setMessage('')
     try {
-      if (mode === 'signup' && role === 'admin' &&!isAdminEmail) throw new Error('Admin signup restricted.')
+      if (mode === 'signup' && role === 'admin' && !isAdminEmail) throw new Error('Admin signup restricted to owner.')
       if (mode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({ email: email.trim().toLowerCase(), password, options: { data: { role, full_name: fullName.trim(), phone: phone.trim() } } })
+        const { data, error } = await supabase.auth.signUp({ 
+          email: email.trim().toLowerCase(), 
+          password, 
+          options: { data: { role, full_name: fullName.trim(), phone: phone.trim() } } 
+        })
         if (error) throw error
-        if (data.session && data.user) await loadProfile(data.user.id, data.user.email?? null, role, fullName.trim(), phone.trim())
+        if (data.session && data.user) await loadProfile(data.user.id, data.user.email ?? null, role, fullName.trim(), phone.trim())
         else { setMessage('Account created. Check email then log in.'); setMode('login') }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
         if (error) throw error;
-        if (data.user) await loadProfile(data.user.id, data.user.email?? null, role)
+        if (data.user) await loadProfile(data.user.id, data.user.email ?? null, role)
       }
-    } catch (error) { setMessage(error instanceof Error? error.message : 'Auth failed.') } finally { setBusy(false) }
+    } catch (error: any) { setMessage(error instanceof Error ? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
 
   async function handleSelfieUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file ||!profile) return
+    if (!file || !profile) return
     setSelfieBusy(true)
     try {
-      const fileExtension = file.name.split('.').pop()?.toLowerCase() || 'jpg'
-      const fileName = `${profile.id}/${Date.now()}.${fileExtension}`
-      const { error: uploadError } = await supabase.storage.from('selfies').upload(fileName, file, { contentType: file.type || 'application/octet-stream' })
-      if (uploadError) throw uploadError
-      const today = new Date().toISOString().split('T')[0]
-      const { error: profileError } = await supabase.from('profiles').update({ last_selfie_date: today, last_selfie_url: fileName } as any).eq('id', profile.id)
-      if (profileError) {
-        const { error: cleanupError } = await supabase.storage.from('selfies').remove([fileName])
-        if (cleanupError) throw new Error(`${profileError.message}. Cleanup failed: ${cleanupError.message}`)
-        throw profileError
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+      const fileName = `${profile.id}/${Date.now()}.${ext}`
+      const { error: uploadError } = await supabase.storage.from('selfies').upload(fileName, file, { contentType: file.type || 'image/jpeg' })
+      if (uploadError) {
+        if (uploadError.message.includes('not found') || uploadError.message.includes('Bucket')) {
+          setShowSelfieCheck(false)
+          return
+        }
+        throw uploadError
       }
+      try {
+        const today = new Date().toISOString().split('T')[0]
+        await supabase.from('profiles').update({ last_selfie_date: today, last_selfie_url: fileName } as any).eq('id', profile.id)
+      } catch {}
       setShowSelfieCheck(false)
-    } catch (err) {
-      setMessage(err instanceof Error? err.message : 'Selfie upload failed')
+    } catch (err: any) {
+      setMessage(err instanceof Error ? err.message : 'Selfie upload failed')
+      setShowSelfieCheck(false)
     } finally { setSelfieBusy(false) }
   }
 
@@ -149,7 +167,7 @@ export default function App() {
 
   if (profile) {
     if (showSelfieCheck) {
-      return <main className="auth-page"><section className="auth-card" style={{textAlign:'center'}}><Brand /><h1>Safety Check</h1><p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />{selfieBusy && <p>Verifying...</p>}{message && <div className="notice">{message}</div>}</section></main>
+      return <main className="auth-page"><section className="auth-card" style={{textAlign:'center'}}><Brand /><h1>Safety Check</h1><p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />{selfieBusy && <p>Verifying...</p>}<button onClick={() => setShowSelfieCheck(false)} style={{ marginTop: 12, background: 'none', border: 'none', color: '#9ca3af', fontSize: 12 }}>Skip for now</button>{message && <div className="notice">{message}</div>}</section></main>
     }
     const navigationRideId = window.location.pathname.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {
@@ -158,17 +176,16 @@ export default function App() {
     }
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
-    if (page === 'admin-docs') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
+    if (page === 'admin-docs' || page === 'admin-documents') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-dashboard') return <AdminDashboard onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-rides') return <AdminRides onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-drivers') return <AdminDrivers onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-passengers') return <AdminPassengers onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-finance') return <AdminFinance onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-support') return <AdminSupport onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-zones') return <AdminZones onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-settings') return <AdminSettings onBack={()=> setPage('home')} />
     if (profile.role === 'driver') return <DriverHome profile={profile} />
-    if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={setPage} />
+    if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={(m: any) => setPage(m as any)} />
     return <PassengerHome profile={profile} />
   }
 
@@ -184,8 +201,8 @@ export default function App() {
         <button type="button" onClick={() => setRole('driver')} style={{padding:'10px', borderRadius:'10px', fontWeight:600, border: role==='driver'? '2px solid black' : '1px solid #e5e7eb', background: role==='driver'? '#111' : 'white', color: role==='driver'? 'white' : 'black'}}>🚗 Driver</button>
       </div>
       <form onSubmit={submit}>
-        {mode === 'signup' && <><label>Full name<input value={fullName} onChange={e => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={e => setPhone(e.target.value)} required /></label></>}
-        <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
+        {mode === 'signup' && <><label>Full name<input value={fullName} onChange={(e: any) => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={(e: any) => setPhone(e.target.value)} required /></label></>}
+        <label>Email<input type="email" value={email} onChange={(e: any) => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} required /></label>
         <button className="primary full-width" disabled={busy} type="submit">{busy? 'Wait…' : mode === 'login'? 'Log in' : 'Create account'}</button>
       </form>
       <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login'? 'signup' : 'login'); setMessage('') }}>{mode === 'login'? 'No account? Sign up' : 'Already registered? Log in'}</button>

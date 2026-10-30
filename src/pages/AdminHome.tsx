@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
 
-type AdminModule = 'admin-dashboard'|'admin-rides'|'admin-drivers'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'
+type AdminModule = 'admin-dashboard'|'admin-documents'|'admin-rides'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'
 type Props = { profile: Profile, onDocs: () => void, onAdminModule: (page: AdminModule) => void }
 
 export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
@@ -56,18 +56,23 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
             </div>
           </div>
           <div style={card}>
-            <p style={{ fontWeight:'bold', margin:'0 0 6px 0' }}>👑 Approve Documents</p>
-            <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>Verify driver IDs, licenses, vehicles</p>
-            <button onClick={onDocs} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'black', fontWeight:'bold', border:'none', cursor:'pointer' }}>Go to Documents →</button>
+            <p style={{ fontWeight:'bold', margin:'0 0 6px 0' }}>👑 Approve Documents 7/7</p>
+            <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>Verify driver IDs, licenses, vehicles + passenger IDs + selfies</p>
+            <button onClick={onDocs} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'black', fontWeight:'bold', border:'none', cursor:'pointer' }}>Go to Documents 7/7 →</button>
           </div>
           <div style={card}>
             <h3 style={{marginTop:0}}>Admin Modules</h3>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:'8px'}}>
               {([
-                ['Dashboard','admin-dashboard'], ['Rides','admin-rides'], ['Drivers','admin-drivers'],
-                ['Passengers','admin-passengers'], ['Finance','admin-finance'], ['SOS Support','admin-support'],
-                ['Zones','admin-zones'], ['Settings','admin-settings'],
-              ] as const).map(([label,page])=><button key={page} onClick={()=>onAdminModule(page)} style={{padding:'10px', borderRadius:'8px', border:'1px solid #475569', background:'#0f172a', color:'white'}}>{label}</button>)}
+                ['Dashboard','admin-dashboard'], 
+                ['Documents 7/7','admin-documents'], // FIXED ✅ was admin-drivers
+                ['Rides','admin-rides'], 
+                ['Passengers','admin-passengers'], 
+                ['Finance','admin-finance'], 
+                ['SOS Support','admin-support'],
+                ['Zones','admin-zones'], 
+                ['Settings','admin-settings'],
+              ] as const).map(([label,page])=><button key={page} onClick={()=>onAdminModule(page)} style={{padding:'10px', borderRadius:'8px', border:'1px solid #475569', background: page==='admin-documents' ? '#f97316' : '#0f172a', color:'white', fontWeight: page==='admin-documents' ? 'bold' : 'normal'}}>{label}</button>)}
             </div>
           </div>
         </>

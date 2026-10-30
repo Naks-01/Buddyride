@@ -14,26 +14,6 @@ function errMsg(e: any) {
   return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e))
 }
 
-function compress(file: File): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const objectUrl = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl)
-      const c = document.createElement('canvas')
-      const max = 1280
-      let w = img.width, h = img.height
-      if (w > h) { if (w > max) { h *= max/w; w = max } }
-      else { if (h > max) { w *= max/h; h = max } }
-      c.width = w; c.height = h
-      c.getContext('2d')!.drawImage(img, 0, 0, w, h)
-      c.toBlob(b => b ? resolve(b) : reject(new Error('compress')), 'image/jpeg', 0.75)
-    }
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('load')) }
-    img.src = objectUrl
-  })
-}
-
 function distanceBetweenCoordinates(from: [number, number], to: [number, number]) {
   const radians = (degrees: number) => degrees * Math.PI / 180
   const [fromLng, fromLat] = from.map(radians)
@@ -59,7 +39,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [commission, setCommission] = useState(20)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'light')
   const [zoom, setZoom] = useState(13)
-  const [now, setNow] = useState(Date.now())
   const [bearing, setBearing] = useState(0)
   const [speedKmh, setSpeedKmh] = useState(0)
   const [uiVisible, setUiVisible] = useState(true)
@@ -126,7 +105,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false); setIsMinimized(false); setSheetSnap(50) } }, [ride, showDriverRating])
   useEffect(() => {
     if (rideStatus === 'searching' || rideStatus === 'finding') { setSheetSnap(25); setIsMinimized(true) }
@@ -206,28 +184,28 @@ export function DriverHome({ profile }: { profile: Profile }) {
     })
   }, [profile.id])
 
-  // ===== FIXED: MATCHES SUPABASE - CASE INSENSITIVE + PROFILE PHOTO =====
+  // ===== FIXED: ONLY doc_type,status - NO document_type =====
   useEffect(() => {
     async function checkDocs() {
       const [{ data: docData }, { data: profData }] = await Promise.all([
-        supabase.from('driver_documents').select('doc_type,document_type,status').eq('driver_id', profile.id),
+        supabase.from('driver_documents').select('doc_type,status').eq('driver_id', profile.id),
         supabase.from('profiles').select('avatar_url').eq('id', profile.id).single()
       ])
       
       const approved: string[] = []
       
-      if (profData?.avatar_url && typeof profData.avatar_url === 'string' && profData.avatar_url.startsWith('http')) {
+      if (profData?.avatar_url) {
         approved.push('profile_photo')
       }
       
       if (docData && docData.length > 0) {
         const approvedFromDocs = docData
-          .filter((d:any) => d.status?.toLowerCase() === 'approved')
-          .map((d:any) => normalizeDriverDocType(d.doc_type || d.document_type))
+          .filter((d:any) => String(d.status || '').toLowerCase() === 'approved')
+          .map((d:any) => normalizeDriverDocType(d.doc_type))
         approved.push(...approvedFromDocs)
       }
       
-      const uniqueApproved = [...new Set(approved)]
+      const uniqueApproved = [...new Set(approved.filter(Boolean))]
       setApprovedDocs(uniqueApproved)
       
       const hasAll = REQUIRED_DOCS.every(r => uniqueApproved.includes(r.type))
