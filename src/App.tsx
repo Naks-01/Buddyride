@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { AdminHome } from './pages/AdminHome'
-import { DriverHome } from './pages/DriverHome'
 import { PassengerHome } from './pages/PassengerHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
 import { getProfile, checkSelfieLock } from './lib/auth'
 import DriverDocuments from './pages/DriverDocuments'
-import { DriverNavigationView } from './pages/DriverNavigationView'
 import PassengerDocuments from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
 import { AdminDashboard } from './pages/AdminDashboard'
@@ -16,6 +14,9 @@ import { AdminSupport } from './pages/AdminSupport'
 import { AdminZones } from './pages/AdminZones'
 import { AdminSettings } from './pages/AdminSettings'
 import LandingPage from './pages/LandingPage'
+
+const DriverHome = lazy(() => import('./pages/DriverHome').then(module => ({ default: module.DriverHome })))
+const DriverNavigationView = lazy(() => import('./pages/DriverNavigationView').then(module => ({ default: module.DriverNavigationView })))
 
 const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgalaka.nt@outlook.com', 'admin@buddyride.co.za']
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
@@ -172,7 +173,7 @@ export default function App() {
     const navigationRideId = window.location.pathname.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {
       if (profile.role !== 'driver') return <main className="auth-page"><section className="auth-card"><h1>Driver access required</h1><p>This navigation screen is only available to the assigned driver.</p><button className="primary" onClick={() => window.location.assign('/')}>Back to home</button></section></main>
-      return <DriverNavigationView rideId={navigationRideId} profile={profile} onBack={() => window.location.assign('/')} />
+      return <Suspense fallback={<main className="splash splash-intro">Loading driver navigation…</main>}><DriverNavigationView rideId={navigationRideId} profile={profile} onBack={() => window.location.assign('/')} /></Suspense>
     }
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
@@ -184,7 +185,7 @@ export default function App() {
     if (profile.role === 'admin' && page === 'admin-support') return <AdminSupport onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-zones') return <AdminZones onBack={()=> setPage('home')} />
     if (profile.role === 'admin' && page === 'admin-settings') return <AdminSettings onBack={()=> setPage('home')} />
-    if (profile.role === 'driver') return <DriverHome profile={profile} />
+    if (profile.role === 'driver') return <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
     if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={(m: any) => setPage(m as any)} />
     return <PassengerHome profile={profile} />
   }

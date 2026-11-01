@@ -1,5 +1,23 @@
 # BuddyRide1 audit and patch notes
 
+# Latest launch-audit pass (2026-11-01)
+
+## Changes in this pass
+
+- Made the driver and driver-navigation screens lazy-loaded so passenger sessions do not download Mapbox; Mapbox CSS now loads with the driver screens.
+- Hardened ride acceptance, arrival, start, completion and cancellation against stale offers/status races, and moved route loading after ride acceptance/start.
+- Added review comments to the rating flow, validate comments server-side, persist each participant's rating, compute profile ratings from submitted reviews, and transition a ride to `rated` when the passenger submits a review. Drivers can still add their review afterward.
+- Replaced full counterpart-profile reads with an authenticated, ride-scoped RPC that returns only contact, rating, avatar and vehicle fields.
+- Enforced the agreed 80% driver / 20% platform split in fare settings and corrected finance reporting to include both completed and rated rides.
+- Improved chat load/send failure feedback, message length handling, duplicate prevention and subscription cleanup.
+
+## Current validation and rollout status
+
+- `npm run build` passes with no TypeScript or Vite errors. Vite still warns that the Mapbox vendor chunk is larger than 1.5 MB; it is now dynamically loaded only for driver screens.
+- `git diff --check` passes.
+- The updated `supabase/production_hardening.sql` has **not** been run against the live database. Apply it in staging, validate the policy/function changes, then apply to production before deploying the client.
+- No authenticated live Supabase, Paystack, or device-geolocation ride was available here, so database migration execution, payment reconciliation and full two-account lifecycle remain unverified.
+
 ## Source reviewed
 React + Vite + TypeScript source, Supabase schema, driver/passenger document upload pages, shared navigation upload handlers, auth helpers, passenger/driver homes, admin document handling, and Vercel config.
 

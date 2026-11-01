@@ -53,31 +53,46 @@ create trigger buddyride_sync_driver_document_columns
 before insert or update on public.driver_documents
 for each row execute function public.buddyride_sync_driver_document_columns();
 
--- Profile visibility: authenticated users can see their own profile; trip participants
--- can see only the counterpart profile for a ride they are assigned/offered.
-create or replace function public.buddyride_can_view_counterpart_profile(p_profile_id uuid)
-returns boolean
+-- Use a narrow RPC for counterpart details instead of exposing entire profile rows.
+drop policy if exists "profiles_select_ride_counterpart" on public.profiles;
+drop function if exists public.buddyride_can_view_counterpart_profile(uuid);
+alter table public.ride_ratings add column if not exists passenger_comment text;
+alter table public.ride_ratings add column if not exists driver_comment text;
+alter type public.ride_status add value if not exists 'rated';
+
+create or replace function public.get_ride_counterpart_profile(p_ride_id uuid)
+returns table (
+  full_name text,
+  rating numeric,
+  phone text,
+  phone_number text,
+  avatar_url text,
+  car_model text,
+  car_plate text,
+  car_color text
+)
 language sql
 stable
 security definer
 set search_path = public
 as $$
-  select exists (
-    select 1 from public.rides r
-    where (
-      (r.passenger_id = p_profile_id and (r.driver_id = auth.uid() or r.offered_driver_id = auth.uid()))
-      or
-      (r.driver_id = p_profile_id and r.passenger_id = auth.uid())
+  select p.full_name, p.rating, p.phone, p.phone_number, p.avatar_url,
+         p.car_model, p.car_plate, p.car_color
+  from public.rides r
+  join public.profiles p on p.id = case when auth.uid() = r.passenger_id then r.driver_id else r.passenger_id end
+  where r.id = p_ride_id
+    and auth.uid() is not null
+    and r.status in ('searching','accepted','driver_arriving','driver_arrived','arrived','picked_up','en_route','in_progress','completed','rated')
+    and (
+      r.passenger_id = auth.uid()
+      or r.driver_id = auth.uid()
+      or (r.status = 'searching' and r.offered_driver_id = auth.uid())
     )
-    and r.status in ('searching','accepted','driver_arriving','driver_arrived','arrived','picked_up','en_route','in_progress','completed')
-  );
+    and (auth.uid() <> r.passenger_id or r.driver_id is not null)
+  limit 1;
 $$;
-revoke all on function public.buddyride_can_view_counterpart_profile(uuid) from public;
-grant execute on function public.buddyride_can_view_counterpart_profile(uuid) to authenticated;
-
-drop policy if exists "profiles_select_ride_counterpart" on public.profiles;
-create policy "profiles_select_ride_counterpart" on public.profiles
-for select to authenticated using (public.buddyride_can_view_counterpart_profile(id));
+revoke all on function public.get_ride_counterpart_profile(uuid) from public;
+grant execute on function public.get_ride_counterpart_profile(uuid) to authenticated;
 
 -- Driver cannot claim arbitrary searching rides: the dispatch offer must belong to them.
 drop policy if exists "rides_driver_update" on public.rides;
@@ -137,3 +152,144 @@ begin
 end $$;
 
 commit;
+
+-- Enforce the agreed 80/20 driver/platform split for future trips.
+update public.app_settings set commission = 20, updated_at = now() where commission <> 20;
+do $$
+declare
+  constraint_name text;
+begin
+  for constraint_name in
+    select conname
+    from pg_constraint
+    where conrelid = 'public.app_settings'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ilike '%commission%'
+  loop
+    execute format('alter table public.app_settings drop constraint %I', constraint_name);
+  end loop;
+end $$;
+alter table public.app_settings
+  add constraint app_settings_commission_fixed check (commission = 20);
+
+create or replace function public.save_fare_settings(p_categories jsonb, p_commission numeric)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  item jsonb;
+  updated_count integer;
+begin
+  if not public.is_admin() then raise exception 'Admin access required'; end if;
+  if p_commission is distinct from 20
+    or jsonb_typeof(p_categories) <> 'array'
+    or jsonb_array_length(p_categories) = 0
+    or not exists (
+      select 1 from jsonb_array_elements(p_categories) as entries(value)
+      where (entries.value->>'active')::boolean
+    ) then
+    raise exception 'Invalid fare settings; commission is fixed at 20 percent';
+  end if;
+
+  for item in select value from jsonb_array_elements(p_categories)
+  loop
+    update public.fare_categories
+    set label = item->>'label',
+        base_fare = (item->>'base_fare')::numeric,
+        per_km = (item->>'per_km')::numeric,
+        per_min = (item->>'per_min')::numeric,
+        min_fare = (item->>'min_fare')::numeric,
+        max_fare = (item->>'max_fare')::numeric,
+        active = (item->>'active')::boolean
+    where id = item->>'id';
+    get diagnostics updated_count = row_count;
+    if updated_count <> 1 then raise exception 'Unknown fare category: %', item->>'id'; end if;
+  end loop;
+
+  update public.app_settings set commission = 20, updated_at = now() where id = 1;
+end;
+$$;
+revoke all on function public.save_fare_settings(jsonb, numeric) from public;
+grant execute on function public.save_fare_settings(jsonb, numeric) to authenticated;
+
+-- Store both participants' ratings/comments and mark a ride rated after passenger feedback.
+drop function if exists public.submit_ride_rating(uuid, integer);
+create or replace function public.submit_ride_rating(p_ride_id uuid, p_rating integer, p_comment text default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  ride_row public.rides%rowtype;
+  existing_rating public.ride_ratings%rowtype;
+  is_passenger boolean;
+  old_rating integer;
+begin
+  if auth.uid() is null or p_rating < 1 or p_rating > 5
+    or length(trim(coalesce(p_comment, ''))) > 1000 then
+    raise exception 'Provide a rating from 1 to 5 and a comment of at most 1000 characters';
+  end if;
+
+  select * into ride_row from public.rides where id = p_ride_id for update;
+  if not found or ride_row.status not in ('completed', 'rated') then
+    raise exception 'Only completed rides can be rated';
+  end if;
+  if ride_row.driver_id is null then raise exception 'This ride has no assigned driver'; end if;
+  is_passenger := ride_row.passenger_id = auth.uid();
+  if not is_passenger and ride_row.driver_id is distinct from auth.uid() then
+    raise exception 'Only a ride participant can submit a rating';
+  end if;
+
+  select * into existing_rating from public.ride_ratings where ride_id = p_ride_id for update;
+  if found then
+    old_rating := case when is_passenger then existing_rating.passenger_rating else existing_rating.driver_rating end;
+    if old_rating is not null then
+      raise exception 'You have already rated this ride';
+    end if;
+    update public.ride_ratings
+    set passenger_rating = case when is_passenger then p_rating else passenger_rating end,
+        driver_rating = case when not is_passenger then p_rating else driver_rating end,
+        passenger_comment = case when is_passenger then nullif(trim(p_comment), '') else passenger_comment end,
+        driver_comment = case when not is_passenger then nullif(trim(p_comment), '') else driver_comment end
+    where ride_id = p_ride_id;
+  else
+    insert into public.ride_ratings (
+      ride_id, passenger_id, driver_id, passenger_rating, driver_rating, passenger_comment, driver_comment
+    ) values (
+      p_ride_id, ride_row.passenger_id, ride_row.driver_id,
+      case when is_passenger then p_rating end,
+      case when not is_passenger then p_rating end,
+      case when is_passenger then nullif(trim(p_comment), '') end,
+      case when not is_passenger then nullif(trim(p_comment), '') end
+    );
+  end if;
+
+  if is_passenger then
+    perform set_config('buddyride.internal_profile_update', 'on', true);
+    update public.profiles
+    set rating = (select round(avg(passenger_rating)::numeric, 2) from public.ride_ratings where driver_id = ride_row.driver_id),
+        trips_completed = trips_completed + 1
+    where id = ride_row.driver_id;
+  else
+    perform set_config('buddyride.internal_profile_update', 'on', true);
+    update public.profiles
+    set rating = (select round(avg(driver_rating)::numeric, 2) from public.ride_ratings where passenger_id = ride_row.passenger_id),
+        trips_completed = trips_completed + 1
+    where id = ride_row.passenger_id;
+  end if;
+
+  select * into existing_rating from public.ride_ratings where ride_id = p_ride_id;
+  perform set_config('buddyride.internal_ride_update', 'on', true);
+  update public.rides
+  set rating = existing_rating.passenger_rating,
+      driver_rating = existing_rating.driver_rating,
+      status = case when existing_rating.passenger_rating is not null then 'rated' else status end
+  where id = p_ride_id and status in ('completed', 'rated');
+end;
+$$;
+
+revoke all on function public.submit_ride_rating(uuid, integer, text) from public;
+grant execute on function public.submit_ride_rating(uuid, integer, text) to authenticated;

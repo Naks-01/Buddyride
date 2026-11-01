@@ -153,7 +153,7 @@ create table if not exists public.app_settings (
   per_km numeric(10,2) not null default 8 check (per_km >= 0),
   per_min numeric(10,2) not null default 0.5 check (per_min >= 0),
   min_fare numeric(10,2) not null default 27 check (min_fare >= 0),
-  commission numeric(5,2) not null default 20 check (commission between 0 and 100),
+  commission numeric(5,2) not null default 20 check (commission = 20),
   updated_at timestamptz not null default now()
 );
 insert into public.app_settings (id) values (1) on conflict (id) do nothing;
@@ -269,6 +269,8 @@ create table if not exists public.ride_ratings (
   driver_comment text,
   created_at timestamptz not null default now()
 );
+alter table public.ride_ratings add column if not exists passenger_comment text;
+alter table public.ride_ratings add column if not exists driver_comment text;
 
 create index if not exists rides_status_idx on public.rides(status);
 create index if not exists rides_passenger_idx on public.rides(passenger_id);
@@ -307,6 +309,40 @@ $$;
 
 revoke all on function public.is_admin() from public;
 grant execute on function public.is_admin() to authenticated;
+
+create or replace function public.get_ride_counterpart_profile(p_ride_id uuid)
+returns table (
+  full_name text,
+  rating numeric,
+  phone text,
+  phone_number text,
+  avatar_url text,
+  car_model text,
+  car_plate text,
+  car_color text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.full_name, p.rating, p.phone, p.phone_number, p.avatar_url,
+         p.car_model, p.car_plate, p.car_color
+  from public.rides r
+  join public.profiles p on p.id = case when auth.uid() = r.passenger_id then r.driver_id else r.passenger_id end
+  where r.id = p_ride_id
+    and auth.uid() is not null
+    and r.status in ('searching','accepted','driver_arriving','driver_arrived','arrived','picked_up','en_route','in_progress','completed','rated')
+    and (
+      r.passenger_id = auth.uid()
+      or r.driver_id = auth.uid()
+      or (r.status = 'searching' and r.offered_driver_id = auth.uid())
+    )
+    and (auth.uid() <> r.passenger_id or r.driver_id is not null)
+  limit 1;
+$$;
+revoke all on function public.get_ride_counterpart_profile(uuid) from public;
+grant execute on function public.get_ride_counterpart_profile(uuid) to authenticated;
 
 create or replace function public.guard_profile_changes()
 returns trigger
@@ -651,7 +687,8 @@ revoke all on function public.decline_ride(uuid) from public;
 grant execute on function public.dispatch_ride(uuid) to authenticated;
 grant execute on function public.decline_ride(uuid) to authenticated;
 
-create or replace function public.submit_ride_rating(p_ride_id uuid, p_rating integer)
+drop function if exists public.submit_ride_rating(uuid, integer);
+create or replace function public.submit_ride_rating(p_ride_id uuid, p_rating integer, p_comment text default null)
 returns void
 language plpgsql
 security definer
@@ -663,12 +700,13 @@ declare
   is_passenger boolean;
   old_rating integer;
 begin
-  if auth.uid() is null or p_rating < 1 or p_rating > 5 then
-    raise exception 'A signed-in ride participant must submit a rating from 1 to 5';
+  if auth.uid() is null or p_rating < 1 or p_rating > 5
+    or length(trim(coalesce(p_comment, ''))) > 1000 then
+    raise exception 'Provide a rating from 1 to 5 and a comment of at most 1000 characters';
   end if;
 
-  select * into ride_row from public.rides where id = p_ride_id;
-  if not found or ride_row.status <> 'completed' then
+  select * into ride_row from public.rides where id = p_ride_id for update;
+  if not found or ride_row.status not in ('completed', 'rated') then
     raise exception 'Only completed rides can be rated';
   end if;
   if ride_row.driver_id is null then raise exception 'This ride has no assigned driver'; end if;
@@ -685,36 +723,48 @@ begin
     end if;
     update public.ride_ratings
     set passenger_rating = case when is_passenger then p_rating else passenger_rating end,
-        driver_rating = case when not is_passenger then p_rating else driver_rating end
+        driver_rating = case when not is_passenger then p_rating else driver_rating end,
+        passenger_comment = case when is_passenger then nullif(trim(p_comment), '') else passenger_comment end,
+        driver_comment = case when not is_passenger then nullif(trim(p_comment), '') else driver_comment end
     where ride_id = p_ride_id;
   else
     insert into public.ride_ratings (
-      ride_id, passenger_id, driver_id, passenger_rating, driver_rating
+      ride_id, passenger_id, driver_id, passenger_rating, driver_rating, passenger_comment, driver_comment
     ) values (
       p_ride_id, ride_row.passenger_id, ride_row.driver_id,
       case when is_passenger then p_rating end,
-      case when not is_passenger then p_rating end
+      case when not is_passenger then p_rating end,
+      case when is_passenger then nullif(trim(p_comment), '') end,
+      case when not is_passenger then nullif(trim(p_comment), '') end
     );
   end if;
 
   if is_passenger then
     perform set_config('buddyride.internal_profile_update', 'on', true);
     update public.profiles
-    set rating = ((coalesce(rating, 5) * greatest(trips_completed, 0) + p_rating) / (greatest(trips_completed, 0) + 1)),
+    set rating = (select round(avg(passenger_rating)::numeric, 2) from public.ride_ratings where driver_id = ride_row.driver_id),
         trips_completed = trips_completed + 1
     where id = ride_row.driver_id;
   else
     perform set_config('buddyride.internal_profile_update', 'on', true);
     update public.profiles
-    set rating = ((coalesce(rating, 5) * greatest(trips_completed, 0) + p_rating) / (greatest(trips_completed, 0) + 1)),
+    set rating = (select round(avg(driver_rating)::numeric, 2) from public.ride_ratings where passenger_id = ride_row.passenger_id),
         trips_completed = trips_completed + 1
     where id = ride_row.passenger_id;
   end if;
+
+  select * into existing_rating from public.ride_ratings where ride_id = p_ride_id;
+  perform set_config('buddyride.internal_ride_update', 'on', true);
+  update public.rides
+  set rating = existing_rating.passenger_rating,
+      driver_rating = existing_rating.driver_rating,
+      status = case when existing_rating.passenger_rating is not null then 'rated' else status end
+  where id = p_ride_id and status in ('completed', 'rated');
 end;
 $$;
 
-revoke all on function public.submit_ride_rating(uuid, integer) from public;
-grant execute on function public.submit_ride_rating(uuid, integer) to authenticated;
+revoke all on function public.submit_ride_rating(uuid, integer, text) from public;
+grant execute on function public.submit_ride_rating(uuid, integer, text) to authenticated;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles for select using (auth.uid() = id);
@@ -790,7 +840,7 @@ declare
   updated_count integer;
 begin
   if not public.is_admin() then raise exception 'Admin access required'; end if;
-  if p_commission not between 0 and 100
+  if p_commission is distinct from 20
     or jsonb_typeof(p_categories) <> 'array'
     or jsonb_array_length(p_categories) = 0
     or not exists (
@@ -815,7 +865,7 @@ begin
     if updated_count <> 1 then raise exception 'Unknown fare category: %', item->>'id'; end if;
   end loop;
 
-  update public.app_settings set commission = p_commission, updated_at = now() where id = 1;
+  update public.app_settings set commission = 20, updated_at = now() where id = 1;
 end;
 $$;
 revoke all on function public.save_fare_settings(jsonb, numeric) from public;

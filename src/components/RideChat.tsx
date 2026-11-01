@@ -1,71 +1,95 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
+type RideMessage = {
+  id: string
+  ride_id: string
+  sender_id: string
+  message: string
+  created_at: string
+}
+
 export function RideChat({ rideId, myId }: { rideId: string, myId: string }) {
-  const [msgs, setMsgs] = useState<any[]>([])
+  const [msgs, setMsgs] = useState<RideMessage[]>([])
   const [text, setText] = useState('')
+  const [error, setError] = useState('')
+  const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!rideId) return;
-    
+    let active = true
     const load = async () => {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('ride_id', rideId)
-        .order('created_at', { ascending: true })
-      
-      if (error) console.log("LOAD ERROR:", error);
-      else setMsgs(data || []);
+      try {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('id,ride_id,sender_id,message,created_at')
+          .eq('ride_id', rideId)
+          .order('created_at', { ascending: true })
+        if (!active) return
+        if (error) setError(`Could not load messages: ${error.message}`)
+        else setMsgs(previous => {
+          const messagesById = new Map((data || []).map(message => [message.id, message as RideMessage]))
+          previous.forEach(message => messagesById.set(message.id, message))
+          return [...messagesById.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+        })
+      } catch (loadError) {
+        if (active) setError(`Could not load messages: ${loadError instanceof Error ? loadError.message : 'Network request failed'}`)
+      }
     }
-    load();
+    void load()
 
     const ch = supabase
       .channel(`chat-${rideId}`)
       .on('postgres_changes', 
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `ride_id=eq.${rideId}` }, 
         payload => {
+          const incoming = payload.new as RideMessage
           setMsgs(prev => {
-            // avoid duplicate if we already added optimistically
-            if (prev.find(p => p.id === (payload.new as any).id)) return prev;
-            return [...prev, payload.new as any];
-          });
+            if (prev.some(message => message.id === incoming.id)) return prev
+            return [...prev, incoming].sort((a, b) => a.created_at.localeCompare(b.created_at))
+          })
         }
       )
-      .subscribe((status) => console.log("CHAT CHANNEL:", status, rideId))
+      .subscribe((status, subscribeError) => {
+        if (!active) return
+        if (status === 'SUBSCRIBED') setError('')
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setError(`Chat connection failed: ${subscribeError?.message || status}`)
+        }
+      })
 
-    return () => { supabase.removeChannel(ch) }
+    return () => {
+      active = false
+      void supabase.removeChannel(ch)
+    }
   }, [rideId])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
 
   const send = async () => {
-    if (!text.trim() || !rideId) return;
-    const t = text.trim();
-    
-    // optimistic - show immediately
-    const tempId = Date.now().toString();
-    const optimisticMsg = { id: tempId, ride_id: rideId, sender_id: myId, message: t, text: t, created_at: new Date().toISOString() };
-    setMsgs(prev => [...prev, optimisticMsg]);
-    setText('');
+    const message = text.trim()
+    if (!message || sending || message.length > 2000) return
+    setSending(true)
+    setError('')
+    try {
+      const { data, error: sendError } = await supabase
+        .from('messages')
+        .insert({ ride_id: rideId, sender_id: myId, message })
+        .select('id,ride_id,sender_id,message,created_at')
+        .single()
 
-    // try both column names - your table might use text or message
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({ ride_id: rideId, sender_id: myId, message: t })
-      .select()
-      .single();
-
-    if (error) {
-      console.log("SEND ERROR:", error);
-      // remove optimistic and restore text
-      setMsgs(prev => prev.filter(m => m.id !== tempId));
-      setText(t);
-      alert("Send failed: " + error.message + " — check RLS or column name");
-    } else {
-      // replace temp with real
-      setMsgs(prev => prev.map(m => m.id === tempId ? data : m));
+      if (sendError) {
+        setError(`Could not send message: ${sendError.message}`)
+      } else if (data) {
+        setMsgs(prev => prev.some(existing => existing.id === data.id)
+          ? prev
+          : [...prev, data as RideMessage].sort((a, b) => a.created_at.localeCompare(b.created_at)))
+        setText('')
+      }
+    } catch (sendError) {
+      setError(`Could not send message: ${sendError instanceof Error ? sendError.message : 'Network request failed'}`)
+    } finally {
+      setSending(false)
     }
   }
 
@@ -74,14 +98,15 @@ export function RideChat({ rideId, myId }: { rideId: string, myId: string }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {msgs.map(m => (
           <div key={m.id} style={{ alignSelf: m.sender_id === myId? 'flex-end' : 'flex-start', background: m.sender_id === myId? '#ff7a00' : '#2a2a2a', color: 'white', padding: '8px 12px', borderRadius: '16px', maxWidth: '75%', fontSize: '13px' }}>
-            {m.message || m.text}
+            {m.message}
           </div>
         ))}
         <div ref={bottomRef} />
       </div>
+      {error && <div role="alert" style={{ color: '#fca5a5', padding: '0 10px 6px', fontSize: '12px' }}>{error}</div>}
       <div style={{ display: 'flex', gap: '8px', padding: '8px', borderTop: '1px solid #333' }}>
-        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} placeholder="Type message..." style={{ flex: 1, background: '#2a2a2a', border: 'none', borderRadius: '20px', padding: '10px 14px', color: 'white' }} />
-        <button onClick={send} style={{ background: '#00d181', border: 'none', borderRadius: '20px', padding: '10px 16px', color: 'white', fontWeight: 'bold' }}>Send</button>
+        <input value={text} maxLength={2000} disabled={sending} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }} placeholder="Type message..." style={{ flex: 1, background: '#2a2a2a', border: 'none', borderRadius: '20px', padding: '10px 14px', color: 'white' }} />
+        <button onClick={() => void send()} disabled={sending || !text.trim()} style={{ background: '#00d181', border: 'none', borderRadius: '20px', padding: '10px 16px', color: 'white', fontWeight: 'bold', opacity: sending || !text.trim() ? 0.6 : 1 }}>{sending ? 'Sending…' : 'Send'}</button>
       </div>
     </div>
   )

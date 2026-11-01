@@ -87,6 +87,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [pricingReady, setPricingReady] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'light')
   const [rating, setRating] = useState(0)
+  const [ratingComment, setRatingComment] = useState('')
   const [showCancelReason, setShowCancelReason] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [nearbyCars, setNearbyCars] = useState<any[]>([])
@@ -96,6 +97,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const dropoffDebounce = useRef<any>(null)
   const pickupAddressRequest = useRef(0)
   const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelledRideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const prevStatusRef = useRef<string>('')
@@ -147,7 +149,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { active = false }
   }, [])
 
-  useEffect(() => () => { if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current) }, [])
+  useEffect(() => () => {
+    if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current)
+    if (pickupDebounce.current) clearTimeout(pickupDebounce.current)
+    if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current)
+    if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current)
+  }, [])
 
   useEffect(() => {
     audioRef.current = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3')
@@ -172,16 +179,34 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   useEffect(() => {
+    let active = true
     navigator.geolocation.getCurrentPosition(async pos => {
+      if (!active) return
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
       setLocation(p); setPickupCoords(p)
-      try { const real = await reverseOSM(p); setPickup(real) } catch { setPickup('My Location - Polokwane') }
+      try {
+        const real = await reverseOSM(p)
+        if (active) setPickup(real)
+      } catch {
+        if (active) setPickup('My Location - Polokwane')
+      }
     })
     async function loadActiveRide() {
-      const { data } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).single()
-      if (data) { setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = (data as any).status }
+      const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('passenger_id', profile.id).in('status', ['searching','driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      if (activeRideError) {
+        if (active) setRideError(`Could not restore your active ride: ${errMsg(activeRideError)}`)
+        return
+      }
+      const { data: completedRide, error: completedRideError } = activeRide ? { data: null, error: null } : await supabase.from('rides').select('*').eq('passenger_id', profile.id).eq('status', 'completed').is('rating', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      if (completedRideError) {
+        if (active) setRideError(`Could not restore your pending rating: ${errMsg(completedRideError)}`)
+        return
+      }
+      const data = activeRide || completedRide
+      if (active && data) { setRide(data as Ride); setSheetSnap(data.status === 'completed' ? 90 : 50); prevStatusRef.current = data.status }
     }
-    loadActiveRide()
+    void loadActiveRide()
+    return () => { active = false }
   }, [profile.id])
 
   useEffect(() => {
@@ -199,9 +224,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }, [])
 
   useEffect(() => {
-    if (ride?.driver_id) supabase.from('profiles').select('*').eq('id', ride.driver_id).single().then(({ data }) => { if (data) setDriverProfile(data as any) })
-    else setDriverProfile(null)
-  }, [ride?.driver_id])
+    if (!ride?.driver_id) { setDriverProfile(null); return }
+    let active = true
+    supabase.rpc('get_ride_counterpart_profile', { p_ride_id: ride.id }).maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return
+        if (error) setRideError(`Could not load driver details: ${errMsg(error)}`)
+        else setDriverProfile(data as Profile | null)
+      })
+    return () => { active = false }
+  }, [ride?.id, ride?.driver_id])
 
   useEffect(() => {
     if (!ride) return
@@ -209,10 +241,25 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const newR = p.new as any; if (!newR) return
       const oldStatus = prevStatusRef.current
       const newStatus = newR.status
+      if (newStatus === 'rated' || newR.rating != null) {
+        setRide(null)
+        setRoute(undefined)
+        setDriverProfile(null)
+        setShowChat(false)
+        setRating(0)
+        setRatingComment('')
+        setSheetSnap(50)
+        prevStatusRef.current = newStatus
+        return
+      }
       if (newStatus === 'cancelled' && newR.cancelled_by === 'driver') {
         playSound('cancel')
         setCancelledNotification(`Driver cancelled: ${newR.cancel_reason || 'No reason'}`)
-        setTimeout(() => { setCancelledNotification(null); setRide(null); setRoute(undefined); setDriverProfile(null); setShowChat(false); setSheetSnap(50) }, 5000)
+        if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current)
+        cancelledRideTimer.current = setTimeout(() => {
+          setCancelledNotification(null); setRide(null); setRoute(undefined); setDriverProfile(null); setShowChat(false); setSheetSnap(50)
+          cancelledRideTimer.current = null
+        }, 5000)
       } else {
         if (oldStatus!== newStatus) {
           if (newStatus === 'accepted' || newStatus === 'driver_assigned') playSound('accept')
@@ -377,19 +424,19 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function cancelRide() {
     if (!ride) return; if (!cancelReason) { setShowCancelReason(true); return }
     const rideId = ride.id
-    const { error } = await supabase.from('rides').update({ status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).eq('id', rideId)
+    const { data: cancelledRide, error } = await supabase.from('rides').update({ status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).eq('id', rideId).select('id').maybeSingle()
     if (error) { setRideError(`Could not cancel ride: ${errMsg(error)}`); return }
+    if (!cancelledRide) { setRideError('This ride is no longer available to cancel.'); return }
     setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(50); setCancelReason('')
   }
 
   async function finishTrip() {
     if (!ride) return
     const rideId = ride.id; const driverId = ride.driver_id
-    if (rating > 0 && driverId) {
-      const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: rating })
-      if (error) { setRideError(`Could not submit rating: ${errMsg(error)}`); return }
-    }
-    setRide(null); setShowChat(false); setRoute(undefined); setDropoff(''); setDropoffCoords(null); setShowEstimate(false); setSheetSnap(50); setRating(0)
+    if (rating === 0 || !driverId) return
+    const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: rating, p_comment: ratingComment.trim() || null })
+    if (error) { setRideError(`Could not submit rating: ${errMsg(error)}`); return }
+    setRide(null); setShowChat(false); setRoute(undefined); setDropoff(''); setDropoffCoords(null); setShowEstimate(false); setSheetSnap(50); setRating(0); setRatingComment('')
   }
 
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
@@ -531,6 +578,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>
                 {[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}
               </div>
+              <textarea value={ratingComment} maxLength={1000} onChange={event => setRatingComment(event.target.value)} placeholder="Add a comment (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, resize: 'vertical' }} />
               {rideError && <p role="alert" style={{ color: '#b91c1c', fontSize: 13 }}>{rideError}</p>}
             </div>
             <button onClick={finishTrip} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: rating === 0? '#666' : '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>{rating === 0? 'Select stars' : `Finish • ${rating}★`}</button>

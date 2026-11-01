@@ -14,21 +14,17 @@ type FareCategory = {
 
 export function AdminSettings({ onBack }: { onBack: () => void }) {
   const [categories, setCategories] = useState<FareCategory[]>([])
-  const [commission, setCommission] = useState(20)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     async function load() {
-      const [categoryResult, settingsResult] = await Promise.all([
-        supabase.from('fare_categories').select('id,label,base_fare,per_km,per_min,min_fare,max_fare,active').order('id'),
-        supabase.from('app_settings').select('commission').eq('id', 1).single(),
-      ])
-      if (categoryResult.error || settingsResult.error) {
-        setMessage(`Could not load fare settings: ${categoryResult.error?.message || settingsResult.error?.message}`)
+      const { data, error } = await supabase.from('fare_categories').select('id,label,base_fare,per_km,per_min,min_fare,max_fare,active').order('id')
+      if (error) {
+        setMessage(`Could not load fare settings: ${error.message}`)
       } else {
-        setCategories((categoryResult.data || []).map(category => ({
+        setCategories((data || []).map(category => ({
           ...category,
           base_fare: Number(category.base_fare),
           per_km: Number(category.per_km),
@@ -36,7 +32,6 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
           min_fare: Number(category.min_fare),
           max_fare: Number(category.max_fare),
         })))
-        setCommission(Number(settingsResult.data.commission))
       }
       setLoading(false)
     }
@@ -49,7 +44,7 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
     try {
       const { error } = await supabase.rpc('save_fare_settings', {
         p_categories: categories,
-        p_commission: commission,
+        p_commission: 20,
       })
       if (error) throw error
       setMessage('Fare settings saved.')
@@ -94,9 +89,7 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
         </div>
       </section>)}
       <section style={{maxWidth:'720px', background:'#1e293b', padding:'16px', borderRadius:'12px'}}>
-        <label>Platform commission (%)
-          <input type="number" min="0" max="100" step="0.5" value={commission} onChange={event=>setCommission(Number(event.target.value))} style={{display:'block', width:'100%', boxSizing:'border-box', padding:'10px', marginTop:'4px'}} />
-        </label>
+        <p>Platform commission is fixed at 20% (drivers keep 80%).</p>
         <button disabled={saving || categories.length === 0} onClick={()=>void save()} style={{marginTop:'14px'}}>
           {saving ? 'Saving…' : 'Save fare settings'}
         </button>

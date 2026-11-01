@@ -14,7 +14,7 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
       const { count: driversCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'driver')
       const { count: passengersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'passenger')
       const { count: activeCount } = await supabase.from('driver_status').select('*', { count: 'exact', head: true }).eq('is_online', true)
-      const { data: completedRides } = await supabase.from('rides').select('buddyride_commission').eq('status', 'completed')
+      const { data: completedRides } = await supabase.from('rides').select('buddyride_commission').in('status', ['completed', 'rated'])
       const revenue = (completedRides || []).reduce((total, ride) => total + Number(ride.buddyride_commission || 0), 0)
       setStats({ rides: ridesCount||0, drivers: driversCount||0, passengers: passengersCount||0, active: activeCount||0, revenue })
     })()

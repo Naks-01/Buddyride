@@ -42,7 +42,7 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
       try {
         const { data: rides } = await supabase.from('rides').select('status').eq('driver_id', user.id)
         if (rides && rides.length > 0) {
-          const completed = rides.filter(r => r.status === 'completed').length
+          const completed = rides.filter(r => r.status === 'completed' || r.status === 'rated').length
           acceptance = Math.round((completed / rides.length) * 100) || 82
         }
       } catch {}
