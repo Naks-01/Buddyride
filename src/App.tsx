@@ -18,7 +18,7 @@ import LandingPage from './pages/LandingPage'
 const DriverHome = lazy(() => import('./pages/DriverHome').then(module => ({ default: module.DriverHome })))
 const DriverNavigationView = lazy(() => import('./pages/DriverNavigationView').then(module => ({ default: module.DriverNavigationView })))
 
-const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgalaka.nt@outlook.com', 'admin@buddyride.co.za']
+const ADMIN_EMAILS = ['buddyride@outlook.com', 'mokgalaka.nt@gmail.com'].map(e => e.toLowerCase())
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
 const selfieSkipKey = (userId: string) => `buddyride_selfie_skip_${userId}`
 
@@ -78,8 +78,17 @@ export default function App() {
   const [showLanding, setShowLanding] = useState(true)
   const [showSelfieCheck, setShowSelfieCheck] = useState(false)
   const [selfieBusy, setSelfieBusy] = useState(false)
+  const [verifiedAdminUserId, setVerifiedAdminUserId] = useState<string | null>(null)
+  const [checkedAdminUserId, setCheckedAdminUserId] = useState<string | null>(null)
+  const [adminToast, setAdminToast] = useState('')
 
   const isAdminEmail = ADMIN_EMAILS.includes(email.trim().toLowerCase())
+  const shouldVerifyAdminAccess = Boolean(profile && (
+    profile.role === 'admin'
+    || page.startsWith('admin-')
+    || ADMIN_EMAILS.includes((profile.email || '').toLowerCase())
+  ))
+  const hasAdminAccess = Boolean(profile && verifiedAdminUserId === profile.id)
 
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     try {
@@ -146,6 +155,36 @@ export default function App() {
     return () => { active = false; listener.subscription.unsubscribe() }
   }, [loadProfile])
 
+  useEffect(() => {
+    if (!profile || !shouldVerifyAdminAccess) {
+      setVerifiedAdminUserId(null)
+      return
+    }
+
+    let active = true
+    void (async () => {
+      const { data: { user }, error } = await supabase.auth.getUser()
+      if (!active) return
+      const userEmail = user?.email?.toLowerCase()
+      setCheckedAdminUserId(profile.id)
+      if (error || !userEmail || !ADMIN_EMAILS.includes(userEmail)) {
+        setVerifiedAdminUserId(null)
+        setPage('home')
+        window.history.replaceState(null, '', '/')
+        setAdminToast(error ? `Could not verify admin access: ${error.message}` : 'Access denied: Admin only')
+        return
+      }
+      setVerifiedAdminUserId(profile.id)
+    })()
+    return () => { active = false }
+  }, [profile?.id, profile?.role, profile?.email, shouldVerifyAdminAccess])
+
+  useEffect(() => {
+    if (!adminToast) return
+    const timeout = window.setTimeout(() => setAdminToast(''), 3000)
+    return () => window.clearTimeout(timeout)
+  }, [adminToast])
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setMessage('')
     try {
@@ -196,6 +235,17 @@ export default function App() {
   if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
+    if (shouldVerifyAdminAccess && checkedAdminUserId !== profile.id && !adminToast) {
+      return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>Verifying admin access…</p><div className="loading-dots"><i /><i /><i /></div></main>
+    }
+    if (adminToast) {
+      return <>
+        <div role="status" style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700, boxShadow: '0 4px 16px rgba(0,0,0,.25)' }}>{adminToast}</div>
+        {profile.role === 'driver'
+          ? <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
+          : <PassengerHome profile={profile} />}
+      </>
+    }
     if (showSelfieCheck) {
       return <main className="auth-page"><section className="auth-card" style={{textAlign:'center'}}><Brand /><h1>Safety Check</h1><p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />{selfieBusy && <p>Verifying...</p>}<button onClick={skipSelfieCheck} style={{ marginTop: 12, background: 'none', border: 'none', color: '#9ca3af', fontSize: 12 }}>Skip for now</button></section></main>
     }
@@ -206,16 +256,16 @@ export default function App() {
     }
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
-    if (page === 'admin-docs' || page === 'admin-documents') return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-dashboard') return <AdminDashboard onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-rides') return <AdminRides onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-passengers') return <AdminPassengers onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-finance') return <AdminFinance onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-support') return <AdminSupport onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-zones') return <AdminZones onBack={()=> setPage('home')} />
-    if (profile.role === 'admin' && page === 'admin-settings') return <AdminSettings onBack={()=> setPage('home')} />
+    if (hasAdminAccess && (page === 'admin-docs' || page === 'admin-documents')) return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
+    if (hasAdminAccess && page === 'admin-dashboard') return <AdminDashboard onBack={()=> setPage('home')} />
+    if (hasAdminAccess && page === 'admin-rides') return <AdminRides onBack={()=> setPage('home')} />
+    if (hasAdminAccess && page === 'admin-passengers') return <AdminPassengers onBack={()=> setPage('home')} />
+    if (hasAdminAccess && page === 'admin-finance') return <AdminFinance onBack={()=> setPage('home')} />
+    if (hasAdminAccess && page === 'admin-support') return <AdminSupport onBack={()=> setPage('home')} />
+    if (hasAdminAccess && page === 'admin-zones') return <AdminZones onBack={()=> setPage('home')} />
+    if (hasAdminAccess && page === 'admin-settings') return <AdminSettings onBack={()=> setPage('home')} />
+    if (hasAdminAccess) return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={(m: any) => setPage(m as any)} />
     if (profile.role === 'driver') return <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
-    if (profile.role === 'admin') return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={(m: any) => setPage(m as any)} />
     return <PassengerHome profile={profile} />
   }
 
