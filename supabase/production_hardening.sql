@@ -284,8 +284,7 @@ begin
   select * into existing_rating from public.ride_ratings where ride_id = p_ride_id;
   perform set_config('buddyride.internal_ride_update', 'on', true);
   update public.rides
-  set rating = existing_rating.passenger_rating,
-      driver_rating = existing_rating.driver_rating,
+  set driver_rating = existing_rating.driver_rating,
       status = case when existing_rating.passenger_rating is not null then 'rated' else status end
   where id = p_ride_id and status in ('completed', 'rated');
 end;

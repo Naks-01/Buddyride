@@ -213,7 +213,6 @@ create table if not exists public.rides (
   cancel_reason text,
   driver_lat double precision,
   driver_lng double precision,
-  rating integer check (rating between 1 and 5),
   driver_rating integer check (driver_rating between 1 and 5),
   status public.ride_status not null default 'searching',
   created_at timestamptz not null default now(),
@@ -234,7 +233,6 @@ alter table public.rides add column if not exists cancelled_by text;
 alter table public.rides add column if not exists cancel_reason text;
 alter table public.rides add column if not exists driver_lat double precision;
 alter table public.rides add column if not exists driver_lng double precision;
-alter table public.rides add column if not exists rating integer;
 alter table public.rides add column if not exists driver_rating integer;
 alter table public.rides add column if not exists accepted_at timestamptz;
 alter table public.rides add column if not exists started_at timestamptz;
@@ -756,8 +754,7 @@ begin
   select * into existing_rating from public.ride_ratings where ride_id = p_ride_id;
   perform set_config('buddyride.internal_ride_update', 'on', true);
   update public.rides
-  set rating = existing_rating.passenger_rating,
-      driver_rating = existing_rating.driver_rating,
+  set driver_rating = existing_rating.driver_rating,
       status = case when existing_rating.passenger_rating is not null then 'rated' else status end
   where id = p_ride_id and status in ('completed', 'rated');
 end;

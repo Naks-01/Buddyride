@@ -74,7 +74,6 @@ export type Ride = {
   payment_reference?: string | null
   ride_category?: string | null
   duration_min?: number | null
-  rating?: number | null
   driver_rating?: number | null
   cancel_reason?: string | null
   cancelled_by?: 'passenger' | 'driver' | 'system' | null

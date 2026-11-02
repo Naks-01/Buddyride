@@ -72,6 +72,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [showDropoffSug, setShowDropoffSug] = useState(false)
   const [route, setRoute] = useState<any>()
   const [ride, setRide] = useState<Ride | null>(null)
+  const [completedReceipt, setCompletedReceipt] = useState<Ride | null>(null)
   const [driverProfile, setDriverProfile] = useState<Profile | null>(null)
   const { location: liveDriverLocation, error: liveDriverLocationError } = useDriverLiveLocation(ride?.driver_id || null)
   const [loading, setLoading] = useState(false)
@@ -197,7 +198,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         if (active) setRideError(`Could not restore your active ride: ${errMsg(activeRideError)}`)
         return
       }
-      const { data: completedRide, error: completedRideError } = activeRide ? { data: null, error: null } : await supabase.from('rides').select('*').eq('passenger_id', profile.id).eq('status', 'completed').is('rating', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      const { data: completedRide, error: completedRideError } = activeRide ? { data: null, error: null } : await supabase.from('rides').select('*').eq('passenger_id', profile.id).eq('status', 'completed').order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (completedRideError) {
         if (active) setRideError(`Could not restore your pending rating: ${errMsg(completedRideError)}`)
         return
@@ -241,7 +242,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const newR = p.new as any; if (!newR) return
       const oldStatus = prevStatusRef.current
       const newStatus = newR.status
-      if (newStatus === 'rated' || newR.rating != null) {
+      if (newStatus === 'rated') {
+        setCompletedReceipt(newR as Ride)
         setRide(null)
         setRoute(undefined)
         setDriverProfile(null)
@@ -432,10 +434,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   async function finishTrip() {
     if (!ride) return
-    const rideId = ride.id; const driverId = ride.driver_id
+    const completedRide = ride
+    const rideId = completedRide.id; const driverId = completedRide.driver_id
     if (rating === 0 || !driverId) return
     const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: rating, p_comment: ratingComment.trim() || null })
     if (error) { setRideError(`Could not submit rating: ${errMsg(error)}`); return }
+    setCompletedReceipt(completedRide)
     setRide(null); setShowChat(false); setRoute(undefined); setDropoff(''); setDropoffCoords(null); setShowEstimate(false); setSheetSnap(50); setRating(0); setRatingComment('')
   }
 
@@ -465,7 +469,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60 }}>
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
-        {!ride && (<>
+        {!ride && !completedReceipt && (<>
           <h2 style={{ margin: '0 0 12px' }}>Where are you going? {profile.full_name ? `Hi ${profile.full_name.split(' ')[0]}` : ''}</h2>
           {!isVerified && (
             <div style={{padding:'12px', background:'#ff7a00', borderRadius:'12px', textAlign:'center', fontWeight:'bold', color:'white', marginBottom:'12px', fontSize:'14px'}}>
@@ -508,6 +512,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
+        {!ride && completedReceipt && (
+          <div style={{ display: 'grid', gap: '14px' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '40px' }}>✅</div>
+              <h2 style={{ margin: '4px 0' }}>Trip Receipt</h2>
+              <div style={{ fontSize: '28px', fontWeight: 800 }}>R {Number((completedReceipt as any).total_fare ?? completedReceipt.fare).toFixed(2)}</div>
+              <div style={{ color: '#888', fontSize: '13px' }}>{completedReceipt.payment_method === 'paystack' ? 'Paid online' : 'Cash'}</div>
+            </div>
+            <div style={{ display: 'grid', gap: '10px', padding: '14px', borderRadius: '12px', background: bg2 }}>
+              <div><strong>From</strong><div style={{ fontSize: '14px', marginTop: '3px' }}>{completedReceipt.pickup_address}</div></div>
+              <div><strong>To</strong><div style={{ fontSize: '14px', marginTop: '3px' }}>{completedReceipt.dropoff_address}</div></div>
+            </div>
+            <button onClick={() => setCompletedReceipt(null)} style={{ width: '100%', padding: '16px', borderRadius: '14px', background: '#ff7a00', color: 'white', border: 'none', fontWeight: 'bold' }}>Done</button>
+          </div>
+        )}
         {ride && (ride.status as any) === 'awaiting_payment' && (
           <>
             <h3>Complete payment to request your ride</h3>

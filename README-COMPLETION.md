@@ -12,6 +12,7 @@ Never commit real keys. The Supabase anon/publishable key and Mapbox public toke
 ## SQL
 - `supabase/schema.sql` is the clean-database schema and should only be used for a new database after review.
 - `supabase/patch_driver_documents.sql` is the compatibility migration for driver document columns.
+- `supabase/fix_ride_rating_columns.sql` replaces the ride-rating RPC for existing databases; apply it before deploying this rating fix.
 - `supabase/production_hardening.sql` adds bucket limits, profile counterpart visibility, ride update policy restrictions and realtime publication membership. Test it on a staging database before applying to production.
 
 ## Important
