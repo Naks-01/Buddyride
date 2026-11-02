@@ -74,6 +74,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [showDropoffSug, setShowDropoffSug] = useState(false)
   const [route, setRoute] = useState<any>()
   const [ride, setRide] = useState<Ride | null>(null)
+  const [completedRide, setCompletedRide] = useState<Ride | null>(null)
   const [completedReceipt, setCompletedReceipt] = useState<Ride | null>(null)
   const [driverProfile, setDriverProfile] = useState<(Profile & {
     car_make?: string | null
@@ -184,6 +185,31 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
   }
 
+  function clearActiveRideState() {
+    setRide(null)
+    setDriverProfile(null)
+    setRoute(undefined)
+    setShowChat(false)
+    setShowCancelReason(false)
+    setCancelReason('')
+    setPickup('')
+    setDropoff('')
+    setPickupCoords(null)
+    setDropoffCoords(null)
+    setDistance(null)
+    setPrice(null)
+    setShowEstimate(false)
+    setRideError('')
+    setRating(0)
+    setRatingComment('')
+    setSheetSnap(90)
+  }
+
+  function handleRideCompleted(finishedRide: Ride) {
+    setCompletedRide(finishedRide)
+    clearActiveRideState()
+  }
+
   useEffect(() => {
     let active = true
     navigator.geolocation.getCurrentPosition(async pos => {
@@ -209,7 +235,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         return
       }
       const data = activeRide || completedRide
-      if (active && data) { setRide(data as Ride); setSheetSnap(data.status === 'completed' ? 90 : 50); prevStatusRef.current = data.status }
+      if (active && data) {
+        prevStatusRef.current = data.status
+        if (data.status === 'completed') handleRideCompleted(data as Ride)
+        else setRide(data as Ride)
+        setSheetSnap(data.status === 'completed' ? 90 : 50)
+      }
     }
     void loadActiveRide()
     return () => { active = false }
@@ -275,14 +306,18 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const newStatus = newR.status
       if (newStatus === 'rated') {
         setCompletedReceipt(newR as Ride)
-        setRide(null)
-        setRoute(undefined)
-        setDriverProfile(null)
-        setShowChat(false)
+        setCompletedRide(null)
+        clearActiveRideState()
         setRating(0)
         setRatingComment('')
         setSheetSnap(50)
         prevStatusRef.current = newStatus
+        return
+      }
+      if (newStatus === 'completed') {
+        playSound('complete')
+        prevStatusRef.current = newStatus
+        handleRideCompleted(newR as Ride)
         return
       }
       if (newStatus === 'cancelled' && newR.cancelled_by === 'driver') {
@@ -290,7 +325,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         setCancelledNotification(`Driver cancelled: ${newR.cancel_reason || 'No reason'}`)
         if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current)
         cancelledRideTimer.current = setTimeout(() => {
-          setCancelledNotification(null); setRide(null); setRoute(undefined); setDriverProfile(null); setShowChat(false); setSheetSnap(50)
+          setCancelledNotification(null); clearActiveRideState(); setCompletedRide(null); setSheetSnap(50)
           cancelledRideTimer.current = null
         }, 5000)
       } else {
@@ -327,7 +362,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               else if (['picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(newStatus as any)) playSound('start')
               else if (newStatus === 'completed') playSound('complete')
             }
-            setRide(typedData as Ride)
+            if (typedData.status === 'completed') {
+              playSound('complete')
+              handleRideCompleted(typedData as Ride)
+            } else {
+              setRide(typedData as Ride)
+            }
             prevStatusRef.current = typedData.status
           }
         }
@@ -455,14 +495,18 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function finishTrip() {
-    if (!ride) return
-    const completedRide = ride
-    const rideId = completedRide.id; const driverId = completedRide.driver_id
+    if (!completedRide) return
+    const finishedRide = completedRide
+    const rideId = finishedRide.id; const driverId = finishedRide.driver_id
     if (rating === 0 || !driverId) return
     const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: rating, p_comment: ratingComment.trim() || null })
     if (error) { setRideError(`Could not submit rating: ${errMsg(error)}`); return }
-    setCompletedReceipt(completedRide)
-    setRide(null); setShowChat(false); setRoute(undefined); setDropoff(''); setDropoffCoords(null); setShowEstimate(false); setSheetSnap(50); setRating(0); setRatingComment('')
+    setCompletedReceipt(finishedRide)
+    setCompletedRide(null)
+    clearActiveRideState()
+    setSheetSnap(50)
+    setRating(0)
+    setRatingComment('')
   }
 
   const sugStyle = (dark:boolean) => ({ position: 'absolute' as const, top: '58px', left: 0, right: 0, zIndex: 9999, background: dark? '#2a2a2a' : 'white', border: `1px solid ${dark? '#444' : '#ddd'}`, borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
@@ -484,14 +528,14 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     )}
 
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
-      <OsmMapView center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride ? undefined : onPickupMapMove} />
-      {!ride && <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: 'translate(-50%, -100%)', fontSize: '34px', lineHeight: 1, pointerEvents: 'none' }}>📍</div>}
+      <OsmMapView center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onPickupMapMove} />
+      {!ride && !completedRide && !completedReceipt && <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: 'translate(-50%, -100%)', fontSize: '34px', lineHeight: 1, pointerEvents: 'none' }}>📍</div>}
       <button aria-label="Center map on my location" title="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', color: 'white', border: 'none', fontSize: '22px' }}>📍</button>
     </div>
 
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60 }}>
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
-        {!ride && !completedReceipt && (<>
+        {!ride && !completedRide && !completedReceipt && (<>
           <h2 style={{ margin: '0 0 12px' }}>Where are you going? {profile.full_name ? `Hi ${profile.full_name.split(' ')[0]}` : ''}</h2>
           {!isVerified && (
             <div style={{padding:'12px', background:'#ff7a00', borderRadius:'12px', textAlign:'center', fontWeight:'bold', color:'white', marginBottom:'12px', fontSize:'14px'}}>
@@ -610,11 +654,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {['picked_up','en_route','in_progress','on_trip','driving_to_destination'].includes(ride.status as any) && <div className="ride-status" style={{ padding: '12px', borderRadius: '16px', textAlign: 'center', fontWeight: 'bold' }}>🧭 Driving to destination...</div>}
           </div>
         )}
-        {ride && (ride.status as any) === 'completed' && (
+        {completedRide && (
           <>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '48px' }}>✅</div>
-              <h2 style={{ margin: '8px 0' }}>Trip Completed! R {ride.fare}</h2>
+              <h2 style={{ margin: '8px 0' }}>Trip Completed! R {completedRide.fare}</h2>
               <p style={{ color: '#888', fontSize: '13px' }}>Rate your driver</p>
               <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>
                 {[1,2,3,4,5].map(s => (<button key={s} onClick={() => setRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: rating >= s? '#FFB400' : '#444' }}>{rating >= s? '★' : '☆'}</button>))}

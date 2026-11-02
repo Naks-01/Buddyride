@@ -73,9 +73,11 @@ export function MapboxMapView({ center, route, driverLocation, bearing = 0, isNa
     const map = mapRef.current
     if (!map) return
 
-    if (route) {
-      const src = map.getSource('route') as mapboxgl.GeoJSONSource
-      if (src) {
+    const src = map.getSource('route') as mapboxgl.GeoJSONSource | undefined
+    if (src) {
+      if (!route) {
+        src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} } as any)
+      } else {
         const coords = route.type === 'Feature' ? route.geometry.coordinates : route.coordinates || route
         const fixed = (coords as any[]).map((c:any) => toLngLat(c))
         src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: fixed }, properties: {} } as any)
@@ -92,8 +94,12 @@ export function MapboxMapView({ center, route, driverLocation, bearing = 0, isNa
         duration: 800,
       })
       if (markerRef.current) markerRef.current.setLngLat(lngLat)
+    } else if (!driverLocation) {
+      markerRef.current?.remove()
+      markerRef.current = null
+      map.easeTo({ center: toLngLat(center), zoom: 16, pitch: 0, bearing: 0, duration: 0 })
     }
-  }, [route, driverLocation, bearing, isNavigating, followDriver])
+  }, [center, route, driverLocation, bearing, isNavigating, followDriver])
 
   return <div ref={containerRef} style={{ width:'100%', height:'100vh', position:'absolute', inset:0 }} />
 }

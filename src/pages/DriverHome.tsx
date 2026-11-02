@@ -122,6 +122,39 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (requestTimerRef.current) { clearInterval(requestTimerRef.current); requestTimerRef.current = null }
   }
 
+  function clearDriverRideState() {
+    setRide(null)
+    setRoute(undefined)
+    setRouteData(null)
+    routeDataRef.current = null
+    activeStepIndexRef.current = 0
+    setActiveStepIndex(0)
+    setNextTurnDistance(null)
+    setIsNavigating(false)
+    setZoom(13)
+    setSearchingRides([])
+    setIncomingRide(null)
+    setShowChat(false)
+    setIsMinimized(false)
+    setSheetSnap(50)
+  }
+
+  function handleDriverRideCompleted(finishedRide: Ride) {
+    setPendingRating(finishedRide)
+    localStorage.setItem(pendingRatingStorageKey, JSON.stringify(finishedRide))
+    clearDriverRideState()
+    setShowDriverRating(false)
+    setDriverRating(0)
+    setDriverRatingComment('')
+    setShowCollected(Number(finishedRide.fare || 0))
+    if (collectedTimerRef.current) clearTimeout(collectedTimerRef.current)
+    collectedTimerRef.current = setTimeout(() => {
+      setShowCollected(null)
+      setShowDriverRating(true)
+      collectedTimerRef.current = null
+    }, 1200)
+  }
+
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
   useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false); setIsMinimized(false); setSheetSnap(50) } }, [ride, showDriverRating])
   useEffect(() => {
@@ -239,8 +272,25 @@ export function DriverHome({ profile }: { profile: Profile }) {
         setIsOnline(false)
         return
       }
-      if (pendingRating) {
-        setRide(pendingRating)
+      let completedRide = pendingRating
+      if (!completedRide) {
+        const { data: latestCompletedRide, error: completedRideError } = await supabase.from('rides')
+          .select('*')
+          .eq('driver_id', profile.id)
+          .eq('status', 'completed')
+          .is('driver_rating', null)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (completedRideError) {
+          console.error('Could not restore the completed ride:', completedRideError.message)
+          return
+        }
+        completedRide = latestCompletedRide as Ride | null
+      }
+      if (completedRide) {
+        setPendingRating(completedRide)
+        localStorage.setItem(pendingRatingStorageKey, JSON.stringify(completedRide))
         setShowDriverRating(true)
         setIsNavigating(false)
         setZoom(13)
@@ -268,7 +318,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
         }
         if (['completed','rated'].includes(newRide.status as any) && newRide.driver_rating != null) {
           clearPendingRating()
-          setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setShowCollected(null); return
+          clearDriverRideState()
+          setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null); return
+        }
+        if (newRide.status === 'completed') {
+          handleDriverRideCompleted(newRide)
+          return
         }
         if (newRide.status === 'rated') {
           setRide(newRide)
@@ -510,22 +565,28 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   async function completeRide() {
     if (!ride) return
-    const rideId = ride.id
-    const fare = Number(ride.fare || 0)
-    const { data: completedRide, error } = await updateRide({ status: 'completed' })
-      .eq('id', rideId).eq('status', ride.status).select('*').maybeSingle()
-    if (error) { alert(`Could not complete this ride: ${errMsg(error)}`); return }
-    if (!completedRide) { alert('This trip changed before it could be completed. Refresh and try again.'); return }
-    setRide(completedRide as Ride)
-    setPendingRating(completedRide as Ride)
-    localStorage.setItem(pendingRatingStorageKey, JSON.stringify(completedRide))
-    setShowCollected(fare)
-    if (collectedTimerRef.current) clearTimeout(collectedTimerRef.current)
-    collectedTimerRef.current = setTimeout(() => {
-      setShowCollected(null)
-      setShowDriverRating(true)
-      collectedTimerRef.current = null
-    }, 1200)
+    const activeRide = ride
+    const { data, error } = await updateRide({ status: 'completed' })
+      .eq('id', activeRide.id).eq('status', activeRide.status).select('*').maybeSingle()
+    let completedRide = data as Ride | null
+    if (error || !completedRide) {
+      const { data: reloadedRide, error: reloadError } = await supabase.from('rides')
+        .select('*')
+        .eq('id', activeRide.id)
+        .maybeSingle()
+      if (reloadError) {
+        alert(`Could not complete this ride: ${errMsg(error || reloadError)}`)
+        return
+      }
+      if (reloadedRide?.status !== 'completed') {
+        alert(error
+          ? `Could not complete this ride: ${errMsg(error)}`
+          : 'This trip changed before it could be completed. Refresh and try again.')
+        return
+      }
+      completedRide = reloadedRide as Ride
+    }
+    handleDriverRideCompleted(completedRide)
   }
 
   async function markArrived() {
@@ -558,18 +619,21 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }
 
   async function submitDriverRating() {
-    if (!ride || driverRating === 0) return
-    const rideId = ride.id
+    const ratingRide = pendingRating || ride
+    if (!ratingRide || driverRating === 0) return
+    const rideId = ratingRide.id
     const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: driverRating, p_comment: driverRatingComment.trim() || null })
     if (error) { alert(`Could not submit rating: ${errMsg(error)}`); return }
     clearPendingRating()
-    setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null)
+    clearDriverRideState()
+    setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null)
   }
 
   async function skipRating() {
-    if (!ride) return
+    if (!ride && !pendingRating) return
     clearPendingRating()
-    setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null)
+    clearDriverRideState()
+    setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null)
   }
 
   function openDriverCancel(targetRide: Ride | null) {
@@ -599,6 +663,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const canGoOnline = approvedDocs.length >= 7
   const showTopBanner = !canGoOnline
   const topBannerHeight = showTopBanner? 42 : 0
+  const completedRideForDisplay = ride?.status === 'completed' ? ride : pendingRating
 
   function clearPendingRating() {
     setPendingRating(null)
@@ -614,7 +679,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        {!ride && <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : '⛔ BLOCKED'}</button>}
+        {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : '⛔ BLOCKED'}</button>}
       </div>
     </header>
     {showTopBanner && (<div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: docStatus === 'missing' ? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>{docStatus === 'missing' ? `⚠️ Upload 7 docs: ${approvedDocs.length}/7` : `⏳ Pending: ${approvedDocs.length}/7 approved`}</div>)}
@@ -647,11 +712,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {ride && !['driver_assigned','accepted','arrived','picked_up','in_progress','en_route','on_trip','driving_to_destination','completed'].includes(String(ride.status)) && !showDriverRating && (
         <div role="status" style={{padding:'16px', textAlign:'center'}}><h3>Trip status: {ride.status}</h3><p style={{color:subText}}>{ride.pickup_address} → {ride.dropoff_address}</p><p>R {ride.fare}</p><p style={{color:subText}}>Refreshing trip status…</p></div>
       )}
-      {ride && (ride.status as any) === 'completed' &&!showDriverRating && showCollected === null && (<div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2 style={{ margin: '8px 0' }}>Trip Completed!</h2><h1 style={{ color: '#00d181', margin: '4px 0' }}>R {ride.fare} {ride.payment_method === 'paystack' ? 'PAID ONLINE' : 'CASH DUE'}</h1><div style={{color:'#00d181', fontWeight:'bold'}}>You get R {getEarnings(ride.fare, ride.driver_earnings, ride.buddyride_commission).driverGets} • Fee R {getEarnings(ride.fare, ride.driver_earnings, ride.buddyride_commission).platformGets}</div><p style={{ color: subText, fontSize: '13px' }}>Rate passenger to continue</p><button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button></div>)}
-      {showDriverRating && ride && (<div style={{ textAlign: 'center' }}><h2 style={{ margin: '8px 0' }}>Rate Passenger</h2><p style={{ color: subText, fontSize: '13px' }}>{ride.dropoff_address?.split(',')[0]} • Passenger R {ride.fare} / You R {getEarnings(ride.fare, ride.driver_earnings, ride.buddyride_commission).driverGets}</p><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: driverRating >= s? '#FF6B00' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}</div><textarea value={driverRatingComment} maxLength={1000} onChange={event => setDriverRatingComment(event.target.value)} placeholder="Add a comment (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, resize: 'vertical' }} /><div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}><button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button><button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button></div></div>)}
+      {completedRideForDisplay && !showDriverRating && showCollected === null && (<div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2 style={{ margin: '8px 0' }}>Trip Completed!</h2><h1 style={{ color: '#00d181', margin: '4px 0' }}>R {completedRideForDisplay.fare} {completedRideForDisplay.payment_method === 'paystack' ? 'PAID ONLINE' : 'CASH DUE'}</h1><div style={{color:'#00d181', fontWeight:'bold'}}>You get R {getEarnings(completedRideForDisplay.fare, completedRideForDisplay.driver_earnings, completedRideForDisplay.buddyride_commission).driverGets} • Fee R {getEarnings(completedRideForDisplay.fare, completedRideForDisplay.driver_earnings, completedRideForDisplay.buddyride_commission).platformGets}</div><p style={{ color: subText, fontSize: '13px' }}>Rate passenger to continue</p><button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button></div>)}
+      {showDriverRating && (pendingRating || ride) && (<div style={{ textAlign: 'center' }}><h2 style={{ margin: '8px 0' }}>Rate Passenger</h2><p style={{ color: subText, fontSize: '13px' }}>{(pendingRating || ride)!.dropoff_address?.split(',')[0]} • Passenger R {(pendingRating || ride)!.fare} / You R {getEarnings((pendingRating || ride)!.fare, (pendingRating || ride)!.driver_earnings, (pendingRating || ride)!.buddyride_commission).driverGets}</p><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: driverRating >= s? '#FF6B00' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}</div><textarea value={driverRatingComment} maxLength={1000} onChange={event => setDriverRatingComment(event.target.value)} placeholder="Add a comment (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, resize: 'vertical' }} /><div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}><button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button><button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button></div></div>)}
       {!ride &&!showDriverRating && (<div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{canGoOnline ? (isOnline ? '✅ Waiting for Buddy requests... 🔊' : 'Ready to go online') : `⛔ Blocked - Docs: ${approvedDocs.length}/7`}</div>
-          {!ride && <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : `NEED DOCS (${approvedDocs.length}/7)`}</button>}
+          {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : `NEED DOCS (${approvedDocs.length}/7)`}</button>}
         </div>)}
     </BottomSheet>
     </div>
@@ -673,7 +738,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       </div>
     </div>)}
     {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bgCard, width: '100%', borderTopLeftRadius: '32px', borderTopRightRadius: '32px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><div style={{ fontWeight: 'bold', color: text }}>Chat with Passenger</div><div style={{ fontSize: '11px', color: '#999' }}>Messages disappear after trip</div></div><button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
-    {showCollected!== null && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}><div style={{background:'linear-gradient(135deg,#FF6B00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px'}}><div style={{fontSize:'48px'}}>💰</div><div style={{color:'white', fontSize:'14px', fontWeight:'bold'}}>{ride?.payment_method === 'paystack' ? 'PAYMENT RECEIVED ONLINE' : 'CASH FARE DUE'}</div><div style={{color:'white', fontSize:'20px'}}>Passenger R {showCollected}</div><div style={{color:'white', fontSize:'32px', fontWeight:'900'}}>You get R {getEarnings(showCollected, ride?.driver_earnings, ride?.buddyride_commission).driverGets}</div><div style={{color:'white', fontSize:'14px', opacity:0.8}}>Fee R {getEarnings(showCollected, ride?.driver_earnings, ride?.buddyride_commission).platformGets} (20%)</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#FF6B00', border:'none', fontWeight:'900'}}>Rate Passenger →</button></div></div>)}
+    {showCollected!== null && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}><div style={{background:'linear-gradient(135deg,#FF6B00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px'}}><div style={{fontSize:'48px'}}>💰</div><div style={{color:'white', fontSize:'14px', fontWeight:'bold'}}>{pendingRating?.payment_method === 'paystack' ? 'PAYMENT RECEIVED ONLINE' : 'CASH FARE DUE'}</div><div style={{color:'white', fontSize:'20px'}}>Passenger R {showCollected}</div><div style={{color:'white', fontSize:'32px', fontWeight:'900'}}>You get R {getEarnings(showCollected, pendingRating?.driver_earnings, pendingRating?.buddyride_commission).driverGets}</div><div style={{color:'white', fontSize:'14px', opacity:0.8}}>Fee R {getEarnings(showCollected, pendingRating?.driver_earnings, pendingRating?.buddyride_commission).platformGets} (20%)</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#FF6B00', border:'none', fontWeight:'900'}}>Rate Passenger →</button></div></div>)}
     {showDriverCancelReason && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}><div style={{background: isDark? '#121214':'white', width:'100%', borderTopLeftRadius:'32px', borderTopRightRadius:'32px', padding:'20px', color: text}}><div style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '0 auto 14px' }} /><h3>Why cancel?</h3>{['Passenger no-show','Passenger asked to cancel','Wrong pickup','Vehicle issue','Other'].map(reason => (<button key={reason} onClick={() => setDriverCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: driverCancelReason===reason? '#ff3b30':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {driverCancelReason===reason? '✓':''}</button>))}<div style={{display:'flex', gap:'8px', marginTop:'16px'}}><button onClick={() => { setShowDriverCancelReason(false); setDriverCancelReason(''); setRideToCancel(null) }} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button><button onClick={executeDriverCancel} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!driverCancelReason}>Confirm Cancel</button></div></div></div>)}
   </div>
 }
