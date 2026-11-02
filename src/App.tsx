@@ -20,6 +20,34 @@ const DriverNavigationView = lazy(() => import('./pages/DriverNavigationView').t
 
 const ADMIN_EMAILS = ['mokgalaka.nt@gmail.com', 'mokgalaka.nt@outlook.com', 'admin@buddyride.co.za']
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
+const selfieSkipKey = (userId: string) => `buddyride_selfie_skip_${userId}`
+
+async function compressSelfie(file: File): Promise<Blob> {
+  const imageUrl = URL.createObjectURL(file)
+  try {
+    const image = new Image()
+    image.src = imageUrl
+    await image.decode()
+
+    const scale = Math.min(1, 800 / image.width, 800 / image.height)
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.width * scale))
+    canvas.height = Math.max(1, Math.round(image.height * scale))
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Could not prepare the selfie image')
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    const compressed = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob)
+        else reject(new Error('Could not compress the selfie image'))
+      }, 'image/jpeg', 0.7)
+    })
+    return compressed
+  } finally {
+    URL.revokeObjectURL(imageUrl)
+  }
+}
 
 function Brand({ compact = false }: { compact?: boolean }) {
   const [index, setIndex] = useState(0)
@@ -87,7 +115,8 @@ export default function App() {
       
       try {
         const canPass = await checkSelfieLock(userId)
-        setShowSelfieCheck(!canPass)
+        const skippedToday = localStorage.getItem(selfieSkipKey(userId)) === new Date().toISOString().split('T')[0]
+        setShowSelfieCheck(!canPass && !skippedToday)
       } catch {
         setShowSelfieCheck(false)
       }
@@ -142,33 +171,33 @@ export default function App() {
     const file = e.target.files?.[0]
     if (!file || !profile) return
     setSelfieBusy(true)
+    setMessage('')
     try {
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
-      const fileName = `${profile.id}/${Date.now()}.${ext}`
-      const { error: uploadError } = await supabase.storage.from('selfies').upload(fileName, file, { contentType: file.type || 'image/jpeg' })
-      if (uploadError) {
-        if (uploadError.message.includes('not found') || uploadError.message.includes('Bucket')) {
-          setShowSelfieCheck(false)
-          return
-        }
-        throw uploadError
-      }
-      try {
-        const today = new Date().toISOString().split('T')[0]
-        await supabase.from('profiles').update({ last_selfie_date: today, last_selfie_url: fileName } as any).eq('id', profile.id)
-      } catch {}
+      const compressed = await compressSelfie(file)
+      const fileName = `${profile.id}/${Date.now()}.jpg`
+      const { error: uploadError } = await supabase.storage.from('safety-selfies').upload(fileName, compressed, { contentType: 'image/jpeg' })
+      if (uploadError) throw uploadError
+      const today = new Date().toISOString().split('T')[0]
+      const { error: profileError } = await supabase.from('profiles').update({ last_selfie_date: today, last_selfie_url: fileName } as any).eq('id', profile.id)
+      if (profileError) console.error('Could not save selfie check date:', profileError.message)
       setShowSelfieCheck(false)
-    } catch (err: any) {
-      setMessage(err instanceof Error ? err.message : 'Selfie upload failed')
+    } catch (error) {
+      console.error('Safety Check selfie upload failed:', error)
+      localStorage.setItem(selfieSkipKey(profile.id), new Date().toISOString().split('T')[0])
       setShowSelfieCheck(false)
     } finally { setSelfieBusy(false) }
+  }
+
+  function skipSelfieCheck() {
+    if (profile) localStorage.setItem(selfieSkipKey(profile.id), new Date().toISOString().split('T')[0])
+    setShowSelfieCheck(false)
   }
 
   if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
     if (showSelfieCheck) {
-      return <main className="auth-page"><section className="auth-card" style={{textAlign:'center'}}><Brand /><h1>Safety Check</h1><p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />{selfieBusy && <p>Verifying...</p>}<button onClick={() => setShowSelfieCheck(false)} style={{ marginTop: 12, background: 'none', border: 'none', color: '#9ca3af', fontSize: 12 }}>Skip for now</button>{message && <div className="notice">{message}</div>}</section></main>
+      return <main className="auth-page"><section className="auth-card" style={{textAlign:'center'}}><Brand /><h1>Safety Check</h1><p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />{selfieBusy && <p>Verifying...</p>}<button onClick={skipSelfieCheck} style={{ marginTop: 12, background: 'none', border: 'none', color: '#9ca3af', fontSize: 12 }}>Skip for now</button></section></main>
     }
     const navigationRideId = window.location.pathname.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {

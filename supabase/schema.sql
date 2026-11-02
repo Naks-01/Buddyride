@@ -1036,9 +1036,10 @@ values ('driver-documents', 'driver-documents', false, 52428800, array['image/jp
 on conflict (id) do update
 set public = false, file_size_limit = 52428800, allowed_mime_types = array['image/jpeg','image/png','image/webp','application/pdf'];
 
-insert into storage.buckets (id, name, public)
-values ('selfies', 'selfies', false)
-on conflict (id) do update set public = false;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('safety-selfies', 'safety-selfies', false, 10485760, array['image/jpeg'])
+on conflict (id) do update
+set public = false, file_size_limit = 10485760, allowed_mime_types = array['image/jpeg'];
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('profile-photos', 'profile-photos', true, 52428800, array['image/jpeg'])
@@ -1085,24 +1086,28 @@ using (
 );
 
 drop policy if exists "selfies_storage_select" on storage.objects;
-create policy "selfies_storage_select" on storage.objects
+drop policy if exists "safety_selfies_storage_select" on storage.objects;
+create policy "safety_selfies_storage_select" on storage.objects
 for select to authenticated using (
-  bucket_id = 'selfies' and (storage.foldername(name))[1] = auth.uid()::text
+  bucket_id = 'safety-selfies' and (storage.foldername(name))[1] = auth.uid()::text
 );
 drop policy if exists "selfies_storage_insert" on storage.objects;
-create policy "selfies_storage_insert" on storage.objects
+drop policy if exists "safety_selfies_storage_insert" on storage.objects;
+create policy "safety_selfies_storage_insert" on storage.objects
 for insert to authenticated with check (
-  bucket_id = 'selfies' and (storage.foldername(name))[1] = auth.uid()::text
+  bucket_id = 'safety-selfies' and (storage.foldername(name))[1] = auth.uid()::text
 );
 drop policy if exists "selfies_storage_update" on storage.objects;
-create policy "selfies_storage_update" on storage.objects
+drop policy if exists "safety_selfies_storage_update" on storage.objects;
+create policy "safety_selfies_storage_update" on storage.objects
 for update to authenticated
-using (bucket_id = 'selfies' and (storage.foldername(name))[1] = auth.uid()::text)
-with check (bucket_id = 'selfies' and (storage.foldername(name))[1] = auth.uid()::text);
+using (bucket_id = 'safety-selfies' and (storage.foldername(name))[1] = auth.uid()::text)
+with check (bucket_id = 'safety-selfies' and (storage.foldername(name))[1] = auth.uid()::text);
 drop policy if exists "selfies_storage_delete" on storage.objects;
-create policy "selfies_storage_delete" on storage.objects
+drop policy if exists "safety_selfies_storage_delete" on storage.objects;
+create policy "safety_selfies_storage_delete" on storage.objects
 for delete to authenticated using (
-  bucket_id = 'selfies' and (storage.foldername(name))[1] = auth.uid()::text
+  bucket_id = 'safety-selfies' and (storage.foldername(name))[1] = auth.uid()::text
 );
 
 drop policy if exists "profile_photos_storage_select" on storage.objects;
