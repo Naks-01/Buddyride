@@ -147,6 +147,13 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       else setPassengerDocs(updateLocal)
 
       let verificationSyncError = ''
+      if (table === 'driver_documents' && status === 'rejected' && doc.driver_id) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ is_verified: false, verification_status: 'rejected' } as any)
+          .eq('id', doc.driver_id)
+        if (profileError) verificationSyncError = profileError.message
+      }
       if (table === 'passenger_documents' && doc.passenger_id) {
         const { data: passengerRows, error: passengerDocsError } = await supabase
           .from('passenger_documents')
@@ -173,7 +180,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       }
       await load()
       if (verificationSyncError) {
-        setError(`Document status updated, but passenger verification could not be synchronized: ${verificationSyncError}`)
+        setError(`Document status updated, but driver or passenger verification could not be synchronized: ${verificationSyncError}`)
       }
       if (metadataColumnMissing) {
         alert(`Document status updated, but ${status==='approved'?'verified_at':'rejection_reason'} is not available in the ${table} table.`)
@@ -194,7 +201,9 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     setLoadingId(loadingKey)
     setError('')
     try {
-      const { error: profileError } = await supabase.from('profiles').update({ is_verified: true } as any).eq('id', driverId)
+      const { error: profileError } = await supabase.from('profiles')
+        .update({ is_verified: true, verification_status: 'approved' } as any)
+        .eq('id', driverId)
       if (profileError) throw profileError
       await load()
     } catch (approvalError: any) {
@@ -291,8 +300,8 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             ? `Missing approval: ${missingRequired.map(requirement=>requirement.label).join(', ')}`
             : ''
           return <section key={driverId} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
-            <h3 style={{margin:'0 0 4px'}}>{email} - {approvedCount}/7 approved ({progressPercent}%)</h3>
-            <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={7} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
+            <h3 style={{margin:'0 0 4px'}}>{email} - {approvedCount}/{REQUIRED_DOCS.length} documents approved ({progressPercent}%)</h3>
+            <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={REQUIRED_DOCS.length} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
             {REQUIRED_DOCS.map(requirement => renderDocumentRow(

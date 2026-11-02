@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../lib/supabase'
-import { createDriverDocumentSignedUrl, REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 import { uploadProfilePhoto } from '../lib/profilePhotos'
-import { compressImageFile } from '../lib/compressImage'
 
 type View =
   | 'main'
@@ -49,14 +47,6 @@ type DriverStatRide = {
   cancelled_by: string | null
 }
 
-type DriverDocument = {
-  id: string
-  doc_type: string
-  status: string
-  file_url: string
-  rejection_reason?: string | null
-}
-
 export function NavigationMenu({
   profile,
   onSignOut,
@@ -74,11 +64,6 @@ export function NavigationMenu({
   const [rides, setRides] = useState<DriverRide[]>([])
   const [ridesLoading, setRidesLoading] = useState(false)
   const [ridesError, setRidesError] = useState('')
-  const [driverDocuments, setDriverDocuments] = useState<DriverDocument[]>([])
-  const [documentsLoading, setDocumentsLoading] = useState(false)
-  const [documentsError, setDocumentsError] = useState('')
-  const [documentUploading, setDocumentUploading] = useState<string | null>(null)
-  const [documentToast, setDocumentToast] = useState('')
   const [driverStatRides, setDriverStatRides] = useState<DriverStatRide[]>([])
   const [driverStatRating, setDriverStatRating] = useState<number | null>(null)
   const [driverStatsLoading, setDriverStatsLoading] = useState(false)
@@ -157,79 +142,6 @@ export function NavigationMenu({
     setInternalOpen(true)
   }
 
-  const uploadDriverDocument = async (docType: string, file: File) => {
-    if (!profile?.id) {
-      setDocumentsError('Cannot upload document: driver profile is unavailable.')
-      return
-    }
-
-    setDocumentUploading(docType)
-    setDocumentsError('')
-    setDocumentToast('')
-    let uploadedPath: string | null = null
-    try {
-      const isImage = file.type.startsWith('image/')
-      const uploadBlob = await compressImageFile(file)
-      const extension = isImage ? 'jpg' : (file.name.split('.').pop()?.toLowerCase() || 'pdf')
-      const path = `${profile.id}/${docType}-${Date.now()}.${extension}`
-      const { error: uploadError } = await supabase.storage
-        .from('driver-documents')
-        .upload(path, uploadBlob, {
-          upsert: false,
-          contentType: isImage ? 'image/jpeg' : (file.type || 'application/octet-stream'),
-          cacheControl: '3600',
-        })
-      if (uploadError) throw uploadError
-      uploadedPath = path
-
-      const { data, error: dbError } = await supabase
-        .from('driver_documents')
-        .upsert({
-          driver_id: profile.id,
-          doc_type: docType,
-          file_url: path,
-          status: 'pending',
-          rejection_reason: null,
-        }, { onConflict: 'driver_id,doc_type' })
-        .select('id,doc_type,status,file_url,rejection_reason')
-        .single()
-      if (dbError) throw dbError
-
-      setDriverDocuments((current) => [
-        ...current.filter((document) => normalizeDriverDocType(document.doc_type.toLowerCase()) !== docType),
-        data as DriverDocument,
-      ])
-      setDocumentToast(isImage ? 'Photo compressed & uploaded — waiting for admin approval' : 'Submitted - waiting for admin approval')
-    } catch (uploadError: unknown) {
-      if (uploadedPath) {
-        const { error: cleanupError } = await supabase.storage.from('driver-documents').remove([uploadedPath])
-        if (cleanupError) {
-          const message = uploadError instanceof Error ? uploadError.message : String(uploadError)
-          setDocumentsError(`Upload failed: ${message}. Uploaded file cleanup failed: ${cleanupError.message}`)
-          setDocumentUploading(null)
-          return
-        }
-      }
-      const message = uploadError instanceof Error ? uploadError.message : String(uploadError)
-      setDocumentsError(`Upload failed: ${message}`)
-    } finally {
-      setDocumentUploading(null)
-    }
-  }
-
-  const viewDriverDocument = async (fileUrl: string) => {
-    const newWindow = window.open('about:blank', '_blank')
-    try {
-      const signedUrl = await createDriverDocumentSignedUrl(fileUrl)
-      if (newWindow) newWindow.location.href = signedUrl
-      else window.location.href = signedUrl
-    } catch (viewError: unknown) {
-      newWindow?.close()
-      const message = viewError instanceof Error ? viewError.message : String(viewError)
-      setDocumentsError(`Could not open document: ${message}`)
-    }
-  }
-
   useEffect(() => {
     if (!isOpen) return
 
@@ -305,32 +217,6 @@ export function NavigationMenu({
           setRides((data || []) as DriverRide[])
         }
         setRidesLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [isOpen, profile?.id, view])
-
-  useEffect(() => {
-    if (!isOpen || !profile?.id || view !== 'documents') return
-
-    let active = true
-    setDocumentsLoading(true)
-    setDocumentsError('')
-    void supabase
-      .from('driver_documents')
-      .select('id,doc_type,status,file_url,rejection_reason')
-      .eq('driver_id', profile.id)
-      .then(({ data, error }) => {
-        if (!active) return
-        if (error) {
-          setDocumentsError(error.message)
-          setDriverDocuments([])
-        } else {
-          setDriverDocuments((data || []) as DriverDocument[])
-        }
-        setDocumentsLoading(false)
       })
 
     return () => {
@@ -522,59 +408,14 @@ export function NavigationMenu({
           <>
             {backButton}
             <h2>Documents</h2>
-            <p style={{ color: muted }}>Your 7 driver verification documents.</p>
-            <p style={{ color: muted }}>{REQUIRED_DOCS.filter(requirement => driverDocuments.some(document =>
-              normalizeDriverDocType(document.doc_type.toLowerCase()) === requirement.type
-              && document.status.toLowerCase() === 'approved',
-            )).length}/7 Approved</p>
-            {documentsLoading && <p style={{ color: muted }}>Loading document statuses…</p>}
-            {documentsError && <p role="alert" style={{ color: '#ff9b9b' }}>{documentsError}</p>}
-            {documentToast && <p role="status" style={{ color: teal }}>{documentToast}</p>}
-            {REQUIRED_DOCS.map(({ label, type }) => {
-              const record = driverDocuments.find((document) => normalizeDriverDocType(document.doc_type.toLowerCase()) === type)
-              const status = record?.status || 'missing'
-              const normalizedStatus = status.toLowerCase()
-              const approved = normalizedStatus === 'approved'
-              const rejected = normalizedStatus === 'rejected'
-              return (
-                <div key={label} style={{ ...detailStyle, alignItems: 'center' }}>
-                  <span>{label}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span
-                    style={{
-                      color: approved ? teal : rejected ? '#ffc7cb' : normalizedStatus === 'pending' ? '#93c5fd' : '#fde68a',
-                      background: approved ? '#173d32' : rejected ? '#45303a' : normalizedStatus === 'pending' ? '#1e3a8a' : '#44361f',
-                      padding: '5px 9px',
-                      borderRadius: 20,
-                      fontSize: 12,
-                    }}
-                  >
-                    {approved ? 'Approved' : rejected ? 'Rejected' : normalizedStatus === 'missing' ? 'Missing' : 'Pending'}
-                    </span>
-                    {(!record || rejected) ? (
-                      <label style={{ background: documentUploading === type ? '#555' : '#00a86b', color: 'white', padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: documentUploading ? 'wait' : 'pointer' }}>
-                        {documentUploading === type ? 'Uploading…' : 'Upload'}
-                        <input
-                          hidden
-                          type="file"
-                          accept="image/*,.pdf"
-                          disabled={documentUploading !== null}
-                          onChange={(event) => {
-                            const file = event.target.files?.[0]
-                            if (file) void uploadDriverDocument(type, file)
-                            event.target.value = ''
-                          }}
-                        />
-                      </label>
-                    ) : (
-                      <button type="button" onClick={() => void viewDriverDocument(record.file_url)} style={{ background: '#374151', color: 'white', padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}>
-                        View
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+            <p style={{ color: muted, lineHeight: 1.5 }}>Upload and manage your eight driver document categories, including four vehicle photos, from the driver onboarding page.</p>
+            <button
+              type="button"
+              onClick={() => window.location.assign('/driver/onboarding')}
+              style={{ width: '100%', justifyContent: 'center', color: 'white', background: '#00a86b', border: 0, borderRadius: 12, padding: '14px 16px', fontWeight: 800 }}
+            >
+              Open driver onboarding
+            </button>
           </>
         )
       case 'vehicles':

@@ -709,8 +709,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const isDocumentUploaded = (requirement: typeof REQUIRED_ONLINE_DOCUMENTS[number]) =>
     requirement.types.every(type => uploadedTypeSet.has(type))
   const uploadedRequirementCount = REQUIRED_ONLINE_DOCUMENTS.filter(isDocumentUploaded).length
-  const uploadedCarPhotoCount = REQUIRED_ONLINE_DOCUMENTS.find(requirement => requirement.key === 'car_photos')?.types
-    .filter(type => uploadedTypeSet.has(type)).length || 0
   const canGoOnline = adminBypass || (documentsLoaded && uploadedRequirementCount === REQUIRED_ONLINE_DOCUMENTS.length)
   const showTopBanner = !canGoOnline
   const topBannerHeight = showTopBanner? 42 : 0
@@ -766,20 +764,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {completedRideForDisplay && !showDriverRating && showCollected === null && (<div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2 style={{ margin: '8px 0' }}>Trip Completed!</h2><h1 style={{ color: '#00d181', margin: '4px 0' }}>R {completedRideForDisplay.fare} {completedRideForDisplay.payment_method === 'paystack' ? 'PAID ONLINE' : 'CASH DUE'}</h1><div style={{color:'#00d181', fontWeight:'bold'}}>You get R {getEarnings(completedRideForDisplay.fare, completedRideForDisplay.driver_earnings, completedRideForDisplay.buddyride_commission).driverGets} • Fee R {getEarnings(completedRideForDisplay.fare, completedRideForDisplay.driver_earnings, completedRideForDisplay.buddyride_commission).platformGets}</div><p style={{ color: subText, fontSize: '13px' }}>Rate passenger to continue</p><button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button></div>)}
       {showDriverRating && (pendingRating || ride) && (<div style={{ textAlign: 'center' }}><h2 style={{ margin: '8px 0' }}>Rate Passenger</h2><p style={{ color: subText, fontSize: '13px' }}>{(pendingRating || ride)!.dropoff_address?.split(',')[0]} • Passenger R {(pendingRating || ride)!.fare} / You R {getEarnings((pendingRating || ride)!.fare, (pendingRating || ride)!.driver_earnings, (pendingRating || ride)!.buddyride_commission).driverGets}</p><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: driverRating >= s? '#FF6B00' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}</div><textarea value={driverRatingComment} maxLength={1000} onChange={event => setDriverRatingComment(event.target.value)} placeholder="Add a comment (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, resize: 'vertical' }} /><div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}><button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button><button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button></div></div>)}
       {!ride &&!showDriverRating && (<div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{adminBypass ? 'Admin document check bypassed' : documentsLoaded ? `${uploadedRequirementCount}/8 documents uploaded` : 'Checking required documents…'}</div>
-          {documentsError && <p role="alert" style={{ color: '#fca5a5', fontSize: 12 }}>{documentsError}</p>}
-          {!adminBypass && <div style={{ display: 'grid', gap: 6, marginBottom: 14, textAlign: 'left' }}>
-            {REQUIRED_ONLINE_DOCUMENTS.map(requirement => {
-              const uploaded = isDocumentUploaded(requirement)
-              const detail = requirement.key === 'car_photos' ? `${uploadedCarPhotoCount}/4 uploaded` : uploaded ? 'Uploaded' : 'Missing'
-              return <div key={requirement.key} style={{ display: 'flex', alignItems: 'center', gap: 8, color: uploaded ? '#22c55e' : subText, fontSize: 13 }}>
-                <span aria-hidden="true">{uploaded ? '✓' : '○'}</span>
-                <span style={{ flex: 1 }}>{requirement.label}</span>
-                <span>{detail}</span>
-              </div>
-            })}
-          </div>}
-          <p style={{ margin: '0 0 12px', color: subText, fontSize: 13 }}>You keep 80%, BuddyRide 20%</p>
+            {documentsError && <p role="alert" style={{ color: '#fca5a5', fontSize: 12 }}>{documentsError}</p>}
+            <p style={{ margin: '0 0 12px', color: subText, fontSize: 13 }}>You keep 80%, BuddyRide 20%</p>
           {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : 'Upload all 8 documents to Go Online'}</button>}
         </div>)}
     </BottomSheet>

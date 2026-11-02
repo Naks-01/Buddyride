@@ -18,6 +18,7 @@ export type Profile = {
   phone_number?: string | null
   avatar_url: string | null
   is_verified?: boolean | null
+  verification_status?: string | null
   is_banned?: boolean | null
   is_online?: boolean | null
   current_lat?: number | null

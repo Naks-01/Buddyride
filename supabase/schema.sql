@@ -18,6 +18,7 @@ create table if not exists public.profiles (
   phone_number text,
   avatar_url text,
   is_verified boolean not null default false,
+  verification_status text not null default 'not_started',
   is_banned boolean not null default false,
   is_online boolean not null default false,
   current_lat double precision,
@@ -35,6 +36,7 @@ create table if not exists public.profiles (
 
 alter table public.profiles add column if not exists phone_number text;
 alter table public.profiles add column if not exists is_verified boolean not null default false;
+alter table public.profiles add column if not exists verification_status text not null default 'not_started';
 alter table public.profiles add column if not exists is_banned boolean not null default false;
 alter table public.profiles add column if not exists is_online boolean not null default false;
 alter table public.profiles add column if not exists current_lat double precision;
@@ -47,6 +49,19 @@ alter table public.profiles add column if not exists car_plate text;
 alter table public.profiles add column if not exists car_color text;
 alter table public.profiles add column if not exists last_selfie_date date;
 alter table public.profiles add column if not exists last_selfie_url text;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_verification_status_check'
+      and conrelid = 'public.profiles'::regclass
+  ) then
+    alter table public.profiles
+      add constraint profiles_verification_status_check
+      check (verification_status in ('not_started', 'pending_verification', 'approved', 'rejected'));
+  end if;
+end;
+$$;
 
 create or replace function public.sync_profile_phone_columns()
 returns trigger language plpgsql as $$
@@ -78,6 +93,10 @@ create table if not exists public.driver_documents (
 -- Legacy doc_type/file_url remain synchronized for older screens/admin tools.
 alter table public.driver_documents add column if not exists document_type text;
 alter table public.driver_documents add column if not exists file_path text;
+alter table public.driver_documents add column if not exists user_id uuid references public.profiles(id) on delete cascade;
+update public.driver_documents set user_id = driver_id where user_id is null;
+create unique index if not exists driver_documents_user_doc_type_uidx
+  on public.driver_documents(user_id, doc_type);
 update public.driver_documents
 set document_type = coalesce(document_type, doc_type),
     file_path = coalesce(file_path, file_url)
@@ -112,6 +131,19 @@ drop trigger if exists sync_driver_document_columns on public.driver_documents;
 create trigger sync_driver_document_columns
 before insert or update
 on public.driver_documents for each row execute function public.sync_driver_document_columns();
+
+create or replace function public.sync_driver_document_user_id()
+returns trigger language plpgsql as $$
+begin
+  new.driver_id := coalesce(new.driver_id, new.user_id);
+  new.user_id := coalesce(new.user_id, new.driver_id);
+  return new;
+end;
+$$;
+drop trigger if exists sync_driver_document_user_id on public.driver_documents;
+create trigger sync_driver_document_user_id
+before insert or update on public.driver_documents
+for each row execute function public.sync_driver_document_user_id();
 
 create table if not exists public.passenger_documents (
   id uuid primary key default gen_random_uuid(),
@@ -421,6 +453,7 @@ begin
 
   if tg_op = 'INSERT' then
     new.is_verified := false;
+    new.verification_status := 'not_started';
     new.is_banned := false;
     new.wallet_balance := 0;
     new.trips_completed := 0;
@@ -430,6 +463,7 @@ begin
 
   if new.role is distinct from old.role
     or new.is_verified is distinct from old.is_verified
+    or new.verification_status is distinct from old.verification_status
     or new.is_banned is distinct from old.is_banned
     or new.wallet_balance is distinct from old.wallet_balance
     or new.trips_completed is distinct from old.trips_completed
@@ -452,6 +486,44 @@ drop trigger if exists guard_profile_changes on public.profiles;
 create trigger guard_profile_changes
 before insert or update on public.profiles
 for each row execute function public.guard_profile_changes();
+
+create or replace function public.submit_driver_documents_for_review()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  caller_id uuid := auth.uid();
+begin
+  if caller_id is null or not exists (
+    select 1 from public.profiles where id = caller_id and role = 'driver'
+  ) then
+    raise exception 'Driver account required';
+  end if;
+
+  if not exists (
+    select 1
+    from public.driver_documents
+    where user_id = caller_id and file_url is not null
+    group by user_id
+    having count(distinct doc_type) filter (where doc_type in (
+      'sa_id', 'drivers_license', 'prdp', 'profile_photo', 'selfie_holding_id',
+      'vehicle_registration', 'license_disc', 'car_photo_1', 'car_photo_2',
+      'car_photo_3', 'car_photo_4'
+    )) = 11
+  ) then
+    raise exception 'Upload all 8 required document categories, including four vehicle photos';
+  end if;
+
+  perform set_config('buddyride.internal_profile_update', 'on', true);
+  update public.profiles
+  set verification_status = 'pending_verification'
+  where id = caller_id;
+end;
+$$;
+revoke all on function public.submit_driver_documents_for_review() from public;
+grant execute on function public.submit_driver_documents_for_review() to authenticated;
 
 create or replace function public.prevent_profile_role_change()
 returns trigger
@@ -1120,6 +1192,11 @@ values ('profile-photos', 'profile-photos', true, 52428800, array['image/jpeg'])
 on conflict (id) do update
 set public = true, file_size_limit = 52428800, allowed_mime_types = array['image/jpeg'];
 
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('vehicle-documents', 'vehicle-documents', false, 52428800, array['image/jpeg','image/png','image/webp','application/pdf'])
+on conflict (id) do update
+set public = false, file_size_limit = 52428800, allowed_mime_types = array['image/jpeg','image/png','image/webp','application/pdf'];
+
 drop policy if exists "driver_documents_storage_select" on storage.objects;
 create policy "driver_documents_storage_select" on storage.objects
 for select to authenticated
@@ -1157,6 +1234,28 @@ for delete to authenticated
 using (
   bucket_id = 'driver-documents'
   and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "vehicle_documents_storage_select" on storage.objects;
+create policy "vehicle_documents_storage_select" on storage.objects
+for select to authenticated using (
+  bucket_id = 'vehicle-documents'
+  and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin())
+);
+drop policy if exists "vehicle_documents_storage_insert" on storage.objects;
+create policy "vehicle_documents_storage_insert" on storage.objects
+for insert to authenticated with check (
+  bucket_id = 'vehicle-documents' and (storage.foldername(name))[1] = auth.uid()::text
+);
+drop policy if exists "vehicle_documents_storage_update" on storage.objects;
+create policy "vehicle_documents_storage_update" on storage.objects
+for update to authenticated
+using (bucket_id = 'vehicle-documents' and (storage.foldername(name))[1] = auth.uid()::text)
+with check (bucket_id = 'vehicle-documents' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "vehicle_documents_storage_delete" on storage.objects;
+create policy "vehicle_documents_storage_delete" on storage.objects
+for delete to authenticated using (
+  bucket_id = 'vehicle-documents' and (storage.foldername(name))[1] = auth.uid()::text
 );
 
 drop policy if exists "selfies_storage_select" on storage.objects;

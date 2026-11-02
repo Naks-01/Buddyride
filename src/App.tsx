@@ -14,6 +14,8 @@ import { AdminSupport } from './pages/AdminSupport'
 import { AdminZones } from './pages/AdminZones'
 import { AdminSettings } from './pages/AdminSettings'
 import LandingPage from './pages/LandingPage'
+import { DriverOnboarding } from './pages/DriverOnboarding'
+import { DriverDashboardGuard } from './pages/DriverDashboardGuard'
 
 const DriverHome = lazy(() => import('./pages/DriverHome').then(module => ({ default: module.DriverHome })))
 const DriverNavigationView = lazy(() => import('./pages/DriverNavigationView').then(module => ({ default: module.DriverNavigationView })))
@@ -81,6 +83,13 @@ export default function App() {
   const [verifiedAdminUserId, setVerifiedAdminUserId] = useState<string | null>(null)
   const [checkedAdminUserId, setCheckedAdminUserId] = useState<string | null>(null)
   const [adminToast, setAdminToast] = useState('')
+  const [driverPath, setDriverPath] = useState(window.location.pathname)
+
+  const navigateDriverPath = useCallback((path: string, replace = false) => {
+    if (replace) window.history.replaceState(null, '', path)
+    else window.history.pushState(null, '', path)
+    setDriverPath(path)
+  }, [])
 
   const isAdminEmail = ADMIN_EMAILS.includes(email.trim().toLowerCase())
   const shouldVerifyAdminAccess = Boolean(profile && (
@@ -121,6 +130,13 @@ export default function App() {
       }
       setProfile(result)
       setShowLanding(false)
+      if (result.role === 'driver' && !window.location.pathname.startsWith('/driver/navigation/')) {
+        const currentDriverPath = window.location.pathname
+        const nextPath = /^\/driver\/(onboarding|dashboard)\/?$/.test(currentDriverPath)
+          ? currentDriverPath
+          : '/driver/onboarding'
+        navigateDriverPath(nextPath, true)
+      }
       
       try {
         const { data: { user }, error } = await supabase.auth.getUser()
@@ -139,11 +155,17 @@ export default function App() {
       setMessage(error instanceof Error ? error.message : 'Could not load your profile.')
       setProfile(null)
     }
-  }, [])
+  }, [navigateDriverPath])
 
   useEffect(() => {
     const t = window.setTimeout(() => setSplashVisible(false), 1900)
     return () => window.clearTimeout(t)
+  }, [])
+
+  useEffect(() => {
+    const handlePopState = () => setDriverPath(window.location.pathname)
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
   useEffect(() => {
@@ -260,6 +282,20 @@ export default function App() {
       if (profile.role !== 'driver') return <main className="auth-page"><section className="auth-card"><h1>Driver access required</h1><p>This navigation screen is only available to the assigned driver.</p><button className="primary" onClick={() => window.location.assign('/')}>Back to home</button></section></main>
       return <Suspense fallback={<main className="splash splash-intro">Loading driver navigation…</main>}><DriverNavigationView rideId={navigationRideId} profile={profile} onBack={() => window.location.assign('/')} /></Suspense>
     }
+    if (profile.role === 'driver') {
+      const driverRoute = driverPath.replace(/\/+$/, '') || '/'
+      if (driverRoute === '/driver/onboarding') {
+        return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
+      }
+      if (driverRoute === '/driver/dashboard' || driverRoute === '/driver') {
+        return <DriverDashboardGuard
+          profile={profile}
+          onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}
+        >
+          <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
+        </DriverDashboardGuard>
+      }
+    }
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
     if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
     if (hasAdminAccess && (page === 'admin-docs' || page === 'admin-documents')) return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
@@ -271,7 +307,9 @@ export default function App() {
     if (hasAdminAccess && page === 'admin-zones') return <AdminZones onBack={()=> setPage('home')} />
     if (hasAdminAccess && page === 'admin-settings') return <AdminSettings onBack={()=> setPage('home')} />
     if (hasAdminAccess) return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={(m: any) => setPage(m as any)} />
-    if (profile.role === 'driver') return <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
+    if (profile.role === 'driver') {
+      return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
+    }
     return <PassengerHome profile={profile} />
   }
 
