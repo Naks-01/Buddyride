@@ -40,6 +40,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     localStorage.removeItem(pendingRatingStorageKey)
     return null
   })
+  const [incomingRide, setIncomingRide] = useState<Ride | null>(null)
   const [searchingRides, setSearchingRides] = useState<Ride[]>([])
   const [route, setRoute] = useState<any>()
   const [routeData, setRouteData] = useState<any>(null)
@@ -79,7 +80,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const beepIntervalRef = useRef<any>(null)
   const [passengerProfile, setPassengerProfile] = useState<any>(null)
   const [incomingPassengerProfile, setIncomingPassengerProfile] = useState<any>(null)
-  const [secondsLeft, setSecondsLeft] = useState(EXPIRE_SECONDS)
+  const [countdown, setCountdown] = useState(EXPIRE_SECONDS)
   const requestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [isMinimized, setIsMinimized] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(50)
@@ -117,8 +118,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const target = steps[index]?.maneuver?.location as [number, number] | undefined
     if (target) setNextTurnDistance(distanceBetweenCoordinates(position, target))
   }
-  const incomingRide = !ride ? searchingRides.find(r => r.status === 'searching') : undefined
-
   function clearRequestTimer() {
     if (requestTimerRef.current) { clearInterval(requestTimerRef.current); requestTimerRef.current = null }
   }
@@ -304,6 +303,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
         const { data } = await query
         const filtered = (data || []).filter((r:any) =>!declinedIds.includes(r.id))
         setSearchingRides(filtered as Ride[])
+        if (filtered.length > 0) setIncomingRide(current => current || filtered[0] as Ride)
       } catch(e) { console.log(e) }
     }
     loadSearching()
@@ -336,19 +336,39 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     clearRequestTimer()
-    if (!incomingRide || incomingRide.status !== 'searching') return
-    const expiresAt = (incomingRide as any).offer_expires_at
-    const remaining = expiresAt ? Math.max(0, Math.min(EXPIRE_SECONDS, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))) : EXPIRE_SECONDS
-    setSecondsLeft(remaining)
-    if (remaining === 0) { void declineRide(incomingRide.id); return }
-    let seconds = remaining
+    if (!incomingRide || incomingRide.status !== 'searching' || ride) return
+    const expiresAt = incomingRide.offer_expires_at
+    let seconds = expiresAt
+      ? Math.max(0, Math.min(EXPIRE_SECONDS, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000)))
+      : EXPIRE_SECONDS
+    setCountdown(seconds)
+    if (seconds === 0) { void dismissIncomingRide(incomingRide.id); return }
     const rideId = incomingRide.id
     requestTimerRef.current = setInterval(() => {
-      seconds -= 1; setSecondsLeft(seconds)
-      if (seconds <= 0) { clearRequestTimer(); void declineRide(rideId) }
+      seconds -= 1
+      setCountdown(seconds)
+      if (seconds <= 0) { clearRequestTimer(); void dismissIncomingRide(rideId) }
     }, 1000)
     return clearRequestTimer
-  }, [incomingRide?.id])
+  }, [incomingRide?.id, ride?.id])
+
+  useEffect(() => {
+    if (!isOnline || ride) return
+    const channel = createRealtimeChannel(`new-ride-offers-${profile.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'rides',
+        filter: 'status=eq.searching',
+      }, payload => {
+        const newRide = payload.new as Ride
+        if (newRide.status !== 'searching' || declinedIds.includes(newRide.id)) return
+        setIncomingRide(newRide)
+        setCountdown(EXPIRE_SECONDS)
+        playBeep()
+      }).subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [isOnline, ride?.id, profile.id, declinedIds])
 
   useEffect(() => {
     if (!isNavigating &&!isOnline) return
@@ -439,9 +459,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
     clearRequestTimer()
     if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
     const { data: acceptedRide, error } = await updateRide({ driver_id: profile.id, status: 'accepted', accepted_at: new Date().toISOString(), offered_driver_id: null, offer_expires_at: null })
-      .eq('id', rideId).eq('offered_driver_id', profile.id).select('*').maybeSingle()
+      .eq('id', rideId).eq('status', 'searching').select('*').maybeSingle()
     if (error) { alert(`Could not accept this ride: ${errMsg(error)}`); return }
     if (!acceptedRide) { alert('This ride offer expired or was accepted by another driver.'); return }
+    setIncomingRide(null)
     setRide(acceptedRide as Ride)
     const { error: statusError } = await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: false, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' })
     const { error: profileError } = await supabase.from('profiles').update({ is_online: false } as any).eq('id', profile.id)
@@ -468,7 +489,23 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const newDeclined = [...declinedIds, rideId]
     setDeclinedIds(newDeclined)
     localStorage.setItem('declined_rides', JSON.stringify(newDeclined))
+    setIncomingRide(null)
     setSearchingRides(prev => prev.filter(r => r.id!== rideId))
+  }
+
+  async function dismissIncomingRide(rideId: string) {
+    if (!incomingRide || incomingRide.id !== rideId) return
+    if (incomingRide.offered_driver_id === profile.id) {
+      await declineRide(rideId)
+      return
+    }
+    setIncomingRide(null)
+    setSearchingRides(prev => prev.filter(r => r.id !== rideId))
+    if (!declinedIds.includes(rideId)) {
+      const newDeclined = [...declinedIds, rideId]
+      setDeclinedIds(newDeclined)
+      localStorage.setItem('declined_rides', JSON.stringify(newDeclined))
+    }
   }
 
   async function completeRide() {
@@ -577,7 +614,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : '⛔ BLOCKED'}</button>
+        {!ride && <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : '⛔ BLOCKED'}</button>}
       </div>
     </header>
     {showTopBanner && (<div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: docStatus === 'missing' ? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>{docStatus === 'missing' ? `⚠️ Upload 7 docs: ${approvedDocs.length}/7` : `⏳ Pending: ${approvedDocs.length}/7 approved`}</div>)}
@@ -613,29 +650,28 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {ride && (ride.status as any) === 'completed' &&!showDriverRating && showCollected === null && (<div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2 style={{ margin: '8px 0' }}>Trip Completed!</h2><h1 style={{ color: '#00d181', margin: '4px 0' }}>R {ride.fare} {ride.payment_method === 'paystack' ? 'PAID ONLINE' : 'CASH DUE'}</h1><div style={{color:'#00d181', fontWeight:'bold'}}>You get R {getEarnings(ride.fare, ride.driver_earnings, ride.buddyride_commission).driverGets} • Fee R {getEarnings(ride.fare, ride.driver_earnings, ride.buddyride_commission).platformGets}</div><p style={{ color: subText, fontSize: '13px' }}>Rate passenger to continue</p><button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button></div>)}
       {showDriverRating && ride && (<div style={{ textAlign: 'center' }}><h2 style={{ margin: '8px 0' }}>Rate Passenger</h2><p style={{ color: subText, fontSize: '13px' }}>{ride.dropoff_address?.split(',')[0]} • Passenger R {ride.fare} / You R {getEarnings(ride.fare, ride.driver_earnings, ride.buddyride_commission).driverGets}</p><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: driverRating >= s? '#FF6B00' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}</div><textarea value={driverRatingComment} maxLength={1000} onChange={event => setDriverRatingComment(event.target.value)} placeholder="Add a comment (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, resize: 'vertical' }} /><div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}><button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button><button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button></div></div>)}
       {!ride &&!showDriverRating && (<div style={{ textAlign: 'center' }}>
-          {isOnline && searchingRides.map(r => {
-            const timerColor = secondsLeft < 3 ? '#ef4444' : secondsLeft < 7 ? '#f97316' : '#22c55e'
-            const timerProgress = Math.max(0, Math.min(100, secondsLeft / EXPIRE_SECONDS * 100))
-            const e = getEarnings(r.fare, r.driver_earnings, r.buddyride_commission)
-            return (<div key={r.id} style={{ background: isDark? '#1e1e22' : 'white', border: `2px solid #00d181`, borderRadius: '16px', padding: '14px', marginBottom: '12px', textAlign: 'left' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <p style={{ flex: 1, fontWeight: 'bold', margin: 0, color: '#00d181' }}>🔔 BUDDY REQUEST • Passenger R {r.fare} • 15s</p>
-                <div aria-label={`Expires in ${secondsLeft} seconds`} style={{ width: '44px', height: '44px', flex: 'none', borderRadius: '50%', display: 'grid', placeItems: 'center', background: `conic-gradient(${timerColor} ${timerProgress * 3.6}deg, #3A3A3C 0deg)` }}><span style={{ width: '34px', height: '34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: isDark ? '#1e1e22' : '#fff', color: timerColor, fontSize: '11px', fontWeight: 800 }}>{secondsLeft}s</span></div>
-              </div>
-              <div style={{ height: '5px', marginTop: '8px', overflow: 'hidden', borderRadius: '5px', background: '#3A3A3C' }}><div style={{ height: '100%', width: `${timerProgress}%`, background: timerColor, transition: 'width 1s linear, background-color 200ms ease' }} /></div>
-              <p style={{ margin: '6px 0', fontSize: '13px', color: subText }}>You get R{e.driverGets} (80%) • Fee R{e.platformGets} • {((r as any).distance_km||0).toFixed(1)}km</p>
-              <p style={{ margin: '6px 0', fontSize: '13px' }}>📍 {r.pickup_address?.split(',')[0]} → {r.dropoff_address?.split(',')[0]}</p>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                <button onClick={() => declineRide(r.id)} style={{ flex: 1, padding: '12px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}` }}>DECLINE</button>
-                <button onClick={() => acceptRide(r.id)} style={{ flex: 1.5, padding: '12px', borderRadius: '10px', background: '#00d181', color: 'white', border: 'none', fontWeight: 'bold' }}>ACCEPT R {e.driverGets}</button>
-              </div>
-            </div>
-          )})}
           <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{canGoOnline ? (isOnline ? '✅ Waiting for Buddy requests... 🔊' : 'Ready to go online') : `⛔ Blocked - Docs: ${approvedDocs.length}/7`}</div>
-          <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : `NEED DOCS (${approvedDocs.length}/7)`}</button>
+          {!ride && <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : `NEED DOCS (${approvedDocs.length}/7)`}</button>}
         </div>)}
     </BottomSheet>
     </div>
+    {incomingRide && !ride && isOnline && (<div role="dialog" aria-modal="true" aria-labelledby="incoming-ride-title" style={{ position: 'fixed', inset: 0, zIndex: 20000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', background: 'rgba(0,0,0,0.88)', color: 'white' }}>
+      <div style={{ width: '100%', maxWidth: '440px', textAlign: 'center' }}>
+        <div style={{ fontSize: '16px', fontWeight: 800, letterSpacing: '0.08em', color: '#00d181' }}>NEW RIDE REQUEST</div>
+        <h1 id="incoming-ride-title" style={{ margin: '18px 0 8px', fontSize: '56px' }}>R {incomingRide.fare}</h1>
+        <p style={{ margin: '0 0 24px', color: '#cbd5e1', fontSize: '16px' }}>Passenger fare • You get R {getEarnings(incomingRide.fare, incomingRide.driver_earnings, incomingRide.buddyride_commission).driverGets}</p>
+        <div style={{ padding: '18px', borderRadius: '16px', background: '#1e293b', textAlign: 'left', lineHeight: 1.6 }}>
+          <div><strong>Pickup</strong><br />{incomingRide.pickup_address}</div>
+          <div style={{ margin: '12px 0', color: '#00d181' }}>↓</div>
+          <div><strong>Drop-off</strong><br />{incomingRide.dropoff_address}</div>
+        </div>
+        <div aria-live="polite" style={{ margin: '24px 0', fontSize: '48px', fontWeight: 900, color: countdown <= 3 ? '#ef4444' : '#00d181' }}>{countdown}</div>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button onClick={() => void dismissIncomingRide(incomingRide.id)} style={{ flex: 1, padding: '16px', borderRadius: '14px', border: '1px solid #64748b', background: '#1e293b', color: 'white', fontWeight: 800 }}>DECLINE</button>
+          <button onClick={() => void acceptRide(incomingRide.id)} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: '#00d181', color: '#052e16', fontWeight: 900, fontSize: '17px' }}>ACCEPT</button>
+        </div>
+      </div>
+    </div>)}
     {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bgCard, width: '100%', borderTopLeftRadius: '32px', borderTopRightRadius: '32px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><div style={{ fontWeight: 'bold', color: text }}>Chat with Passenger</div><div style={{ fontSize: '11px', color: '#999' }}>Messages disappear after trip</div></div><button onClick={() => setShowChat(false)} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}`, color: text }}>✕</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>)}
     {showCollected!== null && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}><div style={{background:'linear-gradient(135deg,#FF6B00,#ff9500)', borderRadius:'24px', padding:'32px 24px', textAlign:'center', width:'100%', maxWidth:'340px'}}><div style={{fontSize:'48px'}}>💰</div><div style={{color:'white', fontSize:'14px', fontWeight:'bold'}}>{ride?.payment_method === 'paystack' ? 'PAYMENT RECEIVED ONLINE' : 'CASH FARE DUE'}</div><div style={{color:'white', fontSize:'20px'}}>Passenger R {showCollected}</div><div style={{color:'white', fontSize:'32px', fontWeight:'900'}}>You get R {getEarnings(showCollected, ride?.driver_earnings, ride?.buddyride_commission).driverGets}</div><div style={{color:'white', fontSize:'14px', opacity:0.8}}>Fee R {getEarnings(showCollected, ride?.driver_earnings, ride?.buddyride_commission).platformGets} (20%)</div><button onClick={() => { setShowCollected(null); setShowDriverRating(true) }} style={{marginTop:'18px', width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'#FF6B00', border:'none', fontWeight:'900'}}>Rate Passenger →</button></div></div>)}
     {showDriverCancelReason && (<div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'flex-end'}}><div style={{background: isDark? '#121214':'white', width:'100%', borderTopLeftRadius:'32px', borderTopRightRadius:'32px', padding:'20px', color: text}}><div style={{ width: '48px', height: '6px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '0 auto 14px' }} /><h3>Why cancel?</h3>{['Passenger no-show','Passenger asked to cancel','Wrong pickup','Vehicle issue','Other'].map(reason => (<button key={reason} onClick={() => setDriverCancelReason(reason)} style={{ width:'100%', textAlign:'left', padding:'14px', borderRadius:'12px', marginBottom:'8px', background: driverCancelReason===reason? '#ff3b30':'#242428', color: text, border: `1px solid ${border}` }}>{reason} {driverCancelReason===reason? '✓':''}</button>))}<div style={{display:'flex', gap:'8px', marginTop:'16px'}}><button onClick={() => { setShowDriverCancelReason(false); setDriverCancelReason(''); setRideToCancel(null) }} style={{flex:1, padding:'14px', borderRadius:'12px', background:bg2, color:text, border:`1px solid ${border}`, fontWeight:'bold'}}>Back</button><button onClick={executeDriverCancel} style={{flex:1.5, padding:'14px', borderRadius:'12px', background:'#ff3b30', color:'white', border:'none', fontWeight:'bold'}} disabled={!driverCancelReason}>Confirm Cancel</button></div></div></div>)}
