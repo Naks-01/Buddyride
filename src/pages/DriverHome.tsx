@@ -621,9 +621,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
   async function submitDriverRating() {
     const ratingRide = pendingRating || ride
     if (!ratingRide || driverRating === 0) return
-    const rideId = ratingRide.id
-    const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: driverRating, p_comment: driverRatingComment.trim() || null })
-    if (error) { alert(`Could not submit rating: ${errMsg(error)}`); return }
+    const { error } = await supabase.rpc('submit_ride_rating', {
+      p_ride_id: ratingRide.id,
+      p_rating: driverRating,
+      p_comment: driverRatingComment.trim() || null,
+    })
+    const alreadyRated = error && (
+      error.code === '23505' || /already rated/i.test(error.message || '')
+    )
+    if (error && !alreadyRated) { alert(`Could not submit rating: ${errMsg(error)}`); return }
+    if (alreadyRated) alert('Already rated')
     clearPendingRating()
     clearDriverRideState()
     setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null)

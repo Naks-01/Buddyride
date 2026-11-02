@@ -497,11 +497,18 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function finishTrip() {
     if (!completedRide) return
     const finishedRide = completedRide
-    const rideId = finishedRide.id; const driverId = finishedRide.driver_id
-    if (rating === 0 || !driverId) return
-    const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: rating, p_comment: ratingComment.trim() || null })
-    if (error) { setRideError(`Could not submit rating: ${errMsg(error)}`); return }
-    setCompletedReceipt(finishedRide)
+    if (rating === 0 || !finishedRide.driver_id) return
+    const { error } = await supabase.rpc('submit_ride_rating', {
+      p_ride_id: finishedRide.id,
+      p_rating: rating,
+      p_comment: ratingComment.trim() || null,
+    })
+    const alreadyRated = error && (
+      error.code === '23505' || /already rated/i.test(error.message || '')
+    )
+    if (error && !alreadyRated) { setRideError(`Could not submit rating: ${errMsg(error)}`); return }
+    if (alreadyRated) alert('Already rated')
+    setCompletedReceipt(null)
     setCompletedRide(null)
     clearActiveRideState()
     setSheetSnap(50)
