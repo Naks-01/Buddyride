@@ -75,7 +75,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [route, setRoute] = useState<any>()
   const [ride, setRide] = useState<Ride | null>(null)
   const [completedReceipt, setCompletedReceipt] = useState<Ride | null>(null)
-  const [driverProfile, setDriverProfile] = useState<Profile | null>(null)
+  const [driverProfile, setDriverProfile] = useState<(Profile & {
+    car_make?: string | null
+    license_plate?: string | null
+  }) | null>(null)
   const { location: liveDriverLocation, error: liveDriverLocationError } = useDriverLiveLocation(ride?.driver_id || null)
   const [loading, setLoading] = useState(false)
   const [rideError, setRideError] = useState('')
@@ -229,18 +232,44 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!ride?.driver_id) { setDriverProfile(null); return }
     let active = true
-    supabase.rpc('get_ride_counterpart_profile', { p_ride_id: ride.id }).maybeSingle()
-      .then(({ data, error }) => {
-        if (!active) return
-        if (error) setRideError(`Could not load driver details: ${errMsg(error)}`)
-        else setDriverProfile(data as Profile | null)
+    setDriverProfile(null)
+    async function loadDriverDetails() {
+      const [{ data: driver, error: driverError }, { data: car, error: carError }] = await Promise.all([
+        supabase.from('profiles')
+          .select('full_name, avatar_url, phone, phone_number, rating')
+          .eq('id', ride!.driver_id!)
+          .maybeSingle(),
+        supabase.from('driver_profiles')
+          .select('car_make, car_model, car_color, license_plate, rating')
+          .eq('user_id', ride!.driver_id!)
+          .maybeSingle(),
+      ])
+      if (!active) return
+      if (driverError) console.error('Could not load driver profile:', driverError.message)
+      if (carError) console.error('Could not load driver vehicle details:', carError.message)
+      setDriverProfile({
+        id: ride!.driver_id!,
+        role: 'driver',
+        email: null,
+        full_name: driver?.full_name || 'Driver',
+        avatar_url: driver?.avatar_url ?? null,
+        phone: driver?.phone ?? null,
+        phone_number: driver?.phone_number ?? driver?.phone ?? null,
+        rating: car?.rating ?? driver?.rating ?? null,
+        car_make: car?.car_make ?? null,
+        car_model: car?.car_model ?? car?.car_make ?? null,
+        car_color: car?.car_color ?? null,
+        license_plate: car?.license_plate ?? null,
+        car_plate: car?.license_plate ?? null,
       })
+    }
+    void loadDriverDetails()
     return () => { active = false }
   }, [ride?.id, ride?.driver_id])
 
   useEffect(() => {
     if (!ride) return
-    const ch = createRealtimeChannel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
+    const handleUpdate = (p: any) => {
       const newR = p.new as any; if (!newR) return
       const oldStatus = prevStatusRef.current
       const newStatus = newR.status
@@ -275,7 +304,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       prevStatusRef.current = newStatus
       setRide(newR as Ride)
       if (['picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(newR.status as any)) { setSheetSnap(50) }
-    }).subscribe()
+    }
+    const ch = createRealtimeChannel(`ride-${ride.id}`).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, handleUpdate).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
