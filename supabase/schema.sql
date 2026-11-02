@@ -598,13 +598,14 @@ as $$
 declare
   ride_row public.rides%rowtype;
   driver_id uuid;
+  internal_dispatch boolean := coalesce(current_setting('buddyride.internal_dispatch', true) = 'on', false);
 begin
-  if auth.uid() is null then raise exception 'Authentication required'; end if;
+  if auth.uid() is null and not internal_dispatch then raise exception 'Authentication required'; end if;
   select * into ride_row from public.rides where id = p_ride_id for update;
   if not found or ride_row.status <> 'searching' then
     raise exception 'Ride is not available for dispatch';
   end if;
-  if ride_row.passenger_id <> auth.uid()
+  if not internal_dispatch and ride_row.passenger_id <> auth.uid()
     and not (auth.uid() = any(ride_row.tried_driver_ids) and ride_row.offered_driver_id is null) then
     raise exception 'Only the passenger or a driver who declined this ride can dispatch it';
   end if;
@@ -656,6 +657,37 @@ begin
   return driver_id;
 end;
 $$;
+
+create or replace function public.auto_dispatch_ride()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  should_dispatch boolean := false;
+begin
+  if new.status = 'searching' then
+    if tg_op = 'INSERT' then
+      should_dispatch := true;
+    elsif old.status is distinct from new.status then
+      should_dispatch := true;
+    end if;
+  end if;
+
+  if should_dispatch then
+    perform set_config('buddyride.internal_dispatch', 'on', true);
+    perform public.dispatch_ride(new.id);
+    perform set_config('buddyride.internal_dispatch', 'off', true);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trigger_auto_dispatch on public.rides;
+create trigger trigger_auto_dispatch
+after insert or update on public.rides
+for each row execute function public.auto_dispatch_ride();
 
 create or replace function public.decline_ride(p_ride_id uuid)
 returns uuid
@@ -713,7 +745,7 @@ begin
     raise exception 'Only a ride participant can submit a rating';
   end if;
 
-  select * into existing_rating from public.ride_ratings where ride_id = p_ride_id;
+  select * into existing_rating from public.ride_ratings where ride_id = p_ride_id for update;
   if found then
     old_rating := case when is_passenger then existing_rating.passenger_rating else existing_rating.driver_rating end;
     if old_rating is not null then
@@ -905,7 +937,9 @@ create policy "rides_passenger_insert" on public.rides for insert with check (
   auth.uid() = passenger_id
   and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'passenger' and p.is_verified and not p.is_banned)
 );
-create policy "rides_passenger_update" on public.rides for update using (auth.uid() = passenger_id);
+create policy "rides_passenger_update" on public.rides for update to authenticated
+using (auth.uid() = passenger_id)
+with check (auth.uid() = passenger_id and status = 'cancelled');
 create policy "rides_driver_select" on public.rides for select using (
   auth.uid() = driver_id
   or (
@@ -914,7 +948,15 @@ create policy "rides_driver_select" on public.rides for select using (
     and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'driver' and p.is_verified and not p.is_banned)
   )
 );
-create policy "rides_driver_update" on public.rides for update using (auth.uid() = driver_id or (driver_id is null and status = 'searching'));
+create policy "rides_driver_update" on public.rides for update to authenticated
+using (
+  auth.uid() = driver_id
+  or (driver_id is null and status = 'searching' and offered_driver_id = auth.uid())
+)
+with check (
+  auth.uid() = driver_id
+  or (driver_id = auth.uid() and status = 'accepted')
+);
 drop policy if exists "rides_admin_select" on public.rides;
 create policy "rides_admin_select" on public.rides for select to authenticated using (public.is_admin());
 drop policy if exists "rides_admin_update" on public.rides;
@@ -936,22 +978,24 @@ alter table public.driver_status replica identity full;
 alter table public.messages replica identity full;
 do $$
 begin
-  if not exists (
-    select 1 from pg_publication_tables
-    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'rides'
-  ) then alter publication supabase_realtime add table public.rides; end if;
-  if not exists (
-    select 1 from pg_publication_tables
-    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'driver_locations'
-  ) then alter publication supabase_realtime add table public.driver_locations; end if;
-  if not exists (
-    select 1 from pg_publication_tables
-    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'driver_status'
-  ) then alter publication supabase_realtime add table public.driver_status; end if;
-  if not exists (
-    select 1 from pg_publication_tables
-    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'messages'
-  ) then alter publication supabase_realtime add table public.messages; end if;
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'rides'
+    ) then alter publication supabase_realtime add table public.rides; end if;
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'driver_locations'
+    ) then alter publication supabase_realtime add table public.driver_locations; end if;
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'driver_status'
+    ) then alter publication supabase_realtime add table public.driver_status; end if;
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'messages'
+    ) then alter publication supabase_realtime add table public.messages; end if;
+  end if;
 end $$;
 
 -- Automatically create a passenger profile after signup.
@@ -987,17 +1031,19 @@ after insert on auth.users
 for each row execute procedure public.handle_new_user();
 
 -- Identity documents and safety selfies are private; profile photos are public.
-insert into storage.buckets (id, name, public)
-values ('driver-documents', 'driver-documents', false)
-on conflict (id) do update set public = false, file_size_limit = 52428800;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('driver-documents', 'driver-documents', false, 52428800, array['image/jpeg','image/png','image/webp','application/pdf'])
+on conflict (id) do update
+set public = false, file_size_limit = 52428800, allowed_mime_types = array['image/jpeg','image/png','image/webp','application/pdf'];
 
 insert into storage.buckets (id, name, public)
 values ('selfies', 'selfies', false)
 on conflict (id) do update set public = false;
 
-insert into storage.buckets (id, name, public)
-values ('profile-photos', 'profile-photos', true)
-on conflict (id) do update set public = true, file_size_limit = 52428800;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('profile-photos', 'profile-photos', true, 52428800, array['image/jpeg'])
+on conflict (id) do update
+set public = true, file_size_limit = 52428800, allowed_mime_types = array['image/jpeg'];
 
 drop policy if exists "driver_documents_storage_select" on storage.objects;
 create policy "driver_documents_storage_select" on storage.objects

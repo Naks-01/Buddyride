@@ -108,9 +108,18 @@ export async function markRidePaid(rideId: string, reference: string) {
     .eq('payment_status', 'awaiting_payment')
     .eq('payment_reference', reference)
     .select('id,status,payment_status,payment_reference')
-    .single()
+    .maybeSingle()
   if (updateError) throw updateError
-  return updated
+  if (updated) return updated
+
+  const { data: latestRide, error: latestRideError } = await adminClient
+    .from('rides')
+    .select('id,status,payment_status,payment_reference')
+    .eq('id', rideId)
+    .single()
+  if (latestRideError) throw latestRideError
+  if (latestRide.payment_status === 'paid' && latestRide.payment_reference === reference) return latestRide
+  throw new Error('Ride payment could not be confirmed')
 }
 
 export async function verifyWebhookSignature(rawBody: string, signature: string) {

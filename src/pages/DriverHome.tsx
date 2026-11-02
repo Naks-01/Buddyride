@@ -5,6 +5,8 @@ import { NavigationMenu } from '../components/NavigationMenu'
 import { RideChat } from '../components/RideChat'
 import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 import { getRoute } from '../lib/mapbox'
+import { createRealtimeChannel } from '../lib/realtime'
+import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
@@ -25,8 +27,19 @@ function distanceBetweenCoordinates(from: [number, number], to: [number, number]
 }
 
 export function DriverHome({ profile }: { profile: Profile }) {
+  const pendingRatingStorageKey = `buddyride_pending_rating_${profile.id}`
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [ride, setRide] = useState<Ride | null>(null)
+  const [pendingRating, setPendingRating] = useState<Ride | null>(() => {
+    const stored = localStorage.getItem(pendingRatingStorageKey)
+    if (!stored) return null
+    try {
+      const parsed = JSON.parse(stored) as Ride
+      if (parsed?.id && parsed.driver_id === profile.id && parsed.status === 'completed') return parsed
+    } catch {}
+    localStorage.removeItem(pendingRatingStorageKey)
+    return null
+  })
   const [searchingRides, setSearchingRides] = useState<Ride[]>([])
   const [route, setRoute] = useState<any>()
   const [routeData, setRouteData] = useState<any>(null)
@@ -218,29 +231,27 @@ export function DriverHome({ profile }: { profile: Profile }) {
     async function loadRide() {
       const { data, error: activeRideError } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (activeRideError) { alert(`Could not restore your active ride: ${errMsg(activeRideError)}`); return }
-      const { data: pendingRating, error: pendingRatingError } = data ? { data: null, error: null } : await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['completed','rated']).is('driver_rating', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
-      if (pendingRatingError) { alert(`Could not restore your pending rating: ${errMsg(pendingRatingError)}`); return }
+      if (data) {
+        setRide(data)
+        setIsNavigating(true)
+        setZoom(17)
+        setIsMinimized(false)
+        await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: false, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' })
+        setIsOnline(false)
+        return
+      }
       if (pendingRating) {
-        setRide(pendingRating as Ride)
+        setRide(pendingRating)
         setShowDriverRating(true)
         setIsNavigating(false)
         setZoom(13)
-        return
-      }
-      if (data) {
-        setRide(data); 
-        setIsNavigating(true); 
-        setZoom(17); 
-        setIsMinimized(false);
-        await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: false, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' })
-        setIsOnline(false)
       }
     }
     loadRide()
   }, [profile.id])
 
   useEffect(() => {
-    const ch = supabase.channel(`driver-${profile.id}`)
+    const ch = createRealtimeChannel(`driver-${profile.id}`)
 .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${profile.id}` }, p => {
         const newRide = p.new as Ride
         if (!newRide) return
@@ -257,6 +268,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
           setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); return
         }
         if (['completed','rated'].includes(newRide.status as any) && newRide.driver_rating != null) {
+          clearPendingRating()
           setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setShowCollected(null); return
         }
         if (newRide.status === 'rated') {
@@ -295,7 +307,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       } catch(e) { console.log(e) }
     }
     loadSearching()
-    const ch2 = supabase.channel(`offers-${profile.id}-real`)
+    const ch2 = createRealtimeChannel(`offers-${profile.id}-real`)
 .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides' }, (p) => {
         const r = p.new as any; if (!r) return
         if (r.status === 'cancelled' && r.cancelled_by === 'passenger') {
@@ -344,16 +356,18 @@ export function DriverHome({ profile }: { profile: Profile }) {
         const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
           updateNavigationProgress(p)
           setSpeedKmh((pos.coords.speed ?? 0) * 3.6)
-          const dist = Math.hypot(p[0] - lastLocation.current[0], p[1] - lastLocation.current[1])
+        const previousLocation = lastLocation.current
+        const dist = Math.hypot(p[0] - previousLocation[0], p[1] - previousLocation[1])
         if (dist > 0.00005) {
-          const dLng = p[0] - lastLocation.current[0]; const dLat = p[1] - lastLocation.current[1]
+          const dLng = p[0] - previousLocation[0]; const dLat = p[1] - previousLocation[1]
           if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) { const b = Math.atan2(dLng, dLat) * 180 / Math.PI; setBearing(b) }
-          setLocation(p); lastLocation.current = p
+          setLocation(p)
         }
+        lastLocation.current = p
         const nowTs = Date.now()
         if (nowTs - lastSupabaseUpdate.current > 3000) {
           lastSupabaseUpdate.current = nowTs
-          if (ride) supabase.from('rides').update({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude } as any).eq('id', ride.id).then(()=>{})
+          if (ride) updateRide({ driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude }).eq('id', ride.id).then(()=>{})
           if (isOnline && !ride) {
             supabase.from('profiles').update({ current_lat: pos.coords.latitude, current_lng: pos.coords.longitude } as any).eq('id', profile.id).then(()=>{})
             supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: true, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() } as any, { onConflict: 'driver_id' }).then(()=>{})
@@ -367,25 +381,32 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     let interval: any
+    let active = true
+    let routeRequestActive = false
     async function buildRoute() {
-      if (!ride) return
-      const from = lastLocation.current[0]!== 0? lastLocation.current : location
-      if (!from) return
+      if (!ride || routeRequestActive) return
+      const from = lastLocation.current
       const target: [number, number] = ['accepted','driver_assigned','arrived'].includes(String(ride.status)) ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]
+      routeRequestActive = true
       try {
         const r = await getRoute(from, target)
+        if (!active) return
         activeStepIndexRef.current = 0
         setActiveStepIndex(0)
         routeDataRef.current = r
         setRoute(r.geometry)
         setRouteData(r)
         updateNavigationProgress(from)
-      } catch {}
+      } catch (routeError) {
+        console.error('Could not refresh driver route', routeError)
+      } finally {
+        routeRequestActive = false
+      }
     }
     buildRoute()
     if (isNavigating) { interval = setInterval(buildRoute, 15000) }
-    return () => clearInterval(interval)
-  }, [ride?.id, ride?.status, location, isNavigating])
+    return () => { active = false; clearInterval(interval) }
+  }, [ride?.id, ride?.status, isNavigating])
 
   async function toggleOnline() {
     if (approvedDocs.length < 7) { alert(`Cannot go online. You have ${approvedDocs.length}/7 docs. Need 7 approved. Missing: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d.type)).map(doc=>doc.label).join(', ')}`); return }
@@ -417,8 +438,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   async function acceptRide(rideId: string) {
     clearRequestTimer()
     if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }
-    const { data: acceptedRide, error } = await supabase.from('rides')
-      .update({ driver_id: profile.id, status: 'accepted', accepted_at: new Date().toISOString(), offered_driver_id: null, offer_expires_at: null } as any)
+    const { data: acceptedRide, error } = await updateRide({ driver_id: profile.id, status: 'accepted', accepted_at: new Date().toISOString(), offered_driver_id: null, offer_expires_at: null })
       .eq('id', rideId).eq('offered_driver_id', profile.id).select('*').maybeSingle()
     if (error) { alert(`Could not accept this ride: ${errMsg(error)}`); return }
     if (!acceptedRide) { alert('This ride offer expired or was accepted by another driver.'); return }
@@ -455,12 +475,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!ride) return
     const rideId = ride.id
     const fare = Number(ride.fare || 0)
-    const { data: completedRide, error } = await supabase.from('rides')
-      .update({ status: 'completed' as any } as any)
+    const { data: completedRide, error } = await updateRide({ status: 'completed' })
       .eq('id', rideId).eq('status', ride.status).select('*').maybeSingle()
     if (error) { alert(`Could not complete this ride: ${errMsg(error)}`); return }
     if (!completedRide) { alert('This trip changed before it could be completed. Refresh and try again.'); return }
     setRide(completedRide as Ride)
+    setPendingRating(completedRide as Ride)
+    localStorage.setItem(pendingRatingStorageKey, JSON.stringify(completedRide))
     setShowCollected(fare)
     if (collectedTimerRef.current) clearTimeout(collectedTimerRef.current)
     collectedTimerRef.current = setTimeout(() => {
@@ -472,8 +493,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   async function markArrived() {
     if (!ride) return
-    const { data, error } = await supabase.from('rides')
-      .update({ status: 'arrived' as any } as any)
+    const { data, error } = await updateRide({ status: 'arrived' })
       .eq('id', ride.id).eq('status', ride.status).select('*').maybeSingle()
     if (error) { alert(`Could not mark arrival: ${errMsg(error)}`); return }
     if (!data) { alert('This ride changed before arrival could be confirmed. Refresh and try again.'); return }
@@ -483,8 +503,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   async function startTrip() {
     if (!ride) return
     const currentRide = ride
-    const { data, error } = await supabase.from('rides')
-      .update({ status: 'in_progress' as any } as any)
+    const { data, error } = await updateRide({ status: 'in_progress' })
       .eq('id', currentRide.id).eq('status', currentRide.status).select('*').maybeSingle()
     if (error) { alert(`Could not start this trip: ${errMsg(error)}`); return }
     if (!data) { alert('This ride changed before it could start. Refresh and try again.'); return }
@@ -506,11 +525,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const rideId = ride.id
     const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: rideId, p_rating: driverRating, p_comment: driverRatingComment.trim() || null })
     if (error) { alert(`Could not submit rating: ${errMsg(error)}`); return }
+    clearPendingRating()
     setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null)
   }
 
   async function skipRating() {
     if (!ride) return
+    clearPendingRating()
     setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setShowChat(false); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null)
   }
 
@@ -526,7 +547,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const target = rideToCancel || ride
     if (!target) return
     const rideId = target.id
-    const { data: cancelledRide, error } = await supabase.from('rides').update({ status: 'cancelled', cancel_reason: driverCancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'driver', } as any).eq('id', rideId).select('id').maybeSingle()
+    const { data: cancelledRide, error } = await updateRide({ status: 'cancelled', cancel_reason: driverCancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'driver' }).eq('id', rideId).select('id').maybeSingle()
     if (error) { alert(`Could not cancel this ride: ${errMsg(error)}`); return }
     if (!cancelledRide) { alert('This trip is no longer available to cancel.'); return }
     setShowDriverCancelReason(false)
@@ -541,6 +562,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const canGoOnline = approvedDocs.length >= 7
   const showTopBanner = !canGoOnline
   const topBannerHeight = showTopBanner? 42 : 0
+
+  function clearPendingRating() {
+    setPendingRating(null)
+    localStorage.removeItem(pendingRatingStorageKey)
+  }
 
   return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <div onClick={() => { setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: 0 }}>

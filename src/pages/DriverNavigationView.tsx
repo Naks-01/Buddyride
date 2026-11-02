@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { getRoute } from '../lib/mapbox'
+import { createRealtimeChannel } from '../lib/realtime'
+import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
@@ -57,7 +59,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
         setRideLoading(false)
       })
 
-    const channel = supabase.channel(`driver-nav-${rideId}`)
+    const channel = createRealtimeChannel(`driver-nav-${rideId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${rideId}` },
         p => { if (active && p.new) setRide(p.new as Ride) }
       ).subscribe()
@@ -94,22 +96,32 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     return () => navigator.geolocation.clearWatch(watchId)
   }, [profile.id])
 
-  // Route refresh every 30s
+  const hasLocation = location !== null
+
+  // Route refresh every 15s
   useEffect(() => {
-    if (!ride || !location || !target) return
+    if (!ride || !target) return
     let active = true
+    let refreshing = false
     const refresh = async () => {
+      if (refreshing) return
+      const origin = latestLocationRef.current
+      if (!origin) return
+      refreshing = true
       try {
-        const origin = latestLocationRef.current || location
         const nextRoute = await getRoute(origin, target)
         if (!active) return
         setRouteData(nextRoute); setRouteUpdatedAt(Date.now()); setRouteError(''); setActiveStepIndex(0)
-      } catch (e:any) { if (active) setRouteError(e.message) }
+      } catch (e:any) {
+        if (active) setRouteError(e.message)
+      } finally {
+        refreshing = false
+      }
     }
     void refresh()
-    const interval = window.setInterval(refresh, 30000)
+    const interval = window.setInterval(refresh, 15000)
     return () => { active = false; window.clearInterval(interval) }
-  }, [ride?.id, ride?.status, target?.[0], target?.[1], location])
+  }, [ride?.id, ride?.status, target?.[0], target?.[1], hasLocation])
 
   // Map init
   useEffect(() => {
@@ -158,7 +170,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     if (!ride) return
     setActionBusy(true)
     try {
-      const { data, error } = await supabase.from('rides').update({ status }).eq('id', ride.id).eq('driver_id', profile.id).select('*').single()
+      const { data, error } = await updateRide({ status }).eq('id', ride.id).eq('driver_id', profile.id).select('*').single()
       if (error) throw error
       setRide(data as Ride)
     } catch (e:any) { setRideError(e.message) } finally { setActionBusy(false) }

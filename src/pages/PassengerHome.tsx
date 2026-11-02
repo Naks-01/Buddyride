@@ -6,6 +6,8 @@ import { RideChat } from '../components/RideChat'
 import { getOSMRoute, reverseOSM } from '../lib/osm'
 import { calculateFareForCategory, DEFAULT_FARE_CONFIG, type FareConfig } from '../lib/fare'
 import { useDriverLiveLocation } from '../lib/useDriverLiveLocation'
+import { createRealtimeChannel } from '../lib/realtime'
+import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
@@ -213,7 +215,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     const fiveMinAgo = new Date(Date.now() - 5*60*1000).toISOString()
     supabase.from('driver_status').select('*').eq('is_online', true).gt('updated_at', fiveMinAgo).then(({data}) => { if(data) setNearbyCars(data) })
-    const ch = supabase.channel('buddyride-cars-live').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, (payload) => {
+    const ch = createRealtimeChannel('buddyride-cars-live').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, (payload) => {
       const car = payload.new as any; if (!car) return
       if (car.updated_at && new Date(car.updated_at).getTime() < Date.now() - 5*60*1000) {
         setNearbyCars(prev => prev.filter(c => c.driver_id!== car.driver_id))
@@ -238,7 +240,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     if (!ride) return
-    const ch = supabase.channel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
+    const ch = createRealtimeChannel(`passenger-${ride.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` }, p => {
       const newR = p.new as any; if (!newR) return
       const oldStatus = prevStatusRef.current
       const newStatus = newR.status
@@ -283,11 +285,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     const tick = async () => {
       if (cancelled) return
       try {
-        if ((ride.status as any) === 'searching') {
-          try {
-            await supabase.rpc('dispatch_ride', { p_ride_id: ride.id })
-          } catch {}
-        }
         const { data } = await supabase.from('rides').select('*').eq('id', ride.id).single()
         if (!cancelled && data) {
           const typedData = data as any
@@ -409,11 +406,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       } as any).select().single()
       if (error) throw error
       setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = data.status
-      if (paymentMethod !== 'paystack') {
-        try {
-          await supabase.rpc('dispatch_ride', { p_ride_id: data.id })
-        } catch {}
-      }
       if (paymentMethod === 'paystack') {
         const { data: checkout, error: checkoutError } = await supabase.functions.invoke('start-paystack-checkout', { body: { ride_id: data.id } })
         if (checkoutError) throw checkoutError
@@ -426,7 +418,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function cancelRide() {
     if (!ride) return; if (!cancelReason) { setShowCancelReason(true); return }
     const rideId = ride.id
-    const { data: cancelledRide, error } = await supabase.from('rides').update({ status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).eq('id', rideId).select('id').maybeSingle()
+    const { data: cancelledRide, error } = await updateRide({ status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' }).eq('id', rideId).select('id').maybeSingle()
     if (error) { setRideError(`Could not cancel ride: ${errMsg(error)}`); return }
     if (!cancelledRide) { setRideError('This ride is no longer available to cancel.'); return }
     setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(50); setCancelReason('')

@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { createRealtimeChannel } from '../lib/realtime'
 import { supabase } from '../lib/supabase'
 
 type RideMessage = {
@@ -38,8 +39,7 @@ export function RideChat({ rideId, myId }: { rideId: string, myId: string }) {
     }
     void load()
 
-    const ch = supabase
-      .channel(`chat-${rideId}`)
+    const ch = createRealtimeChannel(`chat-${rideId}`)
       .on('postgres_changes', 
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `ride_id=eq.${rideId}` }, 
         payload => {

@@ -78,6 +78,7 @@ export type Ride = {
   cancel_reason?: string | null
   cancelled_by?: 'passenger' | 'driver' | 'system' | null
   cancelled_at?: string | null
+  accepted_at?: string | null
   started_at?: string | null
   ended_at?: string | null
   created_at?: string

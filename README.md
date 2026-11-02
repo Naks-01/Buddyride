@@ -40,6 +40,7 @@ Open Supabase SQL Editor and run:
 `supabase/schema.sql`
 
 For a clean rebuild, use a fresh Supabase project or remove old conflicting BuddyRide tables first.
+The canonical schema includes the document compatibility, rating, security, storage, and Realtime definitions.
 
 ## 4. Start
 

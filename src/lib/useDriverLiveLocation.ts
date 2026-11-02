@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createRealtimeChannel } from './realtime'
 import { supabase } from './supabase'
 
 type DriverLocationRow = {
@@ -35,8 +36,7 @@ export function useDriverLiveLocation(driverId: string | null) {
       setLocation({ coordinates: [row.lng, row.lat], updatedAt: row.updated_at })
     }
 
-    const channel = supabase
-      .channel(`passenger-driver-location-${driverId}`)
+    const channel = createRealtimeChannel(`passenger-driver-location-${driverId}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
