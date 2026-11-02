@@ -123,9 +123,15 @@ export default function App() {
       setShowLanding(false)
       
       try {
-        const canPass = await checkSelfieLock(userId)
-        const skippedToday = localStorage.getItem(selfieSkipKey(userId)) === new Date().toISOString().split('T')[0]
-        setShowSelfieCheck(!canPass && !skippedToday)
+        const { data: { user }, error } = await supabase.auth.getUser()
+        const userEmail = !error ? user?.email?.toLowerCase() : undefined
+        if (userEmail && ADMIN_EMAILS.includes(userEmail)) {
+          setShowSelfieCheck(false)
+        } else {
+          const canPass = await checkSelfieLock(userId)
+          const skippedToday = localStorage.getItem(selfieSkipKey(userId)) === new Date().toISOString().split('T')[0]
+          setShowSelfieCheck(!canPass && !skippedToday)
+        }
       } catch {
         setShowSelfieCheck(false)
       }

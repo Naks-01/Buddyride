@@ -3,7 +3,6 @@ import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomShee
 import { MapboxMapView } from '../components/MapboxMapView'
 import { NavigationMenu } from '../components/NavigationMenu'
 import { RideChat } from '../components/RideChat'
-import { REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 import { getRoute } from '../lib/mapbox'
 import { createRealtimeChannel } from '../lib/realtime'
 import { updateRide } from '../lib/rideUpdates'
@@ -11,6 +10,21 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const EXPIRE_SECONDS = 15
+const ADMIN_EMAILS = ['buddyride@outlook.com', 'mokgalaka.nt@gmail.com']
+const REQUIRED_ONLINE_DOCUMENTS = [
+  { key: 'sa_id', label: 'SA ID photo', types: ['sa_id', 'id_doc'] },
+  { key: 'drivers_license', label: "Driver's Licence photo", types: ['drivers_license', 'driver_license'] },
+  { key: 'prdp', label: 'PrDP photo', types: ['prdp', 'pdp', 'prdp_doc', 'pdp_doc'] },
+  { key: 'profile_photo', label: 'Profile Photo selfie', types: ['profile_photo', 'profile'] },
+  { key: 'selfie_holding_id', label: 'Selfie holding ID', types: ['selfie_holding_id'] },
+  { key: 'vehicle_registration', label: 'Vehicle Registration Papers', types: ['vehicle_registration', 'vehicle_papers', 'registration_papers'] },
+  { key: 'license_disc', label: 'Licence Disc photo', types: ['license_disc', 'disc'] },
+  { key: 'car_photos', label: '4 car photos', types: ['car_photo_1', 'car_photo_2', 'car_photo_3', 'car_photo_4'] },
+] as const
+
+function normalizeDocumentType(type: string) {
+  return type.toLowerCase().trim().replace(/[\s-]+/g, '_')
+}
 
 function errMsg(e: any) {
   return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e))
@@ -59,8 +73,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const watchId = useRef<number | null>(null)
   const lastSupabaseUpdate = useRef<number>(0)
   const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
-  const [docStatus, setDocStatus] = useState<'approved'|'pending'|'missing'>('missing')
-  const [approvedDocs, setApprovedDocs] = useState<string[]>([])
+  const [uploadedDocuments, setUploadedDocuments] = useState<string[]>([])
+  const [documentsLoaded, setDocumentsLoaded] = useState(false)
+  const [documentsError, setDocumentsError] = useState('')
+  const [adminBypass, setAdminBypass] = useState(false)
   const [showDriverCancelReason, setShowDriverCancelReason] = useState(false)
   const [driverCancelReason, setDriverCancelReason] = useState('')
   const [rideToCancel, setRideToCancel] = useState<Ride | null>(null)
@@ -239,24 +255,46 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [profile.id])
 
   useEffect(() => {
+    let active = true
     async function checkDocs() {
-      const [{ data: docData }, { data: profData }] = await Promise.all([
-        supabase.from('driver_documents').select('doc_type,status').eq('driver_id', profile.id),
-        supabase.from('profiles').select('avatar_url').eq('id', profile.id).single()
-      ])
-      const approved: string[] = []
-      if (profData?.avatar_url) approved.push('profile_photo')
-      if (docData && docData.length > 0) {
-        const approvedFromDocs = docData.filter((d:any) => String(d.status || '').toLowerCase() === 'approved').map((d:any) => normalizeDriverDocType(d.doc_type)).filter(Boolean) as string[]
-        approved.push(...approvedFromDocs)
+      setDocumentsLoaded(false)
+      setDocumentsError('')
+      try {
+        const [authResult, docsResult, profileResult] = await Promise.all([
+          supabase.auth.getUser(),
+          supabase.from('driver_documents').select('doc_type,file_url').eq('driver_id', profile.id),
+          supabase.from('profiles').select('avatar_url').eq('id', profile.id).single(),
+        ])
+        if (!active) return
+
+        const userEmail = authResult.data.user?.email?.toLowerCase()
+        setAdminBypass(!authResult.error && Boolean(userEmail && ADMIN_EMAILS.includes(userEmail)))
+
+        const errors = [authResult.error, docsResult.error, profileResult.error].filter(Boolean)
+        if (errors.length) setDocumentsError(`Could not verify document requirements: ${errors.map(error => error!.message).join('; ')}`)
+
+        if (!docsResult.error && !profileResult.error) {
+          const uploadedTypes = new Set(
+            (docsResult.data || [])
+              .filter(document => Boolean(document.file_url))
+              .map(document => normalizeDocumentType(document.doc_type)),
+          )
+          if (profileResult.data?.avatar_url) uploadedTypes.add('profile_photo')
+          setUploadedDocuments([...uploadedTypes])
+        } else {
+          setUploadedDocuments([])
+        }
+      } catch (error) {
+        if (!active) return
+        setAdminBypass(false)
+        setUploadedDocuments([])
+        setDocumentsError(`Could not verify document requirements: ${errMsg(error)}`)
+      } finally {
+        if (active) setDocumentsLoaded(true)
       }
-      const uniqueApproved = [...new Set(approved)]
-      setApprovedDocs(uniqueApproved)
-      if (uniqueApproved.length >= 7) setDocStatus('approved')
-      else if (uniqueApproved.length > 0) setDocStatus('pending')
-      else setDocStatus('missing')
     }
-    checkDocs()
+    void checkDocs()
+    return () => { active = false }
   }, [profile.id])
 
   useEffect(() => {
@@ -484,7 +522,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [ride?.id, ride?.status, isNavigating])
 
   async function toggleOnline() {
-    if (approvedDocs.length < 7) { alert(`Cannot go online. You have ${approvedDocs.length}/7 docs. Need 7 approved. Missing: ${REQUIRED_DOCS.filter(d=>!approvedDocs.includes(d.type)).map(doc=>doc.label).join(', ')}`); return }
+    if (!isOnline && !canGoOnline) { alert('Upload all 8 documents to Go Online'); return }
     const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).limit(1).maybeSingle()
     if (activeRideError) { alert(`Could not check active rides: ${errMsg(activeRideError)}`); return }
     if (activeRide) {
@@ -667,7 +705,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const curStep = (() => { if (!routeData?.steps?.length) return null; return routeData.steps[activeStepIndex] || routeData.steps[0] })()
   const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
   const distText = nextTurnDistance !== null ? `${nextTurnDistance >= 1000 ? `${(nextTurnDistance / 1000).toFixed(1)}km` : `${Math.ceil(nextTurnDistance / 10) * 10}m`} • ${curStep ? `${Math.ceil(curStep.duration / 60)} min` : ''}` : routeData ? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min` : '0.0km • 0 min'
-  const canGoOnline = approvedDocs.length >= 7
+  const uploadedTypeSet = new Set(uploadedDocuments)
+  const isDocumentUploaded = (requirement: typeof REQUIRED_ONLINE_DOCUMENTS[number]) =>
+    requirement.types.every(type => uploadedTypeSet.has(type))
+  const uploadedRequirementCount = REQUIRED_ONLINE_DOCUMENTS.filter(isDocumentUploaded).length
+  const uploadedCarPhotoCount = REQUIRED_ONLINE_DOCUMENTS.find(requirement => requirement.key === 'car_photos')?.types
+    .filter(type => uploadedTypeSet.has(type)).length || 0
+  const canGoOnline = adminBypass || (documentsLoaded && uploadedRequirementCount === REQUIRED_ONLINE_DOCUMENTS.length)
   const showTopBanner = !canGoOnline
   const topBannerHeight = showTopBanner? 42 : 0
   const completedRideForDisplay = ride?.status === 'completed' ? ride : pendingRating
@@ -686,10 +730,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : '⛔ BLOCKED'}</button>}
+        {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : 'Upload all 8 documents to Go Online'}</button>}
       </div>
     </header>
-    {showTopBanner && (<div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: docStatus === 'missing' ? '#ff3b30' : '#ff9500', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>{docStatus === 'missing' ? `⚠️ Upload 7 docs: ${approvedDocs.length}/7` : `⏳ Pending: ${approvedDocs.length}/7 approved`}</div>)}
+    {showTopBanner && documentsLoaded && (<div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: '#ff3b30', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>Upload all 8 documents to Go Online ({uploadedRequirementCount}/8)</div>)}
     {isNavigating && ride && (<div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}><div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div><div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div></div>)}
     <div style={{ position: 'absolute', top: '14px', left: '50%', transform: 'translateX(-50%)', zIndex: 90, padding: '7px 12px', borderRadius: '999px', color: 'white', background: 'rgba(28,28,30,.88)', fontSize: '13px', fontWeight: 700 }}>{Math.round(speedKmh)} km/h</div>
     <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: `calc(${sheetSnap}dvh + 12px)`, zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px', transition: 'bottom 0.3s ease' }}>🎯</button>
@@ -722,8 +766,21 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {completedRideForDisplay && !showDriverRating && showCollected === null && (<div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2 style={{ margin: '8px 0' }}>Trip Completed!</h2><h1 style={{ color: '#00d181', margin: '4px 0' }}>R {completedRideForDisplay.fare} {completedRideForDisplay.payment_method === 'paystack' ? 'PAID ONLINE' : 'CASH DUE'}</h1><div style={{color:'#00d181', fontWeight:'bold'}}>You get R {getEarnings(completedRideForDisplay.fare, completedRideForDisplay.driver_earnings, completedRideForDisplay.buddyride_commission).driverGets} • Fee R {getEarnings(completedRideForDisplay.fare, completedRideForDisplay.driver_earnings, completedRideForDisplay.buddyride_commission).platformGets}</div><p style={{ color: subText, fontSize: '13px' }}>Rate passenger to continue</p><button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button></div>)}
       {showDriverRating && (pendingRating || ride) && (<div style={{ textAlign: 'center' }}><h2 style={{ margin: '8px 0' }}>Rate Passenger</h2><p style={{ color: subText, fontSize: '13px' }}>{(pendingRating || ride)!.dropoff_address?.split(',')[0]} • Passenger R {(pendingRating || ride)!.fare} / You R {getEarnings((pendingRating || ride)!.fare, (pendingRating || ride)!.driver_earnings, (pendingRating || ride)!.buddyride_commission).driverGets}</p><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: driverRating >= s? '#FF6B00' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}</div><textarea value={driverRatingComment} maxLength={1000} onChange={event => setDriverRatingComment(event.target.value)} placeholder="Add a comment (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, resize: 'vertical' }} /><div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}><button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button><button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button></div></div>)}
       {!ride &&!showDriverRating && (<div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{canGoOnline ? (isOnline ? '✅ Waiting for Buddy requests... 🔊' : 'Ready to go online') : `⛔ Blocked - Docs: ${approvedDocs.length}/7`}</div>
-          {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : `NEED DOCS (${approvedDocs.length}/7)`}</button>}
+          <div style={{ fontSize: '14px', marginBottom: '12px', color: subText }}>{adminBypass ? 'Admin document check bypassed' : documentsLoaded ? `${uploadedRequirementCount}/8 documents uploaded` : 'Checking required documents…'}</div>
+          {documentsError && <p role="alert" style={{ color: '#fca5a5', fontSize: 12 }}>{documentsError}</p>}
+          {!adminBypass && <div style={{ display: 'grid', gap: 6, marginBottom: 14, textAlign: 'left' }}>
+            {REQUIRED_ONLINE_DOCUMENTS.map(requirement => {
+              const uploaded = isDocumentUploaded(requirement)
+              const detail = requirement.key === 'car_photos' ? `${uploadedCarPhotoCount}/4 uploaded` : uploaded ? 'Uploaded' : 'Missing'
+              return <div key={requirement.key} style={{ display: 'flex', alignItems: 'center', gap: 8, color: uploaded ? '#22c55e' : subText, fontSize: 13 }}>
+                <span aria-hidden="true">{uploaded ? '✓' : '○'}</span>
+                <span style={{ flex: 1 }}>{requirement.label}</span>
+                <span>{detail}</span>
+              </div>
+            })}
+          </div>}
+          <p style={{ margin: '0 0 12px', color: subText, fontSize: 13 }}>You keep 80%, BuddyRide 20%</p>
+          {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : 'Upload all 8 documents to Go Online'}</button>}
         </div>)}
     </BottomSheet>
     </div>
