@@ -140,8 +140,9 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     setError('')
     const [driverResult, passengerResult] = await Promise.all([
       supabase.from('driver_documents').select('*,profiles!driver_documents_driver_id_fkey!inner(*)').order('created_at',{ascending:false}),
-      supabase.from('passenger_documents').select('*,profiles!passenger_documents_user_id_fkey!inner(id,full_name,email,phone)').order('created_at',{ascending:false}),
+      supabase.from('passenger_documents').select('*').order('created_at',{ascending:false}),
     ])
+    let profileLoadError = ''
     if (!driverResult.error) {
       setDriverDocs((driverResult.data || []).map(document => ({
         ...document,
@@ -149,14 +150,29 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       })))
     }
     if (!passengerResult.error) {
+      const passengerDocuments = passengerResult.data || []
+      const userIds = [...new Set(passengerDocuments
+        .map(document => document.user_id || document.passenger_id)
+        .filter((userId): userId is string => Boolean(userId)))]
+      const profilesResult = userIds.length
+        ? await supabase.from('profiles').select('id,full_name,email,phone').in('id', userIds)
+        : { data: [], error: null }
+      const profilesById = new Map((profilesResult.data || []).map(passengerProfile => [passengerProfile.id, passengerProfile]))
       setPassengerDocs((passengerResult.data || []).map(document => ({
         ...document,
-        profiles: Array.isArray(document.profiles) ? document.profiles[0] || null : document.profiles || null,
+        profiles: profilesById.get(document.user_id || document.passenger_id) || null,
       })))
+      if (profilesResult.error) {
+        profileLoadError = `Could not load passenger profiles: ${profilesResult.error.message}`
+      }
     }
     const loadErrors = [driverResult.error, passengerResult.error].filter(Boolean)
-    if (loadErrors.length) {
-      setError(loadErrors.map(loadError=>loadError?.message).join(' · '))
+    const loadErrorMessages = [
+      ...loadErrors.map(loadError => loadError?.message),
+      profileLoadError,
+    ].filter(Boolean)
+    if (loadErrorMessages.length) {
+      setError(loadErrorMessages.join(' · '))
     }
   }
 
