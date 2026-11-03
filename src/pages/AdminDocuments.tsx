@@ -23,6 +23,8 @@ type StoredDocument = {
   status: string
   expiry_date?: string | null
   rejection_reason?: string | null
+  reviewed_at?: string | null
+  reviewed_by?: string | null
   profiles?: {
     id?: string
     email?: string | null
@@ -106,7 +108,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   const [showUnapprovedOnly, setShowUnapprovedOnly] = useState(false)
   const [loadingId, setLoadingId] = useState<string|null>(null)
   const [rejectModal, setRejectModal] = useState<{id:string, table:'driver_documents'|'passenger_documents'}|null>(null)
-  const [reason, setReason] = useState('')
+  const [rejectionReason, setRejectionReason] = useState('')
   const [error, setError] = useState('')
 
   async function viewDriverDocument(fileUrl?: string | null) {
@@ -178,7 +180,8 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     doc:StoredDocument,
     table:'driver_documents'|'passenger_documents',
     status:'approved'|'rejected',
-    driverEmail:string
+    driverEmail:string,
+    rejectionReason = '',
   ): Promise<boolean> {
     console.log(status==='approved'?'Approving':'Rejecting', doc.id, driverEmail, doc.doc_type)
     setLoadingId(doc.id)
@@ -186,11 +189,17 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     try {
       const update = (changes: Record<string, string | null>) => supabase.from(table).update(changes as any).eq('id',doc.id)
       const documentStatus = table === 'driver_documents' ? status.toUpperCase() : status
+      const reviewedAt = new Date().toISOString()
       const changes: Record<string, string | null> = table === 'driver_documents'
-        ? { status: documentStatus }
+        ? {
+          status: documentStatus,
+          rejection_reason: status === 'rejected' ? rejectionReason.trim() : null,
+          reviewed_at: reviewedAt,
+          reviewed_by: _profile.id,
+        }
         : status==='approved'
           ? { status: documentStatus, verified_at:new Date().toISOString() }
-          : { status: documentStatus, rejection_reason:reason.trim() || null }
+          : { status: documentStatus, rejection_reason:rejectionReason.trim() || null }
       let { error: updateError } = await update(changes)
       let metadataColumnMissing = false
       if (updateError) {
@@ -204,8 +213,16 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       }
       if (updateError) throw updateError
 
+      const reviewMetadata = table === 'driver_documents'
+        ? { reviewed_at: reviewedAt, reviewed_by: _profile.id }
+        : {}
       const updateLocal = (documents: StoredDocument[]) => documents.map(item =>
-        item.id===doc.id ? { ...item, status: documentStatus, rejection_reason:status==='rejected' ? reason.trim() || null : null } : item
+        item.id===doc.id ? {
+          ...item,
+          status: documentStatus,
+          rejection_reason: status === 'rejected' ? rejectionReason.trim() || null : null,
+          ...reviewMetadata,
+        } : item
       )
       if (table==='driver_documents') setDriverDocs(updateLocal)
       else setPassengerDocs(updateLocal)
@@ -280,17 +297,23 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function doReject(){
     if (!rejectModal) return
-    if (!reason.trim()) { alert('Enter reason'); return }
+    if (!rejectionReason.trim()) { alert('Enter reason'); return }
     const docs = rejectModal.table==='driver_documents' ? driverDocs : passengerDocs
     const doc = docs.find(item=>item.id===rejectModal.id)
     if (!doc) {
       setError('Could not reject document: it is no longer in the loaded document list. Refresh and try again.')
       return
     }
-    const succeeded = await updateDocumentStatus(doc,rejectModal.table,'rejected',doc.profiles?.email || doc.user_email || doc.email || '')
+    const succeeded = await updateDocumentStatus(
+      doc,
+      rejectModal.table,
+      'rejected',
+      doc.profiles?.email || doc.user_email || doc.email || '',
+      rejectionReason,
+    )
     if (succeeded) {
       setRejectModal(null)
-      setReason('')
+      setRejectionReason('')
     }
   }
 
@@ -441,9 +464,9 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         <div style={{ background:'#1e1e1e', padding:'20px', borderRadius:'12px', width:'90%', maxWidth:'380px', border:'1px solid #333' }}>
           <h3 style={{ margin:'0 0 8px' }}>Reject Reason</h3>
           <p style={{ fontSize:'12px', color:'#9ca3af' }}>The user will see this reason</p>
-          <input value={reason} onChange={e=> setReason(e.target.value)} autoFocus placeholder="e.g. Blurry photo, expired" style={{ width:'100%', padding:'10px', borderRadius:'8px', background:'#242428', color:'white', border:'1px solid #444', marginTop:'8px', boxSizing:'border-box' }}/>
+          <textarea value={rejectionReason} onChange={e=> setRejectionReason(e.target.value)} autoFocus placeholder="e.g. Blurry photo, expired" rows={3} style={{ width:'100%', padding:'10px', borderRadius:'8px', background:'#242428', color:'white', border:'1px solid #444', marginTop:'8px', boxSizing:'border-box', resize:'vertical' }}/>
           <div style={{ display:'flex', gap:'8px', marginTop:'12px' }}>
-            <button onClick={()=> { setRejectModal(null); setReason('') }} style={{ flex:1, background:'#333', color:'white', padding:'10px', borderRadius:'8px', border:'none' }}>Cancel</button>
+            <button onClick={()=> { setRejectModal(null); setRejectionReason('') }} style={{ flex:1, background:'#333', color:'white', padding:'10px', borderRadius:'8px', border:'none' }}>Cancel</button>
             <button onClick={doReject} style={{ flex:1, background:'#ff3b30', color:'white', padding:'10px', borderRadius:'8px', border:'none' }}>Confirm Reject</button>
           </div>
         </div>

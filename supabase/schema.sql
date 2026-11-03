@@ -86,6 +86,9 @@ create table if not exists public.driver_documents (
   created_at timestamptz not null default now(),
   unique (driver_id, doc_type)
 );
+alter table public.driver_documents add column if not exists rejection_reason text;
+alter table public.driver_documents add column if not exists reviewed_at timestamptz;
+alter table public.driver_documents add column if not exists reviewed_by uuid references public.profiles(id) on delete set null;
 
 create table if not exists public.passenger_documents (
   id uuid primary key default gen_random_uuid(),
