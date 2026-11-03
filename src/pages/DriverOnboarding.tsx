@@ -18,7 +18,7 @@ import compressImageFile from '../lib/compressImage'
 type StoredDocument = Pick<DriverDocument,
   'id' | 'doc_type' | 'file_url' | 'file_path' | 'status' | 'rejection_reason' | 'reviewed_at' | 'expiry_date'
 >
-const MAX_UPLOAD_SIZE = 5 * 1024 * 1024
+const MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
 const REQUIRED_TYPES = [
@@ -123,13 +123,13 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         throw new Error('Choose a JPEG, PNG, or PDF file.')
       }
       if (file.size > MAX_UPLOAD_SIZE) {
-        throw new Error('File must be smaller than 5 MB.')
+        throw new Error('File must be smaller than 20 MB.')
       }
 
       const isImage = file.type.startsWith('image/')
       const body = isImage ? await compressImageFile(file) : file
       if (body.size > MAX_UPLOAD_SIZE) {
-        throw new Error('Compressed file must be smaller than 5 MB.')
+        throw new Error('Compressed file must be smaller than 20 MB.')
       }
       const extension = isImage ? 'jpg' : file.name.split('.').pop()?.toLowerCase() || 'pdf'
       const path = `${profile.id}/${documentType}/${Date.now()}.${extension}`
