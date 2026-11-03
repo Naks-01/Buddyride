@@ -68,10 +68,24 @@ function isExpired(expiryDate?: string | null) {
   return expiry < today
 }
 
+function getDocumentUrl(doc?: StoredDocument) {
+  const fileUrl = doc?.file_url?.trim()
+  return fileUrl || doc?.file_path?.trim() || ''
+}
+
+function isPlaceholderDocument(doc?: StoredDocument) {
+  return getDocumentUrl(doc).toLowerCase().includes('example.com')
+}
+
+function hasRealDocument(doc?: StoredDocument) {
+  return Boolean(getDocumentUrl(doc)) && !isPlaceholderDocument(doc)
+}
+
 function displayStatus(doc?: StoredDocument, optional = false) {
   if (!doc) return optional ? 'OPTIONAL' : 'MISSING'
-  if (doc.status.toLowerCase() === 'expired' || isExpired(doc.expiry_date)) return 'EXPIRED'
-  const status = doc.status.toUpperCase()
+  if (!hasRealDocument(doc)) return 'MISSING'
+  if (doc.status.trim().toLowerCase() === 'expired' || isExpired(doc.expiry_date)) return 'EXPIRED'
+  const status = doc.status.trim().toUpperCase()
   return status === 'APPROVED' || status === 'REJECTED' ? status : 'PENDING'
 }
 
@@ -87,6 +101,10 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function viewDriverDocument(fileUrl?: string | null) {
     const docUrl = fileUrl?.trim()
+    if (docUrl?.toLowerCase().includes('example.com')) {
+      setError('No real file uploaded - test data')
+      return
+    }
     if (!docUrl) {
       setError('No document uploaded yet')
       return
@@ -257,8 +275,8 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     required: boolean
   ) {
     const status = displayStatus(doc)
-    const docUrl = doc?.file_url || doc?.file_path
-    const canViewDocument = status !== 'MISSING' && Boolean(docUrl?.trim())
+    const docUrl = getDocumentUrl(doc)
+    const canViewDocument = status !== 'MISSING' && hasRealDocument(doc)
     const badgeColors: Record<string, { color: string, background: string }> = {
       APPROVED: { color:'#86efac', background:'#14532d' },
       MISSING: { color:'#fde68a', background:'#713f12' },
@@ -272,10 +290,11 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       <div style={{minWidth:0}}>
         <strong>{label}</strong>{!required && <span style={{fontSize:'11px', color:'#9ca3af'}}> (Optional)</span>}
         <span style={{display:'inline-block', marginTop:'4px', padding:'3px 8px', borderRadius:'999px', fontSize:'11px', fontWeight:700, color:badge.color, background:badge.background}}>{status}</span>
+        {isPlaceholderDocument(doc) && <div role="status" style={{fontSize:'12px', color:'#fbbf24'}}>No real file uploaded - test data</div>}
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
-        <button disabled={!canViewDocument} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed'}}>View Doc</button>
+        <button disabled={!canViewDocument} title={isPlaceholderDocument(doc)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed'}}>View Doc</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,table})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>
@@ -309,12 +328,14 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             || driverProfile?.email
           const userId = docs[0]?.user_id || driverProfile?.id || driverId
           const approvedCount = REQUIRED_DOCS.filter(requirement => docs.some(doc =>
-            normalizeDriverDocType(doc.doc_type)===requirement.type && doc.status.toLowerCase()==='approved'
+            normalizeDriverDocType(doc.doc_type)===requirement.type
+            && doc.status.trim().toLowerCase()==='approved'
+            && hasRealDocument(doc)
           )).length
           const requiredDocs = DRIVER_DOCUMENTS.filter(requirement=>requirement.required)
           const missingRequired = requiredDocs.filter(requirement => {
             const matchingDocs = docs.filter(item=>normalizeDriverDocType(item.doc_type)===requirement.id)
-            const doc = matchingDocs.find(item=>item.status.toLowerCase()==='approved') || matchingDocs[0]
+            const doc = matchingDocs.find(item=>item.status.trim().toLowerCase()==='approved' && hasRealDocument(item)) || matchingDocs[0]
             return displayStatus(doc)!=='APPROVED'
           })
           const canApproveToDrive = missingRequired.length===0
@@ -334,7 +355,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
             {REQUIRED_DOCS.map(requirement => renderDocumentRow(
-              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.type && item.status.toLowerCase()==='approved')
+              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.type && item.status.trim().toLowerCase()==='approved' && hasRealDocument(item))
                 || docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.type),
               requirement.type,
               requirement.label,

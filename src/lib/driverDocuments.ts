@@ -21,11 +21,14 @@ export type DriverDocumentType = string
 export type DocumentRequirement = { type: string; label: string }
 
 export function normalizeDocType(type: any): string {
-  const t = String(type || '').toLowerCase().trim().replace(/-/g,'_')
+  const t = String(type || '').toLowerCase().trim().replace(/[\s-]+/g,'_')
+  const vehiclePhoto = t.match(/^(?:vehicle|car)_photo_(\d+)$/)
+  if (vehiclePhoto) return `car_photo_${vehiclePhoto[1]}`
   if (['profile','profile_photo','photo'].includes(t)) return 'profile_photo'
   if (['sa_id','sa-id','id_doc','id'].includes(t)) return 'sa_id'
-  if (['drivers_license','drivers-license','license','drivers'].includes(t)) return 'drivers_license'
-  if (['license_disc','disc','license_doc'].includes(t)) return 'license_disc'
+  if (['drivers_license','drivers_licence','license','drivers'].includes(t)) return 'drivers_license'
+  if (['license_disc','licence_disc','disc','license_doc'].includes(t)) return 'license_disc'
+  if (['vehicle_registration','vehicle_registration_papers'].includes(t)) return 'vehicle_registration'
   if (['furn_check','furn-check','vehicle_photo','vehicle-photo','furn','vehicle'].includes(t)) return 'furn_check'
   if (['pdp','prdp','pdp_doc','prdp_doc'].includes(t)) return 'prdp'
   if (['insurance','insurance_doc'].includes(t)) return 'insurance'
