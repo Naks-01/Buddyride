@@ -15,9 +15,9 @@ import {
 import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import compressImageFile from '../lib/compressImage'
 
-type StoredDocument = Pick<DriverDocument, 'doc_type' | 'file_url' | 'status'> & {
-  rejection_reason?: string | null
-}
+type StoredDocument = Pick<DriverDocument,
+  'id' | 'doc_type' | 'file_url' | 'file_path' | 'status' | 'rejection_reason' | 'reviewed_at' | 'expiry_date'
+>
 const MAX_UPLOAD_SIZE = 5 * 1024 * 1024
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
@@ -86,7 +86,9 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setLoading(true)
     setError('')
     const [documentsResult, profileResult] = await Promise.all([
-      supabase.from('driver_documents').select('*').eq('driver_id', profile.id),
+      supabase.from('driver_documents')
+        .select('id,doc_type,file_url,file_path,status,rejection_reason,reviewed_at,expiry_date')
+        .eq('driver_id', profile.id),
       supabase.from('profiles').select('verification_status').eq('id', profile.id).single(),
     ])
     if (documentsResult.error || profileResult.error) {
@@ -148,13 +150,21 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         throw new Error('Storage did not return a public URL for the uploaded document.')
       }
 
+      const filePath = `${bucket}:${path}`
       uploadStage = 'database'
       const { data: savedDocument, error: saveError } = await supabase.from('driver_documents').upsert({
         driver_id: profile.id,
         doc_type: documentType,
         file_url: publicUrl,
+        file_path: filePath,
+        storage_path: filePath,
+        file_name: file.name,
         status: 'PENDING',
-      }, { onConflict: 'driver_id,doc_type' }).select('doc_type,file_url,status').single()
+        created_at: new Date().toISOString(),
+        expiry_date: null,
+      }, { onConflict: 'driver_id,doc_type' })
+        .select('id,doc_type,file_url,file_path,status,rejection_reason,reviewed_at,expiry_date')
+        .single()
       if (saveError) {
         console.error('DB ERROR:', saveError)
         try {

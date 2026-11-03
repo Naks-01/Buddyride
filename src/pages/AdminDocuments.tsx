@@ -20,6 +20,9 @@ type StoredDocument = {
   email?: string | null
   doc_type: string
   file_url?: string | null
+  file_path?: string | null
+  storage_path?: string | null
+  file_name?: string | null
   status: string
   expiry_date?: string | null
   rejection_reason?: string | null
