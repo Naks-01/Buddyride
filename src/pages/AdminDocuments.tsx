@@ -18,7 +18,8 @@ type StoredDocument = {
   user_email?: string | null
   email?: string | null
   doc_type: string
-  file_url: string
+  file_url?: string | null
+  file_path?: string | null
   status: string
   expiry_date?: string | null
   rejection_reason?: string | null
@@ -74,10 +75,16 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   const [reason, setReason] = useState('')
   const [error, setError] = useState('')
 
-  async function viewDriverDocument(fileUrl: string) {
+  async function viewDriverDocument(fileUrl?: string | null) {
+    const docUrl = fileUrl?.trim()
+    if (!docUrl) {
+      setError('No document uploaded yet')
+      return
+    }
+
     const newWindow = window.open('about:blank', '_blank')
     try {
-      const signedUrl = await createDriverDocumentSignedUrl(fileUrl)
+      const signedUrl = await createDriverDocumentSignedUrl(docUrl)
       if (newWindow) newWindow.location.href = signedUrl
       else window.location.href = signedUrl
     } catch (viewError: unknown) {
@@ -92,7 +99,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   async function load(){
     setError('')
     const [driverResult, passengerResult] = await Promise.all([
-      supabase.from('driver_documents').select('id,driver_id,doc_type,file_url,status,rejection_reason,created_at,profiles!driver_documents_driver_id_fkey(full_name,email,is_verified)').order('created_at',{ascending:false}),
+      supabase.from('driver_documents').select('id,driver_id,doc_type,file_url,file_path,status,rejection_reason,created_at,profiles!driver_documents_driver_id_fkey(full_name,email,is_verified)').order('created_at',{ascending:false}),
       supabase.from('passenger_documents').select('id,passenger_id,doc_type,file_url,status,rejection_reason,created_at,profiles!passenger_documents_passenger_id_fkey(full_name,email)').order('created_at',{ascending:false}),
     ])
     if (!driverResult.error) {
@@ -240,6 +247,8 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     required: boolean
   ) {
     const status = displayStatus(doc)
+    const docUrl = doc?.file_url || doc?.file_path
+    const canViewDocument = status !== 'MISSING' && Boolean(docUrl?.trim())
     const badgeColors: Record<string, { color: string, background: string }> = {
       APPROVED: { color:'#86efac', background:'#14532d' },
       MISSING: { color:'#fde68a', background:'#713f12' },
@@ -256,7 +265,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
-        <button disabled={!doc} onClick={()=>doc && void viewDriverDocument(doc.file_url)} style={{background:'#333', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>View Doc</button>
+        <button disabled={!canViewDocument} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed'}}>View Doc</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,table})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>

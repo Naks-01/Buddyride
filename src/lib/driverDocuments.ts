@@ -38,7 +38,11 @@ export const normalizedDriverDocType = normalizeDocType
 export const normalizeDoc = normalizeDocType
 export const normalizeDriverDoc = normalizeDocType
 
-export async function createDriverDocumentSignedUrl(filePath: string): Promise<string> {
+export async function createDriverDocumentSignedUrl(filePath?: string | null): Promise<string> {
+  if (!filePath?.trim()) {
+    throw new Error('No document uploaded yet')
+  }
+  filePath = filePath.trim()
   if (/^https?:\/\//i.test(filePath)) return filePath
   const separator = filePath.indexOf(':')
   const bucket = separator >= 0 ? filePath.slice(0, separator) : 'driver-documents'
