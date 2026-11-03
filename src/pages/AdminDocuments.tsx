@@ -20,7 +20,6 @@ type StoredDocument = {
   email?: string | null
   doc_type: string
   file_url?: string | null
-  file_path?: string | null
   status: string
   expiry_date?: string | null
   rejection_reason?: string | null
@@ -68,12 +67,11 @@ function isExpired(expiryDate?: string | null) {
   return expiry < today
 }
 
-function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'file_path'>) {
-  const filePath = doc?.file_path?.trim()
-  return filePath || doc?.file_url?.trim() || ''
+function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url'>) {
+  return doc?.file_url?.trim() || ''
 }
 
-function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'file_path'>) {
+function hasRealDocument(doc?: Pick<StoredDocument, 'file_url'>) {
   const filePath = getDocumentUrl(doc)
   if (isFakeFile(filePath)) return false
 
@@ -187,24 +185,27 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     setError('')
     try {
       const update = (changes: Record<string, string | null>) => supabase.from(table).update(changes as any).eq('id',doc.id)
-      const changes: Record<string, string | null> = status==='approved'
-        ? { status, verified_at:new Date().toISOString() }
-        : { status, rejection_reason:reason.trim() || null }
+      const documentStatus = table === 'driver_documents' ? status.toUpperCase() : status
+      const changes: Record<string, string | null> = table === 'driver_documents'
+        ? { status: documentStatus }
+        : status==='approved'
+          ? { status: documentStatus, verified_at:new Date().toISOString() }
+          : { status: documentStatus, rejection_reason:reason.trim() || null }
       let { error: updateError } = await update(changes)
       let metadataColumnMissing = false
       if (updateError) {
         const optionalColumn = status==='approved' ? 'verified_at' : 'rejection_reason'
         const errorText = `${updateError.message} ${updateError.details || ''}`.toLowerCase()
-        if (errorText.includes(optionalColumn.toLowerCase()) && (errorText.includes('column') || errorText.includes('schema cache'))) {
+        if (table === 'passenger_documents' && errorText.includes(optionalColumn.toLowerCase()) && (errorText.includes('column') || errorText.includes('schema cache'))) {
           metadataColumnMissing = true
-          const fallback = await update({ status })
+          const fallback = await update({ status: documentStatus })
           updateError = fallback.error
         }
       }
       if (updateError) throw updateError
 
       const updateLocal = (documents: StoredDocument[]) => documents.map(item =>
-        item.id===doc.id ? { ...item, status, rejection_reason:status==='rejected' ? reason.trim() || null : null } : item
+        item.id===doc.id ? { ...item, status: documentStatus, rejection_reason:status==='rejected' ? reason.trim() || null : null } : item
       )
       if (table==='driver_documents') setDriverDocs(updateLocal)
       else setPassengerDocs(updateLocal)

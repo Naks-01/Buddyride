@@ -82,68 +82,10 @@ create table if not exists public.driver_documents (
   driver_id uuid not null references public.profiles(id) on delete cascade,
   doc_type text not null,
   file_url text not null,
-  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
-  rejection_reason text,
-  verified_at timestamptz,
+  status text not null default 'PENDING' check (status in ('PENDING', 'APPROVED', 'REJECTED')),
   created_at timestamptz not null default now(),
   unique (driver_id, doc_type)
 );
-
--- Canonical upload column names required by the current driver upload flow.
--- Legacy doc_type/file_url remain synchronized for older screens/admin tools.
-alter table public.driver_documents add column if not exists document_type text;
-alter table public.driver_documents add column if not exists file_path text;
-alter table public.driver_documents add column if not exists user_id uuid references public.profiles(id) on delete cascade;
-update public.driver_documents set user_id = driver_id where user_id is null;
-create unique index if not exists driver_documents_user_doc_type_uidx
-  on public.driver_documents(user_id, doc_type);
-update public.driver_documents
-set document_type = coalesce(document_type, doc_type),
-    file_path = coalesce(file_path, file_url)
-where document_type is null or file_path is null;
-create unique index if not exists driver_documents_driver_document_type_uidx
-  on public.driver_documents(driver_id, document_type);
-
-create or replace function public.sync_driver_document_columns()
-returns trigger language plpgsql as $$
-begin
-  if tg_op = 'INSERT' then
-    new.document_type := coalesce(new.document_type, new.doc_type);
-    new.doc_type := coalesce(new.doc_type, new.document_type);
-    new.file_path := coalesce(new.file_path, new.file_url);
-    new.file_url := coalesce(new.file_url, new.file_path);
-  else
-    if new.document_type is distinct from old.document_type and new.document_type is not null then
-      new.doc_type := new.document_type;
-    elsif new.doc_type is distinct from old.doc_type and new.doc_type is not null then
-      new.document_type := new.doc_type;
-    end if;
-    if new.file_path is distinct from old.file_path and new.file_path is not null then
-      new.file_url := new.file_path;
-    elsif new.file_url is distinct from old.file_url and new.file_url is not null then
-      new.file_path := new.file_url;
-    end if;
-  end if;
-  return new;
-end;
-$$;
-drop trigger if exists sync_driver_document_columns on public.driver_documents;
-create trigger sync_driver_document_columns
-before insert or update
-on public.driver_documents for each row execute function public.sync_driver_document_columns();
-
-create or replace function public.sync_driver_document_user_id()
-returns trigger language plpgsql as $$
-begin
-  new.driver_id := coalesce(new.driver_id, new.user_id);
-  new.user_id := coalesce(new.user_id, new.driver_id);
-  return new;
-end;
-$$;
-drop trigger if exists sync_driver_document_user_id on public.driver_documents;
-create trigger sync_driver_document_user_id
-before insert or update on public.driver_documents
-for each row execute function public.sync_driver_document_user_id();
 
 create table if not exists public.passenger_documents (
   id uuid primary key default gen_random_uuid(),
@@ -505,8 +447,8 @@ begin
   if not exists (
     select 1
     from public.driver_documents
-    where user_id = caller_id and file_url is not null
-    group by user_id
+    where driver_id = caller_id and file_url is not null
+    group by driver_id
     having count(distinct doc_type) filter (where doc_type in (
       'sa_id', 'drivers_license', 'prdp', 'profile_photo', 'selfie_holding_id',
       'vehicle_registration', 'license_disc', 'car_photo_1', 'car_photo_2',
@@ -947,12 +889,12 @@ create policy "driver_documents_select" on public.driver_documents
 for select to authenticated using (auth.uid() = driver_id or public.is_admin());
 drop policy if exists "driver_documents_insert" on public.driver_documents;
 create policy "driver_documents_insert" on public.driver_documents
-for insert to authenticated with check (auth.uid() = driver_id and status = 'pending');
+for insert to authenticated with check (auth.uid() = driver_id and status = 'PENDING');
 drop policy if exists "driver_documents_update" on public.driver_documents;
 create policy "driver_documents_update" on public.driver_documents
 for update to authenticated
 using (auth.uid() = driver_id or public.is_admin())
-with check (public.is_admin() or (auth.uid() = driver_id and status = 'pending'));
+with check (public.is_admin() or (auth.uid() = driver_id and status = 'PENDING'));
 
 drop policy if exists "passenger_documents_select" on public.passenger_documents;
 create policy "passenger_documents_select" on public.passenger_documents

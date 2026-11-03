@@ -87,21 +87,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
           driver_id: driverId,
           doc_type: key,
           file_url: publicUrl,
-          status: 'approved'
+          status: 'PENDING'
         }, { onConflict: 'driver_id,doc_type' })
         if (dbErr) { 
           await supabase.storage.from(meta.bucket).remove([path])
-          // If file_url column doesn't exist, try without it (fallback to your old schema)
-          if (dbErr.message.includes('file_url')) {
-            const { error: dbErr2 } = await supabase.from('driver_documents').upsert({
-              driver_id: driverId,
-              doc_type: key,
-              status: 'approved'
-            }, { onConflict: 'driver_id,doc_type' })
-            if (dbErr2) throw dbErr2
-          } else {
-            throw dbErr
-          }
+          throw dbErr
         }
         setMsg(`${meta.label} uploaded ✅`)
       }

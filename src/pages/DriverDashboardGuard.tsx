@@ -45,7 +45,7 @@ export function DriverDashboardGuard({
       const { data, error: documentsError } = await supabase
         .from('driver_documents')
         .select('doc_type,file_url,status')
-        .eq('user_id', profile.id)
+        .eq('driver_id', profile.id)
       if (!active) return
       if (documentsError) {
         setError(`Could not verify required documents: ${documentsError.message}`)
@@ -53,7 +53,7 @@ export function DriverDashboardGuard({
       }
       const uploadedDocuments = data || []
       const uploaded = new Set(uploadedDocuments.filter(document => document.file_url).map(document => document.doc_type))
-      const hasRejectedDocument = uploadedDocuments.some(document => document.status === 'rejected')
+      const hasRejectedDocument = uploadedDocuments.some(document => document.status.toUpperCase() === 'REJECTED')
       if (hasRejectedDocument || !REQUIRED_TYPES.every(type => uploaded.has(type))) {
         onRequireOnboarding()
         return

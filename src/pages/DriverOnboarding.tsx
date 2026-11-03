@@ -12,10 +12,10 @@ import {
   ShieldCheck,
   Upload,
 } from 'lucide-react'
-import { supabase, type Profile } from '../lib/supabase'
+import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import compressImageFile from '../lib/compressImage'
 
-type StoredDocument = { doc_type: string; file_url: string; status: string }
+type StoredDocument = Pick<DriverDocument, 'doc_type' | 'file_url' | 'status'>
 const MAX_UPLOAD_SIZE = 5 * 1024 * 1024
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
@@ -70,7 +70,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     [documents],
   )
   const rejectedTypes = useMemo(
-    () => new Set(documents.filter(document => document.status === 'rejected').map(document => document.doc_type)),
+    () => new Set(documents.filter(document => document.status.toUpperCase() === 'REJECTED').map(document => document.doc_type)),
     [documents],
   )
   const uploadedCarPhotos = [1, 2, 3, 4].filter(number => uploadedTypes.has(`car_photo_${number}`)).length
@@ -84,7 +84,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setLoading(true)
     setError('')
     const [documentsResult, profileResult] = await Promise.all([
-      supabase.from('driver_documents').select('doc_type,file_url,status').eq('user_id', profile.id),
+      supabase.from('driver_documents').select('doc_type,file_url,status').eq('driver_id', profile.id),
       supabase.from('profiles').select('verification_status').eq('id', profile.id).single(),
     ])
     if (documentsResult.error || profileResult.error) {
@@ -99,7 +99,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setVerificationStatus(status)
     setLoading(false)
     if (isComplete(loadedDocuments) && status === 'pending_verification'
-      && !loadedDocuments.some(document => document.status === 'rejected')) {
+      && !loadedDocuments.some(document => document.status.toUpperCase() === 'REJECTED')) {
       window.setTimeout(onDashboard, 2200)
     } else if (isComplete(loadedDocuments) && status === 'approved') {
       onDashboard()
@@ -140,16 +140,13 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         return false
       }
 
-      const storedPath = `${bucket}:${path}`
+      const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path)
       uploadStage = 'database'
       const { data: savedDocument, error: saveError } = await supabase.from('driver_documents').upsert({
         driver_id: profile.id,
-        user_id: profile.id,
         doc_type: documentType,
-        document_type: documentType,
-        file_path: storedPath,
-        file_url: storedPath,
-        status: 'pending',
+        file_url: publicUrl,
+        status: 'PENDING',
       }, { onConflict: 'driver_id,doc_type' }).select('doc_type,file_url,status').single()
       if (saveError) {
         console.error('DB ERROR:', saveError)

@@ -9,6 +9,17 @@ export const supabase = createClient(url || 'https://configuration-missing.inval
 
 export type Role = 'passenger' | 'driver' | 'admin'
 
+export type DriverDocumentStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+export type DriverDocument = {
+  id: string
+  driver_id: string
+  doc_type: string
+  file_url: string
+  status: DriverDocumentStatus
+  created_at: string
+}
+
 export type Profile = {
   id: string
   email: string | null
