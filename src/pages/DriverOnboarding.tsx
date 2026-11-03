@@ -16,6 +16,8 @@ import { supabase, type Profile } from '../lib/supabase'
 import compressImageFile from '../lib/compressImage'
 
 type StoredDocument = { doc_type: string; file_url: string; status: string }
+const MAX_UPLOAD_SIZE = 5 * 1024 * 1024
+const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
 const REQUIRED_TYPES = [
   'sa_id',
@@ -112,38 +114,59 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setUploading(cardType)
     setError('')
     try {
+      if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+        throw new Error('Choose a JPEG, PNG, or PDF file.')
+      }
+      if (file.size > MAX_UPLOAD_SIZE) {
+        throw new Error('File must be smaller than 5 MB.')
+      }
+
       const isImage = file.type.startsWith('image/')
       const body = isImage ? await compressImageFile(file) : file
+      if (body.size > MAX_UPLOAD_SIZE) {
+        throw new Error('Compressed file must be smaller than 5 MB.')
+      }
       const extension = isImage ? 'jpg' : file.name.split('.').pop()?.toLowerCase() || 'pdf'
-      const path = `${profile.id}/onboarding/${documentType}-${Date.now()}.${extension}`
+      const path = `${profile.id}/${documentType}/${Date.now()}.${extension}`
       const { error: uploadError } = await supabase.storage.from(bucket).upload(path, body, {
         contentType: isImage ? 'image/jpeg' : file.type,
       })
       if (uploadError) throw uploadError
 
       const storedPath = `${bucket}:${path}`
-      const { error: saveError } = await supabase.from('driver_documents').upsert({
+      const { data: savedDocument, error: saveError } = await supabase.from('driver_documents').upsert({
+        driver_id: profile.id,
         user_id: profile.id,
         doc_type: documentType,
+        file_path: storedPath,
         file_url: storedPath,
         status: 'pending',
-      }, { onConflict: 'user_id,doc_type' })
-      if (saveError) throw saveError
-
-      if (documentType === 'profile_photo') {
-        const { data } = supabase.storage.from(bucket).getPublicUrl(path)
-        const { error: avatarError } = await supabase.from('profiles').update({ avatar_url: data.publicUrl }).eq('id', profile.id)
-        if (avatarError) throw avatarError
+      }, { onConflict: 'user_id,doc_type' }).select('doc_type,file_url,status').single()
+      if (saveError) {
+        const { error: cleanupError } = await supabase.storage.from(bucket).remove([path])
+        if (cleanupError) console.error('Could not remove uploaded file after saving its document record failed', cleanupError)
+        throw saveError
       }
 
       setDocuments(current => [
         ...current.filter(document => document.doc_type !== documentType),
-        { doc_type: documentType, file_url: storedPath, status: 'pending' },
+        savedDocument,
       ])
+
+      if (documentType === 'profile_photo') {
+        const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+        const { error: avatarError } = await supabase.from('profiles').update({ avatar_url: data.publicUrl }).eq('id', profile.id)
+        if (avatarError) {
+          console.error('Document uploaded, but profile photo could not be updated', avatarError)
+          setError(`Document uploaded, but profile photo could not be updated: ${avatarError.message}`)
+        }
+      }
+
       return true
     } catch (uploadError) {
       const message = uploadError instanceof Error ? uploadError.message : String(uploadError)
-      setError(`Could not upload ${documentType.replaceAll('_', ' ')}: ${message}`)
+      console.error(`Driver document upload failed for ${documentType}`, uploadError)
+      setError(`Upload failed: ${message}`)
       return false
     } finally {
       setUploading(null)
