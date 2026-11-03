@@ -21,18 +21,24 @@ export type DriverDocumentType = string
 export type DocumentRequirement = { type: string; label: string }
 
 export function normalizeDocType(type: any): string {
-  const t = String(type || '').toLowerCase().trim().replace(/[\s-]+/g,'_')
-  const vehiclePhoto = t.match(/^(?:vehicle|car)_photo_(\d+)$/)
+  const t = String(type || '').toLowerCase().trim().replace(/[_/-]+/g,' ').replace(/\s+/g,' ')
+  const vehiclePhoto = t.match(/^(?:vehicle|car) photo (\d+)$/)
   if (vehiclePhoto) return `car_photo_${vehiclePhoto[1]}`
-  if (['profile','profile_photo','photo'].includes(t)) return 'profile_photo'
-  if (['sa_id','sa-id','id_doc','id'].includes(t)) return 'sa_id'
-  if (['drivers_license','drivers_licence','license','drivers'].includes(t)) return 'drivers_license'
-  if (['license_disc','licence_disc','disc','license_doc'].includes(t)) return 'license_disc'
-  if (['vehicle_registration','vehicle_registration_papers'].includes(t)) return 'vehicle_registration'
-  if (['furn_check','furn-check','vehicle_photo','vehicle-photo','furn','vehicle'].includes(t)) return 'furn_check'
-  if (['pdp','prdp','pdp_doc','prdp_doc'].includes(t)) return 'prdp'
-  if (['insurance','insurance_doc'].includes(t)) return 'insurance'
-  return t
+  if (['profile', 'profile photo', 'profile photo selfie', 'selfie', 'photo'].includes(t)) return 'profile_photo'
+  if (['sa id', 'sa id passport', 'id document', 'id doc', 'id', 'passport'].includes(t)) return 'sa_id'
+  if (['drivers license', 'drivers licence', 'license', 'licence', 'drivers'].includes(t)) return 'drivers_license'
+  if (['license disc', 'licence disc', 'disc', 'license doc'].includes(t)) return 'license_disc'
+  if (['vehicle registration', 'vehicle registration papers'].includes(t)) return 'vehicle_registration'
+  if (['furn check', 'vehicle photo', 'furn', 'vehicle'].includes(t)) return 'furn_check'
+  if (['pdp', 'prdp', 'pdp doc', 'prdp doc'].includes(t)) return 'prdp'
+  if (['insurance', 'insurance doc'].includes(t)) return 'insurance'
+  return t.replace(/\s+/g, '_')
+}
+
+export function isFakeFile(filePath?: string | null): boolean {
+  const normalizedPath = filePath?.trim().toLowerCase()
+  return !normalizedPath
+    || ['example.com', 'test', 'placeholder', 'bypassed.jpg'].some(value => normalizedPath.includes(value))
 }
 
 export const normalizeDriverDocType = normalizeDocType
@@ -46,6 +52,9 @@ export async function createDriverDocumentSignedUrl(filePath?: string | null): P
     throw new Error('No document uploaded yet')
   }
   filePath = filePath.trim()
+  if (isFakeFile(filePath)) {
+    throw new Error('No real file uploaded - test data')
+  }
   if (/^https?:\/\//i.test(filePath)) return filePath
   const separator = filePath.indexOf(':')
   const bucket = separator >= 0 ? filePath.slice(0, separator) : 'driver-documents'

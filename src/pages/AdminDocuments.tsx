@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
-import { createDriverDocumentSignedUrl, REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
+import { createDriverDocumentSignedUrl, isFakeFile, REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
 
 export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
   id: document.type,
@@ -36,13 +36,13 @@ type StoredDocument = {
 }
 
 const PASSENGER_DOCUMENTS = [
-  { id: 'profile_photo', label: 'Profile Photo / Selfie', aliases: ['selfie'], required: true },
-  { id: 'sa_id', label: 'SA ID / Passport', aliases: ['id_document'], required: true },
+  { id: 'profile_photo', label: 'Profile Photo / Selfie', required: true },
+  { id: 'sa_id', label: 'SA ID / Passport', required: true },
 ]
 
 function groupByUser(docs: StoredDocument[]) {
   return docs.reduce<Record<string, StoredDocument[]>>((groups, doc) => {
-    const key = doc.user_email || doc.email || doc.profiles?.email || doc.driver_id || doc.passenger_id || doc.id
+    const key = doc.user_id || doc.passenger_id || doc.profiles?.id || doc.user_email || doc.email || doc.profiles?.email || doc.id
     if (!groups[key]) groups[key] = []
     groups[key].push(doc)
     return groups
@@ -68,17 +68,29 @@ function isExpired(expiryDate?: string | null) {
   return expiry < today
 }
 
-function getDocumentUrl(doc?: StoredDocument) {
-  const fileUrl = doc?.file_url?.trim()
-  return fileUrl || doc?.file_path?.trim() || ''
+function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'file_path'>) {
+  const filePath = doc?.file_path?.trim()
+  return filePath || doc?.file_url?.trim() || ''
 }
 
-function isPlaceholderDocument(doc?: StoredDocument) {
-  return getDocumentUrl(doc).toLowerCase().includes('example.com')
-}
+function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'file_path'>) {
+  const filePath = getDocumentUrl(doc)
+  if (isFakeFile(filePath)) return false
 
-function hasRealDocument(doc?: StoredDocument) {
-  return Boolean(getDocumentUrl(doc)) && !isPlaceholderDocument(doc)
+  if (/^https?:\/\//i.test(filePath)) {
+    try {
+      const fileUrl = new URL(filePath)
+      const supabaseUrl = new URL(import.meta.env.VITE_SUPABASE_URL)
+      return fileUrl.origin === supabaseUrl.origin && fileUrl.pathname.includes('/storage/v1/object/')
+    } catch {
+      return false
+    }
+  }
+
+  const separator = filePath.indexOf(':')
+  const bucket = separator >= 0 ? filePath.slice(0, separator) : 'driver-documents'
+  const path = separator >= 0 ? filePath.slice(separator + 1) : filePath
+  return ['driver-documents', 'vehicle-documents', 'profile-photos'].includes(bucket) && Boolean(path)
 }
 
 function displayStatus(doc?: StoredDocument, optional = false) {
@@ -101,7 +113,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function viewDriverDocument(fileUrl?: string | null) {
     const docUrl = fileUrl?.trim()
-    if (docUrl?.toLowerCase().includes('example.com')) {
+    if (isFakeFile(docUrl)) {
       setError('No real file uploaded - test data')
       return
     }
@@ -128,7 +140,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     setError('')
     const [driverResult, passengerResult] = await Promise.all([
       supabase.from('driver_documents').select('*,profiles!driver_documents_driver_id_fkey!inner(*)').order('created_at',{ascending:false}),
-      supabase.from('passenger_documents').select('id,passenger_id,doc_type,file_url,status,rejection_reason,created_at,profiles!passenger_documents_passenger_id_fkey(full_name,email)').order('created_at',{ascending:false}),
+      supabase.from('passenger_documents').select('*,profiles!passenger_documents_user_id_fkey!inner(id,full_name,email,phone)').order('created_at',{ascending:false}),
     ])
     if (!driverResult.error) {
       setDriverDocs((driverResult.data || []).map(document => ({
@@ -139,7 +151,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     if (!passengerResult.error) {
       setPassengerDocs((passengerResult.data || []).map(document => ({
         ...document,
-        profiles: document.profiles?.[0] || null,
+        profiles: Array.isArray(document.profiles) ? document.profiles[0] || null : document.profiles || null,
       })))
     }
     const loadErrors = [driverResult.error, passengerResult.error].filter(Boolean)
@@ -189,24 +201,25 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           .eq('id', doc.driver_id)
         if (profileError) verificationSyncError = profileError.message
       }
-      if (table === 'passenger_documents' && doc.passenger_id) {
+      if (table === 'passenger_documents' && (doc.user_id || doc.passenger_id)) {
         const { data: passengerRows, error: passengerDocsError } = await supabase
           .from('passenger_documents')
-          .select('doc_type,status')
-          .eq('passenger_id', doc.passenger_id)
+          .select('doc_type,status,file_url')
+          .eq('user_id', doc.user_id || doc.passenger_id)
         if (passengerDocsError) {
           verificationSyncError = passengerDocsError.message
         } else {
           const isVerified = PASSENGER_DOCUMENTS
             .filter(requirement => requirement.required)
             .every(requirement => passengerRows.some(row =>
-              (row.doc_type === requirement.id || requirement.aliases.includes(row.doc_type))
-              && row.status.toLowerCase() === 'approved',
+              normalizeDriverDocType(row.doc_type) === requirement.id
+              && row.status.trim().toLowerCase() === 'approved'
+              && hasRealDocument(row),
             ))
           const { error: profileError } = await supabase
             .from('profiles')
             .update({ is_verified: isVerified })
-            .eq('id', doc.passenger_id)
+            .eq('id', doc.user_id || doc.passenger_id)
           if (profileError) verificationSyncError = profileError.message
         }
       }
@@ -290,11 +303,11 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       <div style={{minWidth:0}}>
         <strong>{label}</strong>{!required && <span style={{fontSize:'11px', color:'#9ca3af'}}> (Optional)</span>}
         <span style={{display:'inline-block', marginTop:'4px', padding:'3px 8px', borderRadius:'999px', fontSize:'11px', fontWeight:700, color:badge.color, background:badge.background}}>{status}</span>
-        {isPlaceholderDocument(doc) && <div role="status" style={{fontSize:'12px', color:'#fbbf24'}}>No real file uploaded - test data</div>}
+        {isFakeFile(docUrl) && <div role="status" style={{fontSize:'12px', color:'#fbbf24'}}>No real file uploaded - test data</div>}
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
-        <button disabled={!canViewDocument} title={isPlaceholderDocument(doc)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed'}}>View Doc</button>
+        <button disabled={!canViewDocument} title={isFakeFile(docUrl)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed', opacity:canViewDocument?1:0.5}}>View Doc</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,table})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>
@@ -378,16 +391,26 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       </div>
     ) : (
       <div>
-        {Object.entries(passengerGroups).map(([email, docs]) => {
+        {Object.entries(passengerGroups).map(([userId, docs]) => {
           const baseDocs = PASSENGER_DOCUMENTS
           const uploadedCount = baseDocs.filter(requirement => docs.some(doc =>
-            doc.doc_type===requirement.id || requirement.aliases.includes(doc.doc_type)
+            normalizeDriverDocType(doc.doc_type) === requirement.id && hasRealDocument(doc)
           )).length
-          return <section key={email} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
-            <h3 style={{margin:'0 0 4px'}}>{email}</h3>
+          const passengerProfile = docs[0]?.profiles
+          const fullName = passengerProfile?.full_name
+            || `${passengerProfile?.first_name || ''} ${passengerProfile?.last_name || ''}`.trim()
+            || passengerProfile?.email
+            || 'Unknown Passenger'
+          const email = passengerProfile?.email || docs[0]?.user_email || docs[0]?.email
+          return <section key={userId} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
+            <div style={{margin:'0 0 4px'}}>
+              <div style={{fontWeight:700}}>{fullName}</div>
+              <div style={{fontSize:13, opacity:0.8}}>{email || 'No email'}{passengerProfile?.phone ? ` - ${passengerProfile.phone}` : ''}</div>
+              <div style={{fontSize:11, opacity:0.5}}>{userId} - {uploadedCount}/2</div>
+            </div>
             <div style={{fontSize:'12px', color:'#9ca3af', marginBottom:'8px'}}>Progress: {uploadedCount}/2 uploaded</div>
             {PASSENGER_DOCUMENTS.map(requirement => {
-              const doc = docs.find(item=>item.doc_type===requirement.id || requirement.aliases.includes(item.doc_type))
+              const doc = docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.id)
               return renderDocumentRow(doc, requirement.id, requirement.label, 'passenger_documents', requirement.required)
             })}
           </section>
