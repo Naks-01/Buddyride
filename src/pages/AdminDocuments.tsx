@@ -14,6 +14,7 @@ export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
 type StoredDocument = {
   id: string
   driver_id?: string
+  user_id?: string
   passenger_id?: string
   user_email?: string | null
   email?: string | null
@@ -23,7 +24,15 @@ type StoredDocument = {
   status: string
   expiry_date?: string | null
   rejection_reason?: string | null
-  profiles?: { full_name: string | null, email: string | null, is_verified?: boolean | null } | null
+  profiles?: {
+    id?: string
+    email?: string | null
+    full_name?: string | null
+    first_name?: string | null
+    last_name?: string | null
+    phone?: string | null
+    is_verified?: boolean | null
+  } | null
 }
 
 const PASSENGER_DOCUMENTS = [
@@ -42,9 +51,10 @@ function groupByUser(docs: StoredDocument[]) {
 
 function groupDriversById(docs: StoredDocument[]) {
   return docs.reduce<Record<string, StoredDocument[]>>((groups, doc) => {
-    if (!doc.driver_id) return groups
-    if (!groups[doc.driver_id]) groups[doc.driver_id] = []
-    groups[doc.driver_id].push(doc)
+    const userId = doc.user_id || doc.driver_id
+    if (!userId) return groups
+    if (!groups[userId]) groups[userId] = []
+    groups[userId].push(doc)
     return groups
   }, {})
 }
@@ -99,13 +109,13 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   async function load(){
     setError('')
     const [driverResult, passengerResult] = await Promise.all([
-      supabase.from('driver_documents').select('id,driver_id,doc_type,file_url,file_path,status,rejection_reason,created_at,profiles!driver_documents_driver_id_fkey(full_name,email,is_verified)').order('created_at',{ascending:false}),
+      supabase.from('driver_documents').select('*,profiles!driver_documents_driver_id_fkey!inner(*)').order('created_at',{ascending:false}),
       supabase.from('passenger_documents').select('id,passenger_id,doc_type,file_url,status,rejection_reason,created_at,profiles!passenger_documents_passenger_id_fkey(full_name,email)').order('created_at',{ascending:false}),
     ])
     if (!driverResult.error) {
       setDriverDocs((driverResult.data || []).map(document => ({
         ...document,
-        profiles: document.profiles?.[0] || null,
+        profiles: Array.isArray(document.profiles) ? document.profiles[0] || null : document.profiles || null,
       })))
     }
     if (!passengerResult.error) {
@@ -288,10 +298,16 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           Show only drivers who are not yet approved
         </label>
         {Object.entries(driversById).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([driverId, docs]) => {
+          const driverProfile = docs[0]?.profiles
+          const fullName = driverProfile?.full_name
+            || `${driverProfile?.first_name || ''} ${driverProfile?.last_name || ''}`.trim()
+            || driverProfile?.email
+            || 'Unknown Driver'
           const email = docs.find(doc=>doc.profiles?.email || doc.user_email || doc.email)?.profiles?.email
             || docs.find(doc=>doc.user_email || doc.email)?.user_email
             || docs.find(doc=>doc.email)?.email
-            || driverId
+            || driverProfile?.email
+          const userId = docs[0]?.user_id || driverProfile?.id || driverId
           const approvedCount = REQUIRED_DOCS.filter(requirement => docs.some(doc =>
             normalizeDriverDocType(doc.doc_type)===requirement.type && doc.status.toLowerCase()==='approved'
           )).length
@@ -309,7 +325,11 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             ? `Missing approval: ${missingRequired.map(requirement=>requirement.label).join(', ')}`
             : ''
           return <section key={driverId} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
-            <h3 style={{margin:'0 0 4px'}}>{email} - {approvedCount}/{REQUIRED_DOCS.length} documents approved ({progressPercent}%)</h3>
+            <div style={{margin:'0 0 4px'}}>
+              <div style={{fontWeight:700}}>{fullName}</div>
+              <div style={{fontSize:13, opacity:0.8}}>{email || 'No email'}{driverProfile?.phone ? ` - ${driverProfile.phone}` : ''}</div>
+              <div style={{fontSize:11, opacity:0.5}}>{userId} - {approvedCount}/{REQUIRED_DOCS.length}</div>
+            </div>
             <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={REQUIRED_DOCS.length} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
