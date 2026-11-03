@@ -15,7 +15,9 @@ import {
 import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import compressImageFile from '../lib/compressImage'
 
-type StoredDocument = Pick<DriverDocument, 'doc_type' | 'file_url' | 'status'>
+type StoredDocument = Pick<DriverDocument, 'doc_type' | 'file_url' | 'status'> & {
+  rejection_reason?: string | null
+}
 const MAX_UPLOAD_SIZE = 5 * 1024 * 1024
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
@@ -84,7 +86,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setLoading(true)
     setError('')
     const [documentsResult, profileResult] = await Promise.all([
-      supabase.from('driver_documents').select('doc_type,file_url,status').eq('driver_id', profile.id),
+      supabase.from('driver_documents').select('*').eq('driver_id', profile.id),
       supabase.from('profiles').select('verification_status').eq('id', profile.id).single(),
     ])
     if (documentsResult.error || profileResult.error) {
@@ -275,6 +277,28 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
             : [type]
           const needsReplacement = documentTypes.some(documentType => rejectedTypes.has(documentType))
           const uploaded = type === 'car_photos' ? uploadedCarPhotos === 4 : uploadedCount === 1
+          const cardDocuments = documents.filter(document => documentTypes.includes(document.doc_type))
+          const rejectedDocument = cardDocuments.find(document =>
+            document.file_url && document.status.toUpperCase() === 'REJECTED',
+          )
+          const isApproved = documentTypes.every(documentType => {
+            const document = cardDocuments.find(item => item.doc_type === documentType)
+            return Boolean(document?.file_url && document.status.toUpperCase() === 'APPROVED')
+          })
+          const isPending = cardDocuments.some(document =>
+            document.file_url && document.status.toUpperCase() === 'PENDING',
+          )
+          const badgeLabel = rejectedDocument
+            ? `Action needed${rejectedDocument.rejection_reason ? ` - ${rejectedDocument.rejection_reason}` : ''}`
+            : isApproved
+              ? 'Done'
+              : isPending
+                ? 'Pending'
+                : uploaded
+                  ? 'Uploaded'
+                  : type === 'car_photos'
+                    ? `${uploadedCarPhotos}/4 uploaded`
+                    : 'Missing'
           const activeUpload = uploading === type
           return <section key={type} className="driver-onboarding-card" style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: 16, padding: '18px 16px' }}>
             <div style={{ flex: '0 0 48px', width: 48, height: 48, display: 'grid', placeItems: 'center', borderRadius: 14, background: uploaded ? '#e5f7ef' : '#f1f4f7', color: uploaded ? '#087f5b' : '#475467' }}><Icon size={24} /></div>
@@ -282,7 +306,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
               <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <strong style={{ fontSize: 15 }}>{title}</strong>
                 <span style={{ padding: '4px 8px', borderRadius: 99, color: needsReplacement ? '#b42318' : uploaded ? '#067647' : '#667085', background: needsReplacement ? '#fef3f2' : uploaded ? '#ecfdf3' : '#f2f4f7', fontSize: 11, fontWeight: 700 }}>
-                  {needsReplacement ? 'Action needed' : uploaded ? 'Uploaded' : type === 'car_photos' ? `${uploadedCarPhotos}/4 uploaded` : 'Missing'}
+                  {badgeLabel}
                 </span>
               </div>
               <p style={{ margin: '5px 0 0', color: '#667085', fontSize: 12, lineHeight: 1.4 }}>{description}</p>
