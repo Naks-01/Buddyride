@@ -141,6 +141,11 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       }
 
       const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path)
+      console.log('publicUrl:', publicUrl)
+      if (!publicUrl) {
+        throw new Error('Storage did not return a public URL for the uploaded document.')
+      }
+
       uploadStage = 'database'
       const { data: savedDocument, error: saveError } = await supabase.from('driver_documents').upsert({
         driver_id: profile.id,
