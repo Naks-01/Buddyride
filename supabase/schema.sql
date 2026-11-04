@@ -89,6 +89,8 @@ create table if not exists public.driver_documents (
 alter table public.driver_documents add column if not exists file_path text;
 alter table public.driver_documents add column if not exists storage_path text;
 alter table public.driver_documents add column if not exists file_name text;
+alter table public.driver_documents add column if not exists file_size bigint;
+alter table public.driver_documents add column if not exists file_type text;
 alter table public.driver_documents add column if not exists expiry_date date;
 alter table public.driver_documents add column if not exists rejection_reason text;
 alter table public.driver_documents add column if not exists reviewed_at timestamptz;
@@ -456,13 +458,16 @@ begin
     from public.driver_documents
     where driver_id = caller_id and file_url is not null
     group by driver_id
-    having count(distinct doc_type) filter (where doc_type in (
-      'sa_id', 'drivers_license', 'prdp', 'profile_photo', 'selfie_holding_id',
-      'vehicle_registration', 'license_disc', 'car_photo_1', 'car_photo_2',
-      'car_photo_3', 'car_photo_4'
-    )) = 11
+    having (
+      bool_or(doc_type = 'drivers_license' and status = 'APPROVED')
+      or count(distinct doc_type) filter (where doc_type in ('drivers_license', 'prdp')) = 2
+    )
+    and count(distinct doc_type) filter (where doc_type in (
+      'profile_photo', 'selfie_holding_id', 'vehicle_registration', 'license_disc',
+      'car_photo_1', 'car_photo_2', 'car_photo_3', 'car_photo_4'
+    )) = 8
   ) then
-    raise exception 'Upload all 8 required document categories, including four vehicle photos';
+    raise exception 'Complete all four required document groups, including four vehicle photos';
   end if;
 
   perform set_config('buddyride.internal_profile_update', 'on', true);

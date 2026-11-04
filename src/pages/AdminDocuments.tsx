@@ -7,9 +7,36 @@ export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
   label: document.label,
   helper: document.label,
   accept: 'image/*,application/pdf',
-  required: true,
+  required: document.type !== 'sa_id',
   order: index + 1,
 }))
+
+function linkedDriverDocumentTypes(type: string) {
+  if (['drivers_license', 'prdp'].includes(type)) return ['drivers_license', 'prdp']
+  if (['vehicle_registration', 'license_disc'].includes(type)) return ['vehicle_registration', 'license_disc']
+  if (['profile_photo', 'selfie_holding_id', 'selfie_with_id'].includes(type)) {
+    return ['profile_photo', 'selfie_holding_id', 'selfie_with_id']
+  }
+  const carPhoto = type.match(/^(?:car_photo|vehicle_photos)_(\d+)$/)
+  if (carPhoto) return [`car_photo_${carPhoto[1]}`, `vehicle_photos_${carPhoto[1]}`]
+  return [type]
+}
+
+function findDriverRequirementDocument(docs: StoredDocument[], type: string) {
+  const matchingDocuments = docs.filter(item => normalizeDriverDocType(item.doc_type) === type)
+  const approved = matchingDocuments.find(item =>
+    item.status.trim().toLowerCase() === 'approved' && hasRealDocument(item),
+  )
+  if (approved) return approved
+  if (type === 'prdp') {
+    return docs.find(item =>
+      normalizeDriverDocType(item.doc_type) === 'drivers_license'
+      && item.status.trim().toLowerCase() === 'approved'
+      && hasRealDocument(item),
+    )
+  }
+  return matchingDocuments[0]
+}
 
 type StoredDocument = {
   id: string
@@ -147,7 +174,12 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     ])
     let profileLoadError = ''
     if (!driverResult.error) {
-      setDriverDocs((driverResult.data || []).map(document => ({
+      const latestByType = new Map<string, typeof driverResult.data[number]>()
+      for (const document of driverResult.data || []) {
+        const key = `${document.driver_id}:${document.doc_type}`
+        if (!latestByType.has(key)) latestByType.set(key, document)
+      }
+      setDriverDocs([...latestByType.values()].map(document => ({
         ...document,
         profiles: Array.isArray(document.profiles) ? document.profiles[0] || null : document.profiles || null,
       })))
@@ -190,7 +222,13 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     setLoadingId(doc.id)
     setError('')
     try {
-      const update = (changes: Record<string, string | null>) => supabase.from(table).update(changes as any).eq('id',doc.id)
+      const update = (changes: Record<string, string | null>) => {
+        const query = supabase.from(table).update(changes as any)
+        if (table === 'driver_documents' && doc.driver_id) {
+          return query.eq('driver_id', doc.driver_id).in('doc_type', linkedDriverDocumentTypes(doc.doc_type))
+        }
+        return query.eq('id', doc.id)
+      }
       const documentStatus = table === 'driver_documents' ? status.toUpperCase() : status
       const reviewedAt = new Date().toISOString()
       const changes: Record<string, string | null> = table === 'driver_documents'
@@ -219,8 +257,9 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       const reviewMetadata = table === 'driver_documents'
         ? { reviewed_at: reviewedAt, reviewed_by: _profile.id }
         : {}
+      const linkedTypes = table === 'driver_documents' ? new Set(linkedDriverDocumentTypes(doc.doc_type)) : new Set([doc.doc_type])
       const updateLocal = (documents: StoredDocument[]) => documents.map(item =>
-        item.id===doc.id ? {
+        item.id === doc.id || (table === 'driver_documents' && item.driver_id === doc.driver_id && linkedTypes.has(item.doc_type)) ? {
           ...item,
           status: documentStatus,
           rejection_reason: status === 'rejected' ? rejectionReason.trim() || null : null,
@@ -383,20 +422,17 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             || docs.find(doc=>doc.email)?.email
             || driverProfile?.email
           const userId = docs[0]?.user_id || driverProfile?.id || driverId
-          const approvedCount = REQUIRED_DOCS.filter(requirement => docs.some(doc =>
-            normalizeDriverDocType(doc.doc_type)===requirement.type
-            && doc.status.trim().toLowerCase()==='approved'
-            && hasRealDocument(doc)
-          )).length
-          const requiredDocs = DRIVER_DOCUMENTS.filter(requirement=>requirement.required)
+          const requiredDocs = DRIVER_DOCUMENTS.filter(requirement => requirement.required)
+          const approvedCount = requiredDocs.filter(requirement =>
+            displayStatus(findDriverRequirementDocument(docs, requirement.id)) === 'APPROVED',
+          ).length
           const missingRequired = requiredDocs.filter(requirement => {
-            const matchingDocs = docs.filter(item=>normalizeDriverDocType(item.doc_type)===requirement.id)
-            const doc = matchingDocs.find(item=>item.status.trim().toLowerCase()==='approved' && hasRealDocument(item)) || matchingDocs[0]
+            const doc = findDriverRequirementDocument(docs, requirement.id)
             return displayStatus(doc)!=='APPROVED'
           })
           const canApproveToDrive = missingRequired.length===0
           const progressColor = canApproveToDrive ? '#22c55e' : '#f59e0b'
-          const progressPercent = Math.round(approvedCount / REQUIRED_DOCS.length * 100)
+          const progressPercent = Math.round(approvedCount / requiredDocs.length * 100)
           const isApproved = docs[0]?.profiles?.is_verified === true
           const approvalReason = missingRequired.length
             ? `Missing approval: ${missingRequired.map(requirement=>requirement.label).join(', ')}`
@@ -405,18 +441,17 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             <div style={{margin:'0 0 4px'}}>
               <div style={{fontWeight:700}}>{fullName}</div>
               <div style={{fontSize:13, opacity:0.8}}>{email || 'No email'}{driverProfile?.phone ? ` - ${driverProfile.phone}` : ''}</div>
-              <div style={{fontSize:11, opacity:0.5}}>{userId} - {approvedCount}/{REQUIRED_DOCS.length}</div>
+              <div style={{fontSize:11, opacity:0.5}}>{userId} - {approvedCount}/{requiredDocs.length}</div>
             </div>
-            <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={REQUIRED_DOCS.length} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
+            <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={requiredDocs.length} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
-            {REQUIRED_DOCS.map(requirement => renderDocumentRow(
-              docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.type && item.status.trim().toLowerCase()==='approved' && hasRealDocument(item))
-                || docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.type),
-              requirement.type,
+            {DRIVER_DOCUMENTS.map(requirement => renderDocumentRow(
+              findDriverRequirementDocument(docs, requirement.id),
+              requirement.id,
               requirement.label,
               'driver_documents',
-              true
+              requirement.required
             ))}
             <div style={{borderTop:'1px solid #333', marginTop:'8px', paddingTop:'12px'}}>
               <button

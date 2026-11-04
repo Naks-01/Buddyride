@@ -12,14 +12,15 @@ const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const EXPIRE_SECONDS = 15
 const ADMIN_EMAILS = ['buddyride@outlook.com', 'mokgalaka.nt@gmail.com']
 const REQUIRED_ONLINE_DOCUMENTS = [
-  { key: 'sa_id', label: 'SA ID photo', types: ['sa_id', 'id_doc'] },
-  { key: 'drivers_license', label: "Driver's Licence photo", types: ['drivers_license', 'driver_license'] },
-  { key: 'prdp', label: 'PrDP photo', types: ['prdp', 'pdp', 'prdp_doc', 'pdp_doc'] },
-  { key: 'profile_photo', label: 'Profile Photo selfie', types: ['profile_photo', 'profile'] },
-  { key: 'selfie_holding_id', label: 'Selfie holding ID', types: ['selfie_holding_id'] },
-  { key: 'vehicle_registration', label: 'Vehicle Registration Papers', types: ['vehicle_registration', 'vehicle_papers', 'registration_papers'] },
-  { key: 'license_disc', label: 'Licence Disc photo', types: ['license_disc', 'disc'] },
-  { key: 'car_photos', label: '4 car photos', types: ['car_photo_1', 'car_photo_2', 'car_photo_3', 'car_photo_4'] },
+  { key: 'drivers_license', label: 'Driver Licence with PrDP', types: ['drivers_license', 'prdp'] },
+  { key: 'vehicle_registration', label: 'Vehicle Registration', types: ['vehicle_registration', 'license_disc'] },
+  { key: 'profile_photo', label: 'Selfie Verification', types: ['profile_photo', 'selfie_holding_id'] },
+  {
+    key: 'vehicle_photos',
+    label: 'Vehicle Photos (4)',
+    types: [],
+    anyOf: [1, 2, 3, 4].map(number => [`vehicle_photos_${number}`, `car_photo_${number}`]),
+  },
 ] as const
 
 function normalizeDocumentType(type: string) {
@@ -707,7 +708,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const distText = nextTurnDistance !== null ? `${nextTurnDistance >= 1000 ? `${(nextTurnDistance / 1000).toFixed(1)}km` : `${Math.ceil(nextTurnDistance / 10) * 10}m`} • ${curStep ? `${Math.ceil(curStep.duration / 60)} min` : ''}` : routeData ? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min` : '0.0km • 0 min'
   const uploadedTypeSet = new Set(uploadedDocuments)
   const isDocumentUploaded = (requirement: typeof REQUIRED_ONLINE_DOCUMENTS[number]) =>
-    requirement.types.every(type => uploadedTypeSet.has(type))
+    'anyOf' in requirement
+      ? requirement.anyOf.every(types => types.some(type => uploadedTypeSet.has(type)))
+      : requirement.types.every(type => uploadedTypeSet.has(type))
   const uploadedRequirementCount = REQUIRED_ONLINE_DOCUMENTS.filter(isDocumentUploaded).length
   const canGoOnline = adminBypass || (documentsLoaded && uploadedRequirementCount === REQUIRED_ONLINE_DOCUMENTS.length)
   const showTopBanner = !canGoOnline
@@ -728,10 +731,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : 'Upload all 8 documents to Go Online'}</button>}
+        {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : 'Complete all 4 document groups to Go Online'}</button>}
       </div>
     </header>
-    {showTopBanner && documentsLoaded && (<div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: '#ff3b30', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>Upload all 8 documents to Go Online ({uploadedRequirementCount}/8)</div>)}
+    {showTopBanner && documentsLoaded && (<div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: '#ff3b30', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>Complete all 4 document groups to Go Online ({uploadedRequirementCount}/4)</div>)}
     {isNavigating && ride && (<div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}><div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div><div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div></div>)}
     <div style={{ position: 'absolute', top: '14px', left: '50%', transform: 'translateX(-50%)', zIndex: 90, padding: '7px 12px', borderRadius: '999px', color: 'white', background: 'rgba(28,28,30,.88)', fontSize: '13px', fontWeight: 700 }}>{Math.round(speedKmh)} km/h</div>
     <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: `calc(${sheetSnap}dvh + 12px)`, zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px', transition: 'bottom 0.3s ease' }}>🎯</button>

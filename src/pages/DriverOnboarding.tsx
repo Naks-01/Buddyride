@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import {
-  BadgeCheck,
   CarFront,
   Check,
   ChevronRight,
   CircleUserRound,
-  FileBadge,
-  FileText,
   IdCard,
   LoaderCircle,
   ShieldCheck,
@@ -16,35 +13,36 @@ import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import compressImageFile from '../lib/compressImage'
 
 type StoredDocument = Pick<DriverDocument,
-  'id' | 'doc_type' | 'file_url' | 'file_path' | 'status' | 'rejection_reason' | 'reviewed_at' | 'expiry_date'
+  'id' | 'doc_type' | 'file_url' | 'status' | 'rejection_reason' | 'created_at'
 >
 const MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
-const REQUIRED_TYPES = [
-  'sa_id',
-  'drivers_license',
-  'prdp',
-  'profile_photo',
-  'selfie_holding_id',
-  'vehicle_registration',
-  'license_disc',
-  'car_photo_1',
-  'car_photo_2',
-  'car_photo_3',
-  'car_photo_4',
-]
-
 const DOCUMENT_CARDS = [
-  { type: 'sa_id', title: 'South African ID', description: 'Clear photo of both sides of your ID', bucket: 'driver-documents', Icon: IdCard },
-  { type: 'drivers_license', title: "Driver's Licence", description: 'A clear photo of your valid licence', bucket: 'driver-documents', Icon: FileBadge },
-  { type: 'prdp', title: 'PrDP', description: 'Professional Driving Permit (required)', bucket: 'driver-documents', Icon: BadgeCheck },
-  { type: 'profile_photo', title: 'Profile Photo', description: 'A clear selfie of your face', bucket: 'profile-photos', Icon: CircleUserRound },
-  { type: 'selfie_holding_id', title: 'Selfie holding ID', description: 'Your face and ID should both be visible', bucket: 'driver-documents', Icon: ShieldCheck },
-  { type: 'vehicle_registration', title: 'Vehicle Registration Papers', description: 'The current vehicle registration document', bucket: 'vehicle-documents', Icon: FileText },
-  { type: 'license_disc', title: 'Licence Disc', description: 'A clear photo of the current licence disc', bucket: 'vehicle-documents', Icon: FileBadge },
-  { type: 'car_photos', title: 'Vehicle Photos', description: 'Front, rear, and both sides of your vehicle', bucket: 'vehicle-documents', Icon: CarFront },
+  { type: 'drivers_license', title: 'Driver Licence with PrDP (PDP)', description: 'Upload licence card showing PrDP - counts for both Licence + PrDP', bucket: 'driver-documents', Icon: IdCard, docTypes: ['drivers_license', 'prdp'] },
+  { type: 'vehicle_registration', title: 'Vehicle Registration', description: 'Registration paper + Licence Disc in one photo', bucket: 'vehicle-documents', Icon: CarFront, docTypes: ['vehicle_registration', 'license_disc'] },
+  { type: 'profile_photo', title: 'Selfie Verification', description: 'Take a selfie - replaces profile photo + selfie holding ID', bucket: 'profile-photos', Icon: CircleUserRound, docTypes: ['profile_photo', 'selfie_holding_id'] },
+  { type: 'vehicle_photos', title: 'Vehicle Photos (4)', description: 'Front, Back, Left, Right', bucket: 'vehicle-documents', Icon: CarFront, docTypes: [] },
 ] as const
+const VEHICLE_PHOTO_SIDES = ['Front', 'Back', 'Left', 'Right'] as const
+const ONBOARDING_DOCUMENT_TYPES = new Set([
+  ...DOCUMENT_CARDS.flatMap(card => [...card.docTypes]),
+  'selfie_with_id',
+  ...[1, 2, 3, 4].flatMap(documentTypesForSlot),
+])
+
+function documentTypesForSlot(number: number) {
+  return [`vehicle_photos_${number}`, `car_photo_${number}`]
+}
+
+function aliasedDocumentTypes(type: string) {
+  if (type === 'drivers_license') return ['drivers_license', 'prdp']
+  if (type === 'vehicle_registration') return ['vehicle_registration', 'license_disc']
+  if (type === 'profile_photo') return ['profile_photo', 'selfie_with_id', 'selfie_holding_id']
+  const vehiclePhoto = type.match(/^vehicle_photos_(\d+)$/)
+  if (vehiclePhoto) return [`vehicle_photos_${vehiclePhoto[1]}`, `car_photo_${vehiclePhoto[1]}`]
+  return [type]
+}
 
 const cardStyle: CSSProperties = {
   background: '#fff',
@@ -53,9 +51,29 @@ const cardStyle: CSSProperties = {
   boxShadow: '0 5px 18px rgba(20, 33, 50, 0.045)',
 }
 
-function isComplete(documents: StoredDocument[]) {
+function latestDocuments(documents: StoredDocument[]) {
+  const latest = new Map<string, StoredDocument>()
+  for (const document of documents) {
+    if (!latest.has(document.doc_type)) latest.set(document.doc_type, document)
+  }
+  return [...latest.values()]
+}
+
+function isCardComplete(card: typeof DOCUMENT_CARDS[number], documents: StoredDocument[]) {
   const uploaded = new Set(documents.filter(document => document.file_url).map(document => document.doc_type))
-  return REQUIRED_TYPES.every(type => uploaded.has(type))
+  if (card.type === 'vehicle_photos') {
+    return [1, 2, 3, 4].every(number =>
+      documentTypesForSlot(number).some(type => uploaded.has(type)),
+    )
+  }
+  const primaryDocument = documents.find(document => document.doc_type === card.type)
+  return card.docTypes.every(type => uploaded.has(type))
+    || (card.type === 'drivers_license'
+      && Boolean(primaryDocument?.file_url && primaryDocument.status.toUpperCase() === 'APPROVED'))
+}
+
+function isComplete(documents: StoredDocument[]) {
+  return DOCUMENT_CARDS.every(card => isCardComplete(card, documents))
 }
 
 export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; onDashboard: () => void }) {
@@ -67,27 +85,28 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const [error, setError] = useState('')
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  const uploadedTypes = useMemo(
-    () => new Set(documents.filter(document => document.file_url).map(document => document.doc_type)),
-    [documents],
-  )
+  const uploadedTypes = useMemo(() => new Set(
+    documents.filter(document => document.file_url).map(document => document.doc_type),
+  ), [documents])
   const rejectedTypes = useMemo(
-    () => new Set(documents.filter(document => document.status.toUpperCase() === 'REJECTED').map(document => document.doc_type)),
+    () => new Set(documents
+      .filter(document => ONBOARDING_DOCUMENT_TYPES.has(document.doc_type)
+        && document.status.toUpperCase() === 'REJECTED')
+      .map(document => document.doc_type)),
     [documents],
   )
-  const uploadedCarPhotos = [1, 2, 3, 4].filter(number => uploadedTypes.has(`car_photo_${number}`)).length
-  const completedCards = DOCUMENT_CARDS.filter(card =>
-    card.type === 'car_photos'
-      ? uploadedCarPhotos === 4
-      : uploadedTypes.has(card.type),
+  const uploadedCarPhotos = [1, 2, 3, 4].filter(number =>
+    documentTypesForSlot(number).some(type => uploadedTypes.has(type)),
   ).length
+  const completedCards = DOCUMENT_CARDS.filter(card => isCardComplete(card, documents)).length
 
   async function loadDocuments() {
     setLoading(true)
     setError('')
     const [documentsResult, profileResult] = await Promise.all([
       supabase.from('driver_documents')
-        .select('id,doc_type,file_url,file_path,status,rejection_reason,reviewed_at,expiry_date')
+        .select('id,doc_type,file_url,status,rejection_reason,created_at')
+        .order('created_at', { ascending: false })
         .eq('driver_id', profile.id),
       supabase.from('profiles').select('verification_status').eq('id', profile.id).single(),
     ])
@@ -97,13 +116,14 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       return
     }
 
-    const loadedDocuments = (documentsResult.data || []) as StoredDocument[]
+    const loadedDocuments = latestDocuments((documentsResult.data || []) as StoredDocument[])
     const status = profileResult.data?.verification_status || 'not_started'
     setDocuments(loadedDocuments)
     setVerificationStatus(status)
     setLoading(false)
     if (isComplete(loadedDocuments) && status === 'pending_verification'
-      && !loadedDocuments.some(document => document.status.toUpperCase() === 'REJECTED')) {
+      && !loadedDocuments.some(document => ONBOARDING_DOCUMENT_TYPES.has(document.doc_type)
+        && document.status.toUpperCase() === 'REJECTED')) {
       window.setTimeout(onDashboard, 2200)
     } else if (isComplete(loadedDocuments) && status === 'approved') {
       onDashboard()
@@ -150,21 +170,17 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         throw new Error('Storage did not return a public URL for the uploaded document.')
       }
 
-      const filePath = `${bucket}:${path}`
       uploadStage = 'database'
-      const { data: savedDocument, error: saveError } = await supabase.from('driver_documents').upsert({
+      const newDocuments = aliasedDocumentTypes(documentType).map(type => ({
         driver_id: profile.id,
-        doc_type: documentType,
+        doc_type: type,
         file_url: publicUrl,
-        file_path: filePath,
-        storage_path: filePath,
-        file_name: file.name,
         status: 'PENDING',
         created_at: new Date().toISOString(),
-        expiry_date: null,
-      }, { onConflict: 'driver_id,doc_type' })
-        .select('id,doc_type,file_url,file_path,status,rejection_reason,reviewed_at,expiry_date')
-        .single()
+      }))
+      const { data: savedDocuments, error: saveError } = await supabase.from('driver_documents')
+        .upsert(newDocuments, { onConflict: 'driver_id,doc_type' })
+        .select('id,doc_type,file_url,status,rejection_reason,created_at')
       if (saveError) {
         console.error('DB ERROR:', saveError)
         try {
@@ -177,10 +193,12 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         return false
       }
 
-      setDocuments(current => [
-        ...current.filter(document => document.doc_type !== documentType),
-        savedDocument,
-      ])
+      if (!savedDocuments?.length) throw new Error('The database did not return the saved document records.')
+      const savedTypes = new Set(newDocuments.map(document => document.doc_type))
+      setDocuments(current => latestDocuments([
+        ...current.filter(document => !savedTypes.has(document.doc_type)),
+        ...(savedDocuments as StoredDocument[]),
+      ]))
 
       if (documentType === 'profile_photo') {
         const { data } = supabase.storage.from(bucket).getPublicUrl(path)
@@ -202,27 +220,12 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     }
   }
 
-  async function handleFileChange(cardType: string, bucket: string, event: ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(cardType: string, bucket: string, event: ChangeEvent<HTMLInputElement>, documentType = cardType) {
     const selectedFiles = Array.from(event.target.files || [])
     event.target.value = ''
     if (!selectedFiles.length) return
 
-    if (cardType === 'car_photos') {
-      const availableTypes = [1, 2, 3, 4]
-        .map(number => `car_photo_${number}`)
-        .filter(type => !uploadedTypes.has(type) || rejectedTypes.has(type))
-      if (selectedFiles.length > availableTypes.length) {
-        setError(`Choose no more than ${availableTypes.length} additional vehicle photo${availableTypes.length === 1 ? '' : 's'}.`)
-        return
-      }
-      for (const [index, file] of selectedFiles.entries()) {
-        const uploaded = await uploadFile(cardType, bucket, file, availableTypes[index])
-        if (!uploaded) break
-      }
-      return
-    }
-
-    await uploadFile(cardType, bucket, selectedFiles[0])
+    await uploadFile(cardType, bucket, selectedFiles[0], documentType)
   }
 
   async function submitForReview() {
@@ -271,7 +274,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'end', marginBottom: 10 }}>
           <div><p style={{ margin: '0 0 6px', color: '#087f5b', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Step 2 of 4</p><h1 style={{ margin: 0, fontSize: 'clamp(25px, 5vw, 34px)', letterSpacing: '-.03em' }}>Your documents</h1></div>
-          <strong style={{ color: '#344054', whiteSpace: 'nowrap' }}>{completedCards}/8 documents</strong>
+          <strong style={{ color: '#344054', whiteSpace: 'nowrap' }}>{completedCards}/4 complete</strong>
         </div>
         <div style={{ height: 9, overflow: 'hidden', borderRadius: 99, background: '#e5e9ef' }}>
           <div style={{ width: `${progress}%`, height: '100%', borderRadius: 99, background: '#0a8f67', transition: 'width .25s ease' }} />
@@ -280,21 +283,28 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       </header>
 
       <div style={{ display: 'grid', gap: 12 }}>
-        {DOCUMENT_CARDS.map(({ type, title, description, bucket, Icon }) => {
-          const uploadedCount = type === 'car_photos' ? uploadedCarPhotos : uploadedTypes.has(type) ? 1 : 0
-          const documentTypes = type === 'car_photos'
-            ? [1, 2, 3, 4].map(number => `car_photo_${number}`)
-            : [type]
-          const needsReplacement = documentTypes.some(documentType => rejectedTypes.has(documentType))
-          const uploaded = type === 'car_photos' ? uploadedCarPhotos === 4 : uploadedCount === 1
+        {DOCUMENT_CARDS.map(card => {
+          const { type, title, description, bucket, Icon } = card
+          const documentTypes: readonly string[] = type === 'vehicle_photos'
+            ? [1, 2, 3, 4].flatMap(documentTypesForSlot)
+            : card.docTypes
           const cardDocuments = documents.filter(document => documentTypes.includes(document.doc_type))
           const rejectedDocument = cardDocuments.find(document =>
             document.file_url && document.status.toUpperCase() === 'REJECTED',
           )
-          const isApproved = documentTypes.every(documentType => {
-            const document = cardDocuments.find(item => item.doc_type === documentType)
-            return Boolean(document?.file_url && document.status.toUpperCase() === 'APPROVED')
-          })
+          const uploaded = isCardComplete(card, documents)
+          const needsReplacement = cardDocuments.some(document => rejectedTypes.has(document.doc_type))
+          const isApproved = type === 'vehicle_photos'
+            ? [1, 2, 3, 4].every(number => documentTypesForSlot(number).some(documentType =>
+              cardDocuments.some(document => document.doc_type === documentType
+                && document.file_url && document.status.toUpperCase() === 'APPROVED'),
+            ))
+            : card.docTypes.every(documentType =>
+              cardDocuments.some(document => document.doc_type === documentType
+                && document.file_url && document.status.toUpperCase() === 'APPROVED'),
+            ) || (type === 'drivers_license' && Boolean(cardDocuments.find(document => document.doc_type === type
+              && document.file_url && document.status.toUpperCase() === 'APPROVED'))
+            )
           const isPending = cardDocuments.some(document =>
             document.file_url && document.status.toUpperCase() === 'PENDING',
           )
@@ -302,16 +312,16 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
             ? `Action needed${rejectedDocument.rejection_reason ? ` - ${rejectedDocument.rejection_reason}` : ''}`
             : isApproved
               ? 'Done'
+              : type === 'vehicle_photos'
+                ? `${uploadedCarPhotos}/4 uploaded`
               : isPending
                 ? 'Pending'
                 : uploaded
                   ? 'Uploaded'
-                  : type === 'car_photos'
-                    ? `${uploadedCarPhotos}/4 uploaded`
-                    : 'Missing'
+                  : 'Missing'
           const activeUpload = uploading === type
-          return <section key={type} className="driver-onboarding-card" style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: 16, padding: '18px 16px' }}>
-            <div style={{ flex: '0 0 48px', width: 48, height: 48, display: 'grid', placeItems: 'center', borderRadius: 14, background: uploaded ? '#e5f7ef' : '#f1f4f7', color: uploaded ? '#087f5b' : '#475467' }}><Icon size={24} /></div>
+          return <section key={type} className="driver-onboarding-card" style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: 16, padding: '18px 16px', flexWrap: 'wrap' }}>
+            <div style={{ flex: '0 0 48px', width: 48, height: 48, display: 'grid', placeItems: 'center', borderRadius: type === 'profile_photo' ? '50%' : 14, border: type === 'profile_photo' ? '2px dashed #0a8f67' : 'none', background: uploaded ? '#e5f7ef' : '#f1f4f7', color: uploaded ? '#087f5b' : '#475467' }}><Icon size={24} /></div>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <strong style={{ fontSize: 15 }}>{title}</strong>
@@ -320,25 +330,59 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
                 </span>
               </div>
               <p style={{ margin: '5px 0 0', color: '#667085', fontSize: 12, lineHeight: 1.4 }}>{description}</p>
+              {type === 'profile_photo' && <p style={{ margin: '5px 0 0', color: '#087f5b', fontSize: 11 }}>Center your face inside the circle for selfie verification.</p>}
             </div>
-            <input
-              ref={element => { fileInputs.current[type] = element }}
-              type="file"
-              accept={type === 'car_photos' || type === 'profile_photo' ? 'image/*' : 'image/*,application/pdf'}
-              multiple={type === 'car_photos'}
-              capture={type === 'profile_photo' || type === 'selfie_holding_id' ? 'user' : undefined}
-              onChange={event => void handleFileChange(type, bucket, event)}
-              style={{ display: 'none' }}
-            />
-            <button
-              type="button"
-              disabled={Boolean(uploading) || (uploaded && !needsReplacement)}
-              onClick={() => fileInputs.current[type]?.click()}
-              style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 11, border: `1px dashed ${uploaded && !needsReplacement ? '#9bd8bd' : '#b8c2ce'}`, color: needsReplacement ? '#b42318' : uploaded ? '#087f5b' : '#344054', background: uploaded && !needsReplacement ? '#f5fcf8' : '#fff', fontSize: 12, fontWeight: 700, cursor: uploading || (uploaded && !needsReplacement) ? 'default' : 'pointer' }}
-            >
-              {activeUpload ? <LoaderCircle size={16} className="driver-onboarding-spin" /> : uploaded && !needsReplacement ? <Check size={16} /> : <Upload size={16} />}
-              <span>{activeUpload ? 'Uploading' : needsReplacement ? 'Replace' : uploaded ? 'Done' : 'Upload'}</span>
-            </button>
+            {type === 'vehicle_photos' ? (
+              <div style={{ width: '100%', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                {VEHICLE_PHOTO_SIDES.map((side, index) => {
+                  const number = index + 1
+                  const slotTypes = documentTypesForSlot(number)
+                  const slotDocument = cardDocuments.find(document => slotTypes.includes(document.doc_type))
+                  const slotRejected = slotTypes.some(documentType => rejectedTypes.has(documentType))
+                  const slotComplete = slotTypes.some(documentType => uploadedTypes.has(documentType))
+                  const inputKey = `vehicle_photos_${number}`
+                  return <div key={inputKey}>
+                    <input
+                      ref={element => { fileInputs.current[inputKey] = element }}
+                      type="file"
+                      accept="image/*"
+                      onChange={event => void handleFileChange(type, bucket, event, inputKey)}
+                      capture="environment"
+                      style={{ display: 'none' }}
+                    />
+                    <button
+                      type="button"
+                      disabled={Boolean(uploading) || (slotComplete && !slotRejected)}
+                      onClick={() => fileInputs.current[inputKey]?.click()}
+                      style={{ width: '100%', minHeight: 74, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 10, borderRadius: 12, border: `1px dashed ${slotComplete && !slotRejected ? '#9bd8bd' : '#b8c2ce'}`, color: slotRejected ? '#b42318' : slotComplete ? '#087f5b' : '#344054', background: slotComplete && !slotRejected ? '#f5fcf8' : '#fff', fontSize: 12, fontWeight: 700 }}
+                    >
+                      {activeUpload && uploading === type && slotDocument?.doc_type === inputKey
+                        ? <LoaderCircle size={16} className="driver-onboarding-spin" />
+                        : slotComplete && !slotRejected ? <Check size={16} /> : <Upload size={16} />}
+                      {side}: {slotRejected ? 'Replace' : slotComplete ? 'Added' : 'Add photo'}
+                    </button>
+                  </div>
+                })}
+              </div>
+            ) : <>
+              <input
+                ref={element => { fileInputs.current[type] = element }}
+                type="file"
+                accept={type === 'profile_photo' ? 'image/*' : 'image/*,application/pdf'}
+                capture={type === 'profile_photo' ? 'user' : undefined}
+                onChange={event => void handleFileChange(type, bucket, event)}
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                disabled={Boolean(uploading) || (uploaded && !needsReplacement)}
+                onClick={() => fileInputs.current[type]?.click()}
+                style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 11, border: `1px dashed ${uploaded && !needsReplacement ? '#9bd8bd' : '#b8c2ce'}`, color: needsReplacement ? '#b42318' : uploaded ? '#087f5b' : '#344054', background: uploaded && !needsReplacement ? '#f5fcf8' : '#fff', fontSize: 12, fontWeight: 700, cursor: uploading || (uploaded && !needsReplacement) ? 'default' : 'pointer' }}
+              >
+                {activeUpload ? <LoaderCircle size={16} className="driver-onboarding-spin" /> : uploaded && !needsReplacement ? <Check size={16} /> : <Upload size={16} />}
+                <span>{activeUpload ? 'Uploading' : needsReplacement ? 'Replace' : uploaded ? 'Done' : 'Upload'}</span>
+              </button>
+            </>}
           </section>
         })}
       </div>
@@ -352,11 +396,11 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
 
       <button
         type="button"
-        disabled={completedCards !== 8 || rejectedTypes.size > 0 || submitting || Boolean(uploading)}
+        disabled={completedCards !== 4 || rejectedTypes.size > 0 || submitting || Boolean(uploading)}
         onClick={() => void submitForReview()}
-        style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 20, padding: 16, border: 0, borderRadius: 14, background: completedCards === 8 ? '#087f5b' : '#cbd2da', color: '#fff', fontSize: 16, fontWeight: 800, cursor: completedCards === 8 && !submitting ? 'pointer' : 'not-allowed' }}
+        style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 20, padding: 16, border: 0, borderRadius: 14, background: completedCards === 4 ? '#087f5b' : '#cbd2da', color: '#fff', fontSize: 16, fontWeight: 800, cursor: completedCards === 4 && !submitting ? 'pointer' : 'not-allowed' }}
       >
-        {submitting ? 'Submitting for review…' : rejectedTypes.size > 0 ? 'Replace rejected documents to continue' : completedCards === 8 ? <>Continue <ChevronRight size={19} /></> : 'Upload all 8 documents to continue'}
+        {submitting ? 'Submitting for review…' : rejectedTypes.size > 0 ? 'Replace rejected documents to continue' : completedCards === 4 ? <>Continue <ChevronRight size={19} /></> : 'Complete all 4 document groups to continue'}
       </button>
     </div>
     <style>{'@keyframes driver-onboarding-spin{to{transform:rotate(360deg)}}.driver-onboarding-spin{animation:driver-onboarding-spin 1s linear infinite}@media(max-width:520px){.driver-onboarding-card{flex-wrap:wrap}}'}</style>
