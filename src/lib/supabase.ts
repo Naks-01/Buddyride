@@ -37,6 +37,7 @@ export type Profile = {
   phone: string | null
   phone_number?: string | null
   avatar_url: string | null
+  selfie_url?: string | null
   id_document_url?: string | null
   id_number?: string | null
   id_verification_method?: 'id_number' | 'id_photo' | null

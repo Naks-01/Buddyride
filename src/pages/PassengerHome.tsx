@@ -140,6 +140,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(50)
   const [safetyProfile, setSafetyProfile] = useState({
     avatar_url: profile.avatar_url,
+    selfie_url: profile.selfie_url ?? null,
     id_document_url: profile.id_document_url ?? null,
     id_number: profile.id_number ?? null,
     id_verified: profile.id_verified ?? false,
@@ -148,6 +149,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [verificationStatus, setVerificationStatus] = useState(profile.verification_status || 'not_started')
   const [verificationLoaded, setVerificationLoaded] = useState(false)
   const [verificationError, setVerificationError] = useState('')
+  const [uploadToast, setUploadToast] = useState('')
   const [showSafetyModal, setShowSafetyModal] = useState(false)
   const [safetyIdMethod, setSafetyIdMethod] = useState<PassengerIdMethod>('id_photo')
   const [safetyIdNumber, setSafetyIdNumber] = useState('')
@@ -162,6 +164,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const pickupAddressRequest = useRef(0)
   const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cancelledRideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const uploadToastTimer = useRef<number | null>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const prevStatusRef = useRef<string>('')
@@ -189,6 +192,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
 
+  useEffect(() => () => {
+    if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current)
+  }, [])
+
   useEffect(() => {
     let active = true
     async function loadPassengerVerification() {
@@ -197,13 +204,14 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('avatar_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
+          .select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
           .eq('id', profile.id)
           .single()
         if (error) throw error
         if (!active) return
         setSafetyProfile({
           avatar_url: data.avatar_url,
+          selfie_url: data.selfie_url,
           id_document_url: data.id_document_url,
           id_number: data.id_number,
           id_verified: data.id_verified,
@@ -228,7 +236,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     let active = true
     const refreshStatus = async () => {
       const { data, error } = await supabase.from('profiles')
-        .select('avatar_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
+        .select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
         .eq('id', profile.id)
         .single()
       if (!active) return
@@ -238,6 +246,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       }
       setSafetyProfile({
         avatar_url: data.avatar_url,
+        selfie_url: data.selfie_url,
         id_document_url: data.id_document_url,
         id_number: data.id_number,
         id_verified: data.id_verified,
@@ -384,18 +393,28 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const savedValue = document.type === 'passenger_selfie'
         ? supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl
         : path
+      if (document.type === 'passenger_selfie') {
+        console.log('Passenger selfie public URL:', savedValue)
+        if (!savedValue.startsWith('https://')) {
+          throw new Error('The selfie upload did not return a secure HTTPS URL.')
+        }
+      }
       const profileField = document.type === 'passenger_selfie'
-        ? { avatar_url: savedValue }
+        ? { selfie_url: savedValue, avatar_url: savedValue }
         : { id_document_url: savedValue }
       const { error: saveError } = await supabase.from('profiles').update(profileField).eq('id', profile.id)
       if (saveError) throw saveError
 
       setSafetyProfile(current => document.type === 'passenger_selfie'
-        ? { ...current, avatar_url: savedValue }
+        ? { ...current, selfie_url: savedValue, avatar_url: savedValue }
         : { ...current, id_document_url: savedValue })
       if (document.type === 'passenger_id') setSafetyIdMethod('id_photo')
     } catch (error) {
-      setVerificationError(`Could not upload verification photo: ${errMsg(error)}`)
+      const message = error instanceof Error ? error.message : errMsg(error)
+      setVerificationError(`Could not upload verification photo: ${message}`)
+      setUploadToast(message)
+      if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current)
+      uploadToastTimer.current = window.setTimeout(() => setUploadToast(''), 4000)
     } finally {
       setVerificationUploadType(null)
     }
@@ -811,10 +830,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
   return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    {uploadToast && <div role="alert" style={{ position:'fixed', left:16, right:16, bottom:24, zIndex:100002, margin:'0 auto', maxWidth:480, padding:'12px 16px', borderRadius:10, background:'#b91c1c', color:'white', fontWeight:700, boxShadow:'0 4px 16px rgba(0,0,0,.3)' }}>Verification photo upload failed: {uploadToast}</div>}
     {verificationStatus === 'pending_verification' && <div role="status" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>ID Pending Review - You cannot request rides until Admin approves your ID</div>}
     {showSafetyModal && !isVerified && <PassengerSafetyModal
       dark={isDark}
-      avatarUrl={safetyProfile.avatar_url}
+      avatarUrl={safetyProfile.selfie_url || safetyProfile.avatar_url}
       idDocumentUrl={safetyProfile.id_document_url}
       idNumber={safetyIdNumber}
       idMethod={safetyIdMethod}

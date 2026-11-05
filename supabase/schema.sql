@@ -17,6 +17,7 @@ create table if not exists public.profiles (
   phone text,
   phone_number text,
   avatar_url text,
+  selfie_url text,
   id_document_url text,
   id_number text,
   id_verification_method text,
@@ -44,6 +45,7 @@ create table if not exists public.profiles (
 
 alter table public.profiles add column if not exists phone_number text;
 alter table public.profiles add column if not exists id_document_url text;
+alter table public.profiles add column if not exists selfie_url text;
 alter table public.profiles add column if not exists id_number text;
 alter table public.profiles add column if not exists id_verification_method text;
 alter table public.profiles add column if not exists id_verified boolean not null default false;

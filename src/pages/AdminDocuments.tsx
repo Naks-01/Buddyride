@@ -114,7 +114,7 @@ function displayStatus(doc?: StoredDocument, optional = false) {
 }
 
 type PassengerSafetyReview = Pick<Profile,
-  'id' | 'email' | 'full_name' | 'phone' | 'avatar_url' | 'id_document_url' | 'id_number' | 'id_verification_method' | 'verification_status'
+  'id' | 'email' | 'full_name' | 'phone' | 'avatar_url' | 'selfie_url' | 'id_document_url' | 'id_number' | 'id_verification_method' | 'verification_status'
 > & {
   id_photo_preview_url?: string | null
 }
@@ -161,7 +161,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       supabase.from('driver_documents').select('*,profiles!driver_documents_driver_id_fkey!inner(*)').order('created_at',{ascending:false}),
       supabase.from('passenger_documents').select('*').order('created_at',{ascending:false}),
       supabase.from('profiles')
-        .select('id,email,full_name,phone,avatar_url,id_document_url,id_number,id_verification_method,verification_status')
+        .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status')
         .eq('role', 'passenger')
         .eq('verification_status', 'pending_verification')
         .or('id_document_url.not.is.null,id_number.not.is.null'),
@@ -501,9 +501,9 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:12, marginTop:14 }}>
               <div>
                 <strong style={{ display:'block', marginBottom:6 }}>Selfie</strong>
-                {passenger.avatar_url
-                  ? <a href={passenger.avatar_url} target="_blank" rel="noreferrer"><img src={passenger.avatar_url} alt={`${passenger.full_name || 'Passenger'} selfie`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
-                  : <span>Not provided</span>}
+                {passenger.selfie_url
+                  ? <a href={passenger.selfie_url} target="_blank" rel="noreferrer"><img src={passenger.selfie_url} alt={`${passenger.full_name || 'Passenger'} selfie`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
+                  : <span>No selfie - user must re-upload</span>}
               </div>
               <div>
                 <strong style={{ display:'block', marginBottom:6 }}>ID Photo</strong>
