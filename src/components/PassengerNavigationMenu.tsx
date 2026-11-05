@@ -32,9 +32,12 @@ function compress(file: File): Promise<Blob> {
 interface Props {
   isOpen?: boolean; onClose?: () => void; profile?: Profile | null; onSignOut?: () => void
   userName?: string; theme?: Theme; onThemeChange?: (theme: Theme) => void
+  verificationStatus?: string
+  verificationRejectionReason?: string
+  onReuploadVerification?: () => void
 }
 
-export function PassengerNavigationMenu({ isOpen: propIsOpen, onClose, profile, onSignOut, userName: propUserName, theme: propTheme, onThemeChange }: Props) {
+export function PassengerNavigationMenu({ isOpen: propIsOpen, onClose, profile, onSignOut, userName: propUserName, theme: propTheme, onThemeChange, verificationStatus, verificationRejectionReason, onReuploadVerification }: Props) {
   const [internalOpen, setInternalOpen] = useState(false)
   const [view, setView] = useState<View>('main')
   const [navigationApp, setNavigationApp] = useState('Google Maps')
@@ -146,6 +149,15 @@ export function PassengerNavigationMenu({ isOpen: propIsOpen, onClose, profile, 
             {photoError && <p role="alert" style={{ color: danger, fontSize: 12, marginTop: 8 }}>{photoError}</p>}
             {msg && <p style={{ color: success, fontSize: 12, marginTop: 8 }}>{msg}</p>}
           </div>
+
+          {verificationStatus === 'rejected' && (
+            <section role="alert" style={{ marginBottom: 18, padding: 14, borderRadius: 12, background: isDark ? '#450a0a' : '#fef2f2', border: `1px solid ${isDark ? '#b91c1c' : '#fecaca'}`, color: isDark ? '#fecaca' : '#991b1b' }}>
+              <strong>Verification Rejected: {verificationRejectionReason || 'Please review your documents and submit them again.'}</strong>
+              <button type="button" onClick={() => { close(); onReuploadVerification?.() }} style={{ display: 'block', width: '100%', marginTop: 12, padding: 11, border: 0, borderRadius: 8, background: '#b91c1c', color: 'white', fontWeight: 700 }}>
+                Re-upload Now
+              </button>
+            </section>
+          )}
 
           {!editing ? (
             <>

@@ -44,6 +44,8 @@ export type Profile = {
   id_verified?: boolean | null
   is_verified?: boolean | null
   verification_status?: string | null
+  verification_rejection_reason?: string | null
+  verified_at?: string | null
   is_banned?: boolean | null
   is_online?: boolean | null
   current_lat?: number | null

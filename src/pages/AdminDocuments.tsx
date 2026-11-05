@@ -45,21 +45,8 @@ type StoredDocument = {
     last_name?: string | null
     phone?: string | null
     is_verified?: boolean | null
+    verification_status?: string | null
   } | null
-}
-
-const LEGACY_PASSENGER_DOCUMENTS = [
-  { id: 'profile_photo', label: 'Profile Photo / Selfie', required: true },
-  { id: 'sa_id', label: 'SA ID / Passport', required: true },
-]
-
-function groupByUser(docs: StoredDocument[]) {
-  return docs.reduce<Record<string, StoredDocument[]>>((groups, doc) => {
-    const key = doc.user_id || doc.passenger_id || doc.profiles?.id || doc.user_email || doc.email || doc.profiles?.email || doc.id
-    if (!groups[key]) groups[key] = []
-    groups[key].push(doc)
-    return groups
-  }, {})
 }
 
 function groupDriversById(docs: StoredDocument[]) {
@@ -114,20 +101,23 @@ function displayStatus(doc?: StoredDocument, optional = false) {
 }
 
 type PassengerSafetyReview = Pick<Profile,
-  'id' | 'email' | 'full_name' | 'phone' | 'avatar_url' | 'selfie_url' | 'id_document_url' | 'id_number' | 'id_verification_method' | 'verification_status'
+  'id' | 'email' | 'full_name' | 'phone' | 'avatar_url' | 'selfie_url' | 'id_document_url' | 'id_number' | 'id_verification_method' | 'verification_status' | 'verification_rejection_reason'
 > & {
   id_photo_preview_url?: string | null
+  updated_at?: string | null
 }
 
 export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile, onBack: ()=>void }){
   const [driverDocs,setDriverDocs]=useState<StoredDocument[]>([])
-  const [passengerDocs,setPassengerDocs]=useState<StoredDocument[]>([])
-  const [passengerSafetyProfiles, setPassengerSafetyProfiles] = useState<PassengerSafetyReview[]>([])
-  const [tab,setTab]=useState<'driver'|'passenger-safety'|'legacy-passenger'>('driver')
+  const [pendingPassengerProfiles, setPendingPassengerProfiles] = useState<PassengerSafetyReview[]>([])
+  const [approvedPassengerProfiles, setApprovedPassengerProfiles] = useState<PassengerSafetyReview[]>([])
+  const [tab,setTab]=useState<'driver'|'passenger-safety'|'approved-passengers'>('driver')
+  const [search,setSearch] = useState('')
   const [showUnapprovedOnly, setShowUnapprovedOnly] = useState(false)
   const [loadingId, setLoadingId] = useState<string|null>(null)
-  const [rejectModal, setRejectModal] = useState<{id:string, table:'driver_documents'|'passenger_documents'}|null>(null)
+  const [rejectModal, setRejectModal] = useState<{id:string, kind:'driver-document'|'passenger-safety'}|null>(null)
   const [rejectionReason, setRejectionReason] = useState('')
+  const [rejectionCategory, setRejectionCategory] = useState('')
   const [error, setError] = useState('')
 
   async function viewDriverDocument(fileUrl?: string | null) {
@@ -157,14 +147,18 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function load(){
     setError('')
-    const [driverResult, passengerResult, passengerSafetyResult] = await Promise.all([
+    const [driverResult, pendingPassengerResult, approvedPassengerResult] = await Promise.all([
       supabase.from('driver_documents').select('*,profiles!driver_documents_driver_id_fkey!inner(*)').order('created_at',{ascending:false}),
-      supabase.from('passenger_documents').select('*').order('created_at',{ascending:false}),
       supabase.from('profiles')
-        .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status')
+        .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason,updated_at')
         .eq('role', 'passenger')
         .eq('verification_status', 'pending_verification')
-        .or('id_document_url.not.is.null,id_number.not.is.null'),
+        .not('selfie_url', 'is', null),
+      supabase.from('profiles')
+        .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason,updated_at')
+        .eq('role', 'passenger')
+        .eq('verification_status', 'verified')
+        .order('updated_at', { ascending: false }),
     ])
     let profileLoadError = ''
     if (!driverResult.error) {
@@ -178,25 +172,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         profiles: Array.isArray(document.profiles) ? document.profiles[0] || null : document.profiles || null,
       })))
     }
-    if (!passengerResult.error) {
-      const passengerDocuments = passengerResult.data || []
-      const userIds = [...new Set(passengerDocuments
-        .map(document => document.user_id || document.passenger_id)
-        .filter((userId): userId is string => Boolean(userId)))]
-      const profilesResult = userIds.length
-        ? await supabase.from('profiles').select('id,full_name,email,phone').in('id', userIds)
-        : { data: [], error: null }
-      const profilesById = new Map((profilesResult.data || []).map(passengerProfile => [passengerProfile.id, passengerProfile]))
-      setPassengerDocs((passengerResult.data || []).map(document => ({
-        ...document,
-        profiles: profilesById.get(document.user_id || document.passenger_id) || null,
-      })))
-      if (profilesResult.error) {
-        profileLoadError = `Could not load passenger profiles: ${profilesResult.error.message}`
-      }
-    }
-    if (!passengerSafetyResult.error) {
-      const signedProfiles = await Promise.all((passengerSafetyResult.data || []).map(async passenger => {
+    const loadPassengerProfiles = async (profiles: PassengerSafetyReview[]) => Promise.all(profiles.map(async passenger => {
         if (!passenger.id_document_url) return { ...passenger, id_photo_preview_url: null }
         const { data, error: signedUrlError } = await supabase.storage
           .from('passenger-ids')
@@ -209,11 +185,17 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         }
         return { ...passenger, id_photo_preview_url: data.signedUrl }
       }))
-      setPassengerSafetyProfiles(signedProfiles as PassengerSafetyReview[])
-    } else {
-      setPassengerSafetyProfiles([])
+    if (!pendingPassengerResult.error) {
+      setPendingPassengerProfiles(await loadPassengerProfiles(pendingPassengerResult.data || []))
     }
-    const loadErrors = [driverResult.error, passengerResult.error, passengerSafetyResult.error].filter(Boolean)
+    if (!approvedPassengerResult.error) {
+      setApprovedPassengerProfiles(await loadPassengerProfiles(approvedPassengerResult.data || []))
+    }
+    const loadErrors = [
+      driverResult.error,
+      pendingPassengerResult.error,
+      approvedPassengerResult.error,
+    ].filter(Boolean)
     const loadErrorMessages = [
       ...loadErrors.map(loadError => loadError?.message),
       profileLoadError,
@@ -225,7 +207,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function updateDocumentStatus(
     doc:StoredDocument,
-    table:'driver_documents'|'passenger_documents',
+    table:'driver_documents',
     status:'approved'|'rejected',
     driverEmail:string,
     rejectionReason = '',
@@ -235,69 +217,55 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     setError('')
     try {
       const update = (changes: Record<string, string | null>) => {
-        const query = supabase.from(table).update(changes as any)
-        if (table === 'driver_documents' && doc.driver_id) {
-          return query.eq('driver_id', doc.driver_id).in('doc_type', linkedDriverDocumentTypes(doc.doc_type))
-        }
+        const query = supabase.from('driver_documents').update(changes as any)
+        if (doc.driver_id) return query.eq('driver_id', doc.driver_id).in('doc_type', linkedDriverDocumentTypes(doc.doc_type))
         return query.eq('id', doc.id)
       }
-      const documentStatus = table === 'driver_documents' ? status.toUpperCase() : status
+      const documentStatus = status.toUpperCase()
       const reviewedAt = new Date().toISOString()
-      const changes: Record<string, string | null> = table === 'driver_documents'
-        ? {
-          status: documentStatus,
-          rejection_reason: status === 'rejected' ? rejectionReason.trim() : null,
-          reviewed_at: reviewedAt,
-          reviewed_by: _profile.id,
-        }
-        : status==='approved'
-          ? { status: documentStatus, verified_at:new Date().toISOString() }
-          : { status: documentStatus, rejection_reason:rejectionReason.trim() || null }
-      let { error: updateError } = await update(changes)
-      let metadataColumnMissing = false
-      if (updateError) {
-        const optionalColumn = status==='approved' ? 'verified_at' : 'rejection_reason'
-        const errorText = `${updateError.message} ${updateError.details || ''}`.toLowerCase()
-        if (table === 'passenger_documents' && errorText.includes(optionalColumn.toLowerCase()) && (errorText.includes('column') || errorText.includes('schema cache'))) {
-          metadataColumnMissing = true
-          const fallback = await update({ status: documentStatus })
-          updateError = fallback.error
-        }
+      const changes: Record<string, string | null> = {
+        status: documentStatus,
+        rejection_reason: status === 'rejected' ? rejectionReason.trim() : null,
+        reviewed_at: reviewedAt,
+        reviewed_by: _profile.id,
       }
+      let { error: updateError } = await update(changes)
       if (updateError) throw updateError
 
-      const reviewMetadata = table === 'driver_documents'
-        ? { reviewed_at: reviewedAt, reviewed_by: _profile.id }
-        : {}
-      const linkedTypes = table === 'driver_documents' ? new Set(linkedDriverDocumentTypes(doc.doc_type)) : new Set([doc.doc_type])
+      const linkedTypes = new Set(linkedDriverDocumentTypes(doc.doc_type))
       const updateLocal = (documents: StoredDocument[]) => documents.map(item =>
-        item.id === doc.id || (table === 'driver_documents' && item.driver_id === doc.driver_id && linkedTypes.has(item.doc_type)) ? {
+        item.id === doc.id || (item.driver_id === doc.driver_id && linkedTypes.has(item.doc_type)) ? {
           ...item,
           status: documentStatus,
           rejection_reason: status === 'rejected' ? rejectionReason.trim() || null : null,
-          ...reviewMetadata,
+          reviewed_at: reviewedAt,
+          reviewed_by: _profile.id,
         } : item
       )
-      if (table==='driver_documents') setDriverDocs(updateLocal)
-      else setPassengerDocs(updateLocal)
+      setDriverDocs(updateLocal)
 
       let verificationSyncError = ''
-      if (table === 'driver_documents' && status === 'rejected' && doc.driver_id) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update({ is_verified: false, verification_status: 'rejected' } as any)
-          .eq('id', doc.driver_id)
-        if (profileError) verificationSyncError = profileError.message
-      }
-      if (metadataColumnMissing) {
-        console.warn(`Document status updated, but ${status==='approved'?'verified_at':'rejection_reason'} is not available in ${table}.`)
+      if (status === 'rejected') {
+        const profileId = doc.driver_id || doc.user_id || doc.profiles?.id
+        if (!profileId) {
+          verificationSyncError = 'The driver profile could not be identified.'
+        } else {
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .update({
+              is_verified: false,
+              verification_status: 'rejected',
+              verification_rejection_reason: rejectionReason.trim(),
+              verified_at: null,
+            })
+            .eq('id', profileId)
+          if (profileError) verificationSyncError = profileError.message
+        }
       }
       await load()
       if (verificationSyncError) {
-        setError(`Document status updated, but driver or passenger verification could not be synchronized: ${verificationSyncError}`)
-      }
-      if (metadataColumnMissing) {
-        alert(`Document status updated, but ${status==='approved'?'verified_at':'rejection_reason'} is not available in the ${table} table.`)
+        setError(`Document status updated, but driver verification could not be synchronized: ${verificationSyncError}`)
+        return false
       }
       return true
     } catch (e:any) {
@@ -327,34 +295,18 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     }
   }
 
-  async function reviewPassengerSafety(passengerId: string, action: 'approve' | 'reject') {
+  async function approvePassengerSafety(passengerId: string) {
     setLoadingId(`passenger-safety:${passengerId}`)
     setError('')
     try {
-      if (action === 'approve') {
-        const { error: approvalError } = await supabase.rpc('approve_passenger_safety', {
-          p_passenger_id: passengerId,
-        })
-        if (approvalError) throw approvalError
-      } else {
-        const { data, error: rejectionError } = await supabase.from('profiles')
-          .update({
-            id_verified: false,
-            is_verified: false,
-            verification_status: 'rejected',
-          })
-          .eq('id', passengerId)
-          .eq('role', 'passenger')
-          .eq('verification_status', 'pending_verification')
-          .select('id')
-          .maybeSingle()
-        if (rejectionError) throw rejectionError
-        if (!data) throw new Error('Pending passenger safety verification was not found.')
-      }
+      const { error: approvalError } = await supabase.rpc('approve_passenger_safety', {
+        p_passenger_id: passengerId,
+      })
+      if (approvalError) throw approvalError
       await load()
     } catch (reviewError: unknown) {
       const message = reviewError instanceof Error ? reviewError.message : String(reviewError)
-      setError(`Could not ${action} passenger safety verification: ${message}`)
+      setError(`Could not approve passenger safety verification: ${message}`)
     } finally {
       setLoadingId(null)
     }
@@ -362,34 +314,84 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function doReject(){
     if (!rejectModal) return
-    if (!rejectionReason.trim()) { alert('Enter reason'); return }
-    const docs = rejectModal.table==='driver_documents' ? driverDocs : passengerDocs
-    const doc = docs.find(item=>item.id===rejectModal.id)
-    if (!doc) {
-      setError('Could not reject document: it is no longer in the loaded document list. Refresh and try again.')
+    const reason = rejectionCategory
+      ? `${rejectionCategory}: ${rejectionReason.trim()}`
+      : rejectionReason.trim()
+    if (rejectionReason.trim().length < 10) {
+      setError('Please enter at least 10 characters explaining the rejection.')
       return
     }
-    const succeeded = await updateDocumentStatus(
-      doc,
-      rejectModal.table,
-      'rejected',
-      doc.profiles?.email || doc.user_email || doc.email || '',
-      rejectionReason,
-    )
+    let succeeded = false
+    if (rejectModal.kind === 'passenger-safety') {
+      setLoadingId(`passenger-safety:${rejectModal.id}`)
+      setError('')
+      try {
+        const { data, error: rejectionError } = await supabase.from('profiles')
+          .update({
+            id_verified: false,
+            is_verified: false,
+            verification_status: 'rejected',
+            verification_rejection_reason: reason,
+            verified_at: null,
+          })
+          .eq('id', rejectModal.id)
+          .eq('role', 'passenger')
+          .eq('verification_status', 'pending_verification')
+          .select('id')
+          .maybeSingle()
+        if (rejectionError) throw rejectionError
+        if (!data) throw new Error('Pending passenger safety verification was not found.')
+        await load()
+        succeeded = true
+      } catch (reviewError: unknown) {
+        const message = reviewError instanceof Error ? reviewError.message : String(reviewError)
+        setError(`Could not reject passenger safety verification: ${message}`)
+      } finally {
+        setLoadingId(null)
+      }
+    } else {
+      const doc = driverDocs.find(item=>item.id===rejectModal.id)
+      if (!doc) {
+        setError('Could not reject document: it is no longer in the loaded document list. Refresh and try again.')
+        return
+      }
+      succeeded = await updateDocumentStatus(
+        doc,
+        'driver_documents',
+        'rejected',
+        doc.profiles?.email || doc.user_email || doc.email || '',
+        reason,
+      )
+    }
     if (succeeded) {
       setRejectModal(null)
       setRejectionReason('')
+      setRejectionCategory('')
     }
   }
 
   const driversById = groupDriversById(driverDocs)
-  const passengerGroups = groupByUser(passengerDocs)
+  const matchesPassenger = (passenger: PassengerSafetyReview, query: string) => {
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    return !normalizedQuery || [
+      passenger.full_name,
+      passenger.email,
+      passenger.phone,
+      passenger.id_number,
+      passenger.id,
+    ].some(value => value?.toLocaleLowerCase().includes(normalizedQuery))
+  }
+  const pendingPassengers = pendingPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
+  const approvedPassengers = approvedPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
+  const pendingDrivers = Object.entries(driversById).filter(([, docs]) =>
+    docs[0]?.profiles?.verification_status === 'pending_verification',
+  )
 
   function renderDocumentRow(
     doc: StoredDocument | undefined,
     id: string,
     label: string,
-    table: 'driver_documents'|'passenger_documents',
+    table: 'driver_documents',
     required: boolean
   ) {
     const status = displayStatus(doc)
@@ -414,18 +416,58 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
         <button disabled={!canViewDocument} title={isFakeFile(docUrl)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed', opacity:canViewDocument?1:0.5}}>View Doc</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
-        <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,table})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
+        <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,kind:'driver-document'})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>
     </div>
+  }
+
+  function renderPassengerSafetyCard(passenger: PassengerSafetyReview, allowReview: boolean) {
+    return <section key={passenger.id} style={{ border:'1px solid #333', padding:14, borderRadius:12, marginTop:10, background:'#18181b' }}>
+      <div style={{ fontWeight:700 }}>{passenger.full_name || passenger.email || 'Passenger'}</div>
+      <div style={{ marginTop:4, fontSize:13, opacity:0.8 }}>{passenger.email || 'No email'}{passenger.phone ? ` - ${passenger.phone}` : ''}</div>
+      <div style={{ marginTop:4, fontSize:11, opacity:0.55 }}>{passenger.id}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:12, marginTop:14 }}>
+        <div>
+          <strong style={{ display:'block', marginBottom:6 }}>Selfie</strong>
+          {passenger.selfie_url
+            ? <a href={passenger.selfie_url} target="_blank" rel="noreferrer"><img src={passenger.selfie_url} alt={`${passenger.full_name || 'Passenger'} selfie`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
+            : <span style={{ color:'red' }}>FAIL - No selfie_url - ask user to re-upload</span>}
+        </div>
+        <div>
+          <strong style={{ display:'block', marginBottom:6 }}>ID</strong>
+          {passenger.id_photo_preview_url
+            ? <a href={passenger.id_photo_preview_url} target="_blank" rel="noreferrer"><img src={passenger.id_photo_preview_url} alt={`${passenger.full_name || 'Passenger'} ID`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
+            : <span>ID Number: {passenger.id_number || 'Not provided'}</span>}
+        </div>
+      </div>
+      <div style={{ marginTop:5 }}><strong>Method:</strong> {passenger.id_verification_method || 'Not recorded'}</div>
+      {allowReview && <div style={{ display:'flex', gap:8, marginTop:14 }}>
+        <button type="button" disabled={loadingId===`passenger-safety:${passenger.id}`} onClick={()=>void approvePassengerSafety(passenger.id)} style={{ flex:1, padding:11, border:0, borderRadius:8, background:'#15803d', color:'white', fontWeight:700 }}>
+          {loadingId===`passenger-safety:${passenger.id}` ? 'Saving…' : 'Approve'}
+        </button>
+        <button type="button" disabled={loadingId===`passenger-safety:${passenger.id}`} onClick={()=>setRejectModal({id:passenger.id,kind:'passenger-safety'})} style={{ flex:1, padding:11, border:0, borderRadius:8, background:'#b91c1c', color:'white', fontWeight:700 }}>Reject</button>
+      </div>}
+    </section>
   }
 
   return <div style={{ padding:'16px', background:'#0e0e10', minHeight:'100vh', color:'white' }}>
     <button onClick={onBack} style={{ background:'#242428', color:'white', border:'1px solid #333', padding:'8px 12px', borderRadius:'8px' }}>⬅ Back</button>
     <h2>👑 Admin Docs</h2>
+    <label style={{ display:'block', margin:'12px 0 8px', color:'#d1d5db', fontSize:14 }}>
+      Search passengers by name, email, phone, ID number, or user ID
+      <input value={search} onChange={event=>{
+        const query = event.target.value
+        setSearch(query)
+        if (query.trim()) {
+          if (approvedPassengerProfiles.some(passenger => matchesPassenger(passenger, query))) setTab('approved-passengers')
+          else if (pendingPassengerProfiles.some(passenger => matchesPassenger(passenger, query))) setTab('passenger-safety')
+        }
+      }} placeholder="e.g. MR NAKAMPE T" style={{ display:'block', width:'100%', boxSizing:'border-box', marginTop:6, padding:10, borderRadius:8, border:'1px solid #444', background:'#242428', color:'white' }} />
+    </label>
     <div style={{ display:'flex', flexWrap:'wrap', gap:'8px', margin:'12px 0' }}>
-      <button onClick={()=> setTab('driver')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers ({Object.keys(driversById).length})</button>
-      <button onClick={()=> setTab('passenger-safety')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='passenger-safety'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passenger Safety ({passengerSafetyProfiles.length})</button>
-      <button onClick={()=> setTab('legacy-passenger')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='legacy-passenger'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Legacy Passengers ({Object.keys(passengerGroups).length})</button>
+      <button onClick={()=> setTab('driver')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers Pending ({pendingDrivers.length})</button>
+      <button onClick={()=> setTab('passenger-safety')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='passenger-safety'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passenger Safety Pending ({pendingPassengerProfiles.length})</button>
+      <button onClick={()=> setTab('approved-passengers')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='approved-passengers'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passenger Safety Approved ({approvedPassengerProfiles.length})</button>
     </div>
     {error && <p role="alert" style={{color:'#ff6b6b'}}>{error}</p>}
 
@@ -435,7 +477,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           <input type="checkbox" checked={showUnapprovedOnly} onChange={event=>setShowUnapprovedOnly(event.target.checked)} />
           Show only drivers who are not yet approved
         </label>
-        {Object.entries(driversById).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([driverId, docs]) => {
+        {pendingDrivers.filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([driverId, docs]) => {
           const driverProfile = docs[0]?.profiles
           const fullName = driverProfile?.full_name
             || `${driverProfile?.first_name || ''} ${driverProfile?.last_name || ''}`.trim()
@@ -489,69 +531,17 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             </div>
           </section>
         })}
-        {Object.entries(driversById).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).length===0 && <p style={{color:'#9ca3af'}}>{showUnapprovedOnly?'No unapproved drivers.':'No driver documents uploaded yet.'}</p>}
+        {pendingDrivers.filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).length===0 && <p style={{color:'#9ca3af'}}>No drivers are waiting for verification.</p>}
       </div>
     ) : tab === 'passenger-safety' ? (
       <div>
-        {passengerSafetyProfiles.map(passenger => (
-          <section key={passenger.id} style={{ border:'1px solid #333', padding:14, borderRadius:12, marginTop:10, background:'#18181b' }}>
-            <div style={{ fontWeight:700 }}>{passenger.full_name || passenger.email || 'Passenger'}</div>
-            <div style={{ marginTop:4, fontSize:13, opacity:0.8 }}>{passenger.email || 'No email'}{passenger.phone ? ` - ${passenger.phone}` : ''}</div>
-            <div style={{ marginTop:4, fontSize:11, opacity:0.55 }}>{passenger.id}</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:12, marginTop:14 }}>
-              <div>
-                <strong style={{ display:'block', marginBottom:6 }}>Selfie</strong>
-                {passenger.selfie_url
-                  ? <a href={passenger.selfie_url} target="_blank" rel="noreferrer"><img src={passenger.selfie_url} alt={`${passenger.full_name || 'Passenger'} selfie`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
-                  : <span>No selfie - user must re-upload</span>}
-              </div>
-              <div>
-                <strong style={{ display:'block', marginBottom:6 }}>ID Photo</strong>
-                {passenger.id_photo_preview_url
-                  ? <a href={passenger.id_photo_preview_url} target="_blank" rel="noreferrer"><img src={passenger.id_photo_preview_url} alt={`${passenger.full_name || 'Passenger'} ID`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
-                  : <span>{passenger.id_document_url ? 'ID photo preview unavailable' : 'Not provided (number submitted)'}</span>}
-              </div>
-            </div>
-            <div style={{ marginTop:12 }}><strong>ID Number:</strong> {passenger.id_number || 'Not provided'}</div>
-            <div style={{ marginTop:5 }}><strong>Method:</strong> {passenger.id_verification_method || 'Not recorded'}</div>
-            <div style={{ display:'flex', gap:8, marginTop:14 }}>
-              <button type="button" disabled={loadingId===`passenger-safety:${passenger.id}`} onClick={()=>void reviewPassengerSafety(passenger.id, 'approve')} style={{ flex:1, padding:11, border:0, borderRadius:8, background:'#15803d', color:'white', fontWeight:700 }}>
-                {loadingId===`passenger-safety:${passenger.id}` ? 'Saving…' : 'Approve'}
-              </button>
-              <button type="button" disabled={loadingId===`passenger-safety:${passenger.id}`} onClick={()=>void reviewPassengerSafety(passenger.id, 'reject')} style={{ flex:1, padding:11, border:0, borderRadius:8, background:'#b91c1c', color:'white', fontWeight:700 }}>Reject</button>
-            </div>
-          </section>
-        ))}
-        {passengerSafetyProfiles.length===0 && <p style={{ color:'#9ca3af' }}>No passengers are waiting for safety verification.</p>}
+        {pendingPassengers.map(passenger => renderPassengerSafetyCard(passenger, true))}
+        {pendingPassengers.length===0 && <p style={{ color:'#9ca3af' }}>No passengers are waiting for safety verification.</p>}
       </div>
     ) : (
       <div>
-        <p role="note" style={{ color:'#fbbf24', fontSize:13 }}>Legacy passenger document records only. Current passenger safety submissions are reviewed in the Passenger Safety tab.</p>
-        {Object.entries(passengerGroups).map(([userId, docs]) => {
-          const baseDocs = LEGACY_PASSENGER_DOCUMENTS
-          const uploadedCount = baseDocs.filter(requirement => docs.some(doc =>
-            normalizeDriverDocType(doc.doc_type) === requirement.id && hasRealDocument(doc)
-          )).length
-          const passengerProfile = docs[0]?.profiles
-          const fullName = passengerProfile?.full_name
-            || `${passengerProfile?.first_name || ''} ${passengerProfile?.last_name || ''}`.trim()
-            || passengerProfile?.email
-            || 'Unknown Passenger'
-          const email = passengerProfile?.email || docs[0]?.user_email || docs[0]?.email
-          return <section key={userId} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
-            <div style={{margin:'0 0 4px'}}>
-              <div style={{fontWeight:700}}>{fullName}</div>
-              <div style={{fontSize:13, opacity:0.8}}>{email || 'No email'}{passengerProfile?.phone ? ` - ${passengerProfile.phone}` : ''}</div>
-              <div style={{fontSize:11, opacity:0.5}}>{userId} - {uploadedCount}/2</div>
-            </div>
-            <div style={{fontSize:'12px', color:'#9ca3af', marginBottom:'8px'}}>Progress: {uploadedCount}/2 uploaded</div>
-            {LEGACY_PASSENGER_DOCUMENTS.map(requirement => {
-              const doc = docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.id)
-              return renderDocumentRow(doc, requirement.id, requirement.label, 'passenger_documents', requirement.required)
-            })}
-          </section>
-        })}
-        {Object.keys(passengerGroups).length===0 && <p style={{color:'#9ca3af'}}>No passenger documents uploaded yet.</p>}
+        {approvedPassengers.map(passenger => renderPassengerSafetyCard(passenger, false))}
+        {approvedPassengers.length===0 && <p style={{ color:'#9ca3af' }}>No approved passengers found.</p>}
       </div>
     )}
 
@@ -559,11 +549,25 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }}>
         <div style={{ background:'#1e1e1e', padding:'20px', borderRadius:'12px', width:'90%', maxWidth:'380px', border:'1px solid #333' }}>
           <h3 style={{ margin:'0 0 8px' }}>Reject Reason</h3>
-          <p style={{ fontSize:'12px', color:'#9ca3af' }}>The user will see this reason</p>
-          <textarea value={rejectionReason} onChange={e=> setRejectionReason(e.target.value)} autoFocus placeholder="e.g. Blurry photo, expired" rows={3} style={{ width:'100%', padding:'10px', borderRadius:'8px', background:'#242428', color:'white', border:'1px solid #444', marginTop:'8px', boxSizing:'border-box', resize:'vertical' }}/>
+          <label style={{ display:'block', fontSize:13, color:'#d1d5db' }}>
+            Suggested reason
+            <select value={rejectionCategory} onChange={event=>setRejectionCategory(event.target.value)} style={{ display:'block', width:'100%', padding:10, borderRadius:8, background:'#242428', color:'white', border:'1px solid #444', marginTop:6, boxSizing:'border-box' }}>
+              <option value="">Choose a reason (optional)</option>
+              <option>ID blurry</option>
+              <option>Selfie not clear</option>
+              <option>ID number mismatch</option>
+              <option>Wrong document</option>
+              <option>Other</option>
+            </select>
+          </label>
+          <label style={{ display:'block', fontSize:13, color:'#d1d5db', marginTop:12 }}>
+            Why are you rejecting? (required)
+            <textarea value={rejectionReason} onChange={e=> { setRejectionReason(e.target.value); setError('') }} autoFocus placeholder="Enter at least 10 characters" rows={3} style={{ display:'block', width:'100%', padding:'10px', borderRadius:'8px', background:'#242428', color:'white', border:'1px solid #444', marginTop:'6px', boxSizing:'border-box', resize:'vertical' }}/>
+          </label>
+          {rejectionReason.trim().length < 10 && <p role="alert" style={{ fontSize:12, color:'#fca5a5', margin:'6px 0 0' }}>Enter at least 10 characters.</p>}
           <div style={{ display:'flex', gap:'8px', marginTop:'12px' }}>
-            <button onClick={()=> { setRejectModal(null); setRejectionReason('') }} style={{ flex:1, background:'#333', color:'white', padding:'10px', borderRadius:'8px', border:'none' }}>Cancel</button>
-            <button onClick={doReject} style={{ flex:1, background:'#ff3b30', color:'white', padding:'10px', borderRadius:'8px', border:'none' }}>Confirm Reject</button>
+            <button onClick={()=> { setRejectModal(null); setRejectionReason(''); setRejectionCategory(''); setError('') }} style={{ flex:1, background:'#333', color:'white', padding:'10px', borderRadius:'8px', border:'none' }}>Cancel</button>
+            <button disabled={rejectionReason.trim().length < 10 || loadingId !== null} onClick={()=>void doReject()} style={{ flex:1, background:'#ff3b30', color:'white', padding:'10px', borderRadius:'8px', border:'none', opacity:rejectionReason.trim().length < 10 ? 0.5 : 1 }}>Confirm Reject</button>
           </div>
         </div>
       </div>

@@ -147,6 +147,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     is_verified: profile.is_verified ?? false,
   })
   const [verificationStatus, setVerificationStatus] = useState(profile.verification_status || 'not_started')
+  const [verificationRejectionReason, setVerificationRejectionReason] = useState(profile.verification_rejection_reason || '')
   const [verificationLoaded, setVerificationLoaded] = useState(false)
   const [verificationError, setVerificationError] = useState('')
   const [uploadToast, setUploadToast] = useState('')
@@ -204,7 +205,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
+          .select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status,verification_rejection_reason')
           .eq('id', profile.id)
           .single()
         if (error) throw error
@@ -218,6 +219,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           is_verified: data.is_verified,
         })
         setVerificationStatus(data.verification_status || 'not_started')
+        setVerificationRejectionReason(data.verification_rejection_reason || '')
         setSafetyIdNumber(data.id_number || '')
         if (data.id_verification_method === 'id_number') setSafetyIdMethod('id_number')
       } catch (error) {
@@ -236,7 +238,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     let active = true
     const refreshStatus = async () => {
       const { data, error } = await supabase.from('profiles')
-        .select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
+        .select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status,verification_rejection_reason')
         .eq('id', profile.id)
         .single()
       if (!active) return
@@ -253,6 +255,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         is_verified: data.is_verified,
       })
       setVerificationStatus(data.verification_status || 'not_started')
+      setVerificationRejectionReason(data.verification_rejection_reason || '')
     }
     const refresh = window.setInterval(() => void refreshStatus(), 30_000)
     return () => {
@@ -861,7 +864,18 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       </section>
     </div>}
     <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: `1px solid ${border}` }}>
-      <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} />
+      <PassengerNavigationMenu
+        profile={profile}
+        theme={theme}
+        onThemeChange={setTheme}
+        onSignOut={() => { void supabase.auth.signOut() }}
+        verificationStatus={verificationStatus}
+        verificationRejectionReason={verificationRejectionReason}
+        onReuploadVerification={() => {
+          setVerificationError('')
+          setShowSafetyModal(true)
+        }}
+      />
       <strong>BuddyRide<br/>{profile.full_name || 'Passenger'}</strong>
       <div style={{ marginLeft: 'auto' }}><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></div>
     </header>

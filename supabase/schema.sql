@@ -24,6 +24,8 @@ create table if not exists public.profiles (
   id_verified boolean not null default false,
   is_verified boolean not null default false,
   verification_status text not null default 'not_started',
+  verification_rejection_reason text,
+  verified_at timestamptz,
   is_banned boolean not null default false,
   is_online boolean not null default false,
   current_lat double precision,
@@ -51,6 +53,8 @@ alter table public.profiles add column if not exists id_verification_method text
 alter table public.profiles add column if not exists id_verified boolean not null default false;
 alter table public.profiles add column if not exists is_verified boolean not null default false;
 alter table public.profiles add column if not exists verification_status text not null default 'not_started';
+alter table public.profiles add column if not exists verification_rejection_reason text;
+alter table public.profiles add column if not exists verified_at timestamptz;
 alter table public.profiles add column if not exists is_banned boolean not null default false;
 alter table public.profiles add column if not exists is_online boolean not null default false;
 alter table public.profiles add column if not exists current_lat double precision;
