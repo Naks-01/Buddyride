@@ -6,6 +6,8 @@ type Props = { profile: Profile, onDocs: () => void, onAdminModule: (page: Admin
 
 export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
   const [stats, setStats] = useState({ rides: 0, drivers: 0, passengers: 0, active: 0, revenue: 0 })
+  const [pendingDocumentCounts, setPendingDocumentCounts] = useState({ drivers: 0, passengers: 0 })
+  const [documentCountError, setDocumentCountError] = useState('')
   const [tab, setTab] = useState<'overview'|'finance'|'zones'>('overview')
 
   useEffect(() => {
@@ -14,6 +16,30 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
       const { count: driversCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'driver')
       const { count: passengersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'passenger')
       const { count: activeCount } = await supabase.from('driver_status').select('*', { count: 'exact', head: true }).eq('is_online', true)
+      const [pendingDriversResult, pendingPassengersResult] = await Promise.all([
+        supabase.from('driver_documents')
+          .select('driver_id,profiles!driver_documents_driver_id_fkey!inner(id,role,verification_status)', { count: 'exact', head: true })
+          .eq('doc_type', 'drivers_license')
+          .not('file_url', 'is', null)
+          .eq('profiles.role', 'driver')
+          .eq('profiles.verification_status', 'pending_verification'),
+        supabase.from('profiles')
+          .select('id', { count: 'exact', head: true })
+          .eq('role', 'passenger')
+          .eq('verification_status', 'pending_verification'),
+      ])
+      if (pendingDriversResult.error || pendingPassengersResult.error) {
+        setDocumentCountError(
+          pendingDriversResult.error?.message
+          || pendingPassengersResult.error?.message
+          || 'Could not load pending document counts.',
+        )
+      } else {
+        setPendingDocumentCounts({
+          drivers: pendingDriversResult.count || 0,
+          passengers: pendingPassengersResult.count || 0,
+        })
+      }
       const { data: completedRides } = await supabase.from('rides').select('buddyride_commission').in('status', ['completed', 'rated'])
       const revenue = (completedRides || []).reduce((total, ride) => total + Number(ride.buddyride_commission || 0), 0)
       setStats({ rides: ridesCount||0, drivers: driversCount||0, passengers: passengersCount||0, active: activeCount||0, revenue })
@@ -56,9 +82,15 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
             </div>
           </div>
           <div style={card}>
-            <p style={{ fontWeight:'bold', margin:'0 0 6px 0' }}>👑 Approve Documents 7/7</p>
+            <p style={{ fontWeight:'bold', margin:'0 0 6px 0' }}>
+              👑 Approve Documents {pendingDocumentCounts.drivers + pendingDocumentCounts.passengers}
+            </p>
+            <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>
+              Drivers pending: {pendingDocumentCounts.drivers} · Passengers pending: {pendingDocumentCounts.passengers}
+            </p>
+            {documentCountError && <p role="alert" style={{ fontSize:'12px', color:'#fca5a5' }}>Could not load document counts: {documentCountError}</p>}
             <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>Verify driver IDs, licenses, vehicles + passenger IDs + selfies</p>
-            <button onClick={onDocs} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'black', fontWeight:'bold', border:'none', cursor:'pointer' }}>Go to Documents 7/7 →</button>
+            <button onClick={onDocs} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'black', fontWeight:'bold', border:'none', cursor:'pointer' }}>Go to Documents ({pendingDocumentCounts.drivers + pendingDocumentCounts.passengers}) →</button>
           </div>
           <div style={card}>
             <h3 style={{marginTop:0}}>Admin Modules</h3>

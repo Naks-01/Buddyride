@@ -705,10 +705,17 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   async function requestRide() {
     if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }
-    if (!isVerified) {
-      setRideError('Your ID is pending approval by Admin. You cannot request a ride until approved.')
-      setVerificationError('')
-      setShowSafetyModal(true)
+    const { data: passengerProfile, error: profileError } = await supabase
+      .from('profiles')
+      .select('verification_status')
+      .eq('id', profile.id)
+      .single()
+    if (profileError || !passengerProfile) {
+      setRideError(`Could not check your verification status: ${errMsg(profileError || 'Profile not found')}`)
+      return
+    }
+    if (passengerProfile.verification_status !== 'verified') {
+      alert('Please complete ID verification first. Go to Profile > Verify.')
       return
     }
     if (!pickup.trim() || !dropoff.trim()) {
