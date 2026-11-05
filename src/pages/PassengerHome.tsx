@@ -1,7 +1,8 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, type FormEvent } from 'react'
 import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomSheet'
 import { OsmMapView } from '../components/OsmMapView'
 import { PassengerNavigationMenu } from '../components/PassengerNavigationMenu'
+import { PassengerSafetyModal, type PassengerIdMethod } from '../components/PassengerSafetyModal'
 import { RideChat } from '../components/RideChat'
 import { getOSMRoute, reverseOSM } from '../lib/osm'
 import { calculateFareForCategory, DEFAULT_FARE_CONFIG, type FareConfig } from '../lib/fare'
@@ -62,16 +63,41 @@ const CATEGORIES = [
   { id: 'buddy_xl', name: 'XL', icon: '🚐' },
 ]
 
-const PASSENGER_VERIFICATION_DOCUMENTS = [
-  { type: 'passenger_id', label: 'SA ID Photo', facingMode: 'environment' as const, action: 'Take photo' },
-  { type: 'passenger_selfie_holding_id', label: 'Selfie Holding ID', facingMode: 'user' as const, action: 'Take selfie holding ID' },
-  { type: 'passenger_profile', label: 'Profile Photo', facingMode: 'user' as const, action: 'Take face photo' },
-]
+const PASSENGER_SAFETY_CAPTURES = [
+  { type: 'passenger_selfie', label: 'Selfie', facingMode: 'user' as const, action: 'Take selfie' },
+  { type: 'passenger_id', label: 'Photo ID', facingMode: 'environment' as const, action: 'Take photo of ID' },
+] as const
 
-type PassengerVerificationDocument = {
-  doc_type: string
-  file_url: string
-  status: string
+type PassengerSafetyCapture = typeof PASSENGER_SAFETY_CAPTURES[number]
+
+function isValidSAID(id: string) {
+  if (!/^\d{13}$/.test(id)) return false
+
+  const yy = Number(id.slice(0, 2))
+  const month = Number(id.slice(2, 4))
+  const day = Number(id.slice(4, 6))
+  const currentYear = new Date().getFullYear()
+  const currentYearTwoDigits = currentYear % 100
+  const year = yy <= currentYearTwoDigits ? 2000 + yy : 1900 + yy
+  const birthDate = new Date(year, month - 1, day)
+  const validBirthDate = birthDate.getFullYear() === year
+    && birthDate.getMonth() === month - 1
+    && birthDate.getDate() === day
+    && birthDate <= new Date()
+  if (!validBirthDate) return false
+
+  let sum = 0
+  let doubleDigit = true
+  for (let index = 11; index >= 0; index -= 1) {
+    let digit = Number(id[index])
+    if (doubleDigit) {
+      digit *= 2
+      if (digit > 9) digit -= 9
+    }
+    sum += digit
+    doubleDigit = !doubleDigit
+  }
+  return (sum + Number(id[12])) % 10 === 0
 }
 
 export function PassengerHome({ profile }: { profile: Profile }) {
@@ -112,11 +138,19 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [nearbyCars, setNearbyCars] = useState<any[]>([])
   const [showChat, setShowChat] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(50)
-  const [verificationDocuments, setVerificationDocuments] = useState<PassengerVerificationDocument[]>([])
+  const [safetyProfile, setSafetyProfile] = useState({
+    avatar_url: profile.avatar_url,
+    id_document_url: profile.id_document_url ?? null,
+    id_number: profile.id_number ?? null,
+    id_verified: profile.id_verified ?? false,
+  })
   const [verificationLoaded, setVerificationLoaded] = useState(false)
   const [verificationError, setVerificationError] = useState('')
+  const [showSafetyModal, setShowSafetyModal] = useState(false)
+  const [safetyIdMethod, setSafetyIdMethod] = useState<PassengerIdMethod>('id_photo')
+  const [safetyIdNumber, setSafetyIdNumber] = useState('')
   const [verificationUploadType, setVerificationUploadType] = useState<string | null>(null)
-  const [cameraDocument, setCameraDocument] = useState<typeof PASSENGER_VERIFICATION_DOCUMENTS[number] | null>(null)
+  const [cameraDocument, setCameraDocument] = useState<PassengerSafetyCapture | null>(null)
   const [cameraError, setCameraError] = useState('')
   const [cameraReady, setCameraReady] = useState(false)
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null)
@@ -137,11 +171,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const text = isDark? 'white' : 'black'
   const muted = isDark? '#aaa' : '#666'
   const border = isDark? '#333' : '#ddd'
-  const completedVerificationTypes = new Set(verificationDocuments
-    .filter(document => document.status.toLowerCase() === 'approved' && Boolean(document.file_url))
-    .map(document => document.doc_type))
-  const verificationCount = PASSENGER_VERIFICATION_DOCUMENTS.filter(document => completedVerificationTypes.has(document.type)).length
-  const isVerified = adminVerificationBypass || (verificationLoaded && verificationCount === PASSENGER_VERIFICATION_DOCUMENTS.length)
+  const hasPassengerIdentity = Boolean(safetyProfile.id_document_url || safetyProfile.id_number)
+  const isVerified = adminVerificationBypass || (
+    verificationLoaded
+    && safetyProfile.id_verified
+    && Boolean(safetyProfile.avatar_url)
+    && hasPassengerIdentity
+  )
   const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
 
   useEffect(() => {
@@ -168,22 +204,28 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         const isAdmin = user?.email?.toLowerCase() === 'buddyride@outlook.com'
         setAdminVerificationBypass(isAdmin)
         if (isAdmin) {
-          setVerificationDocuments([])
           setVerificationLoaded(true)
           return
         }
 
         const { data, error } = await supabase
-          .from('passenger_documents')
-          .select('doc_type,file_url,status')
-          .eq('user_id', profile.id)
+          .from('profiles')
+          .select('avatar_url,id_document_url,id_number,id_verified,id_verification_method')
+          .eq('id', profile.id)
+          .single()
         if (error) throw error
         if (!active) return
-        setVerificationDocuments((data || []) as PassengerVerificationDocument[])
+        setSafetyProfile({
+          avatar_url: data.avatar_url,
+          id_document_url: data.id_document_url,
+          id_number: data.id_number,
+          id_verified: data.id_verified,
+        })
+        setSafetyIdNumber(data.id_number || '')
+        if (data.id_verification_method === 'id_number') setSafetyIdMethod('id_number')
       } catch (error) {
         if (!active) return
-        setVerificationDocuments([])
-        setVerificationError(`Could not load verification documents: ${errMsg(error)}`)
+        setVerificationError(`Could not load safety verification: ${errMsg(error)}`)
       } finally {
         if (active) setVerificationLoaded(true)
       }
@@ -310,39 +352,31 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     clearActiveRideState()
   }
 
-  async function uploadPassengerVerification(document: typeof PASSENGER_VERIFICATION_DOCUMENTS[number], photo: Blob) {
+  async function uploadPassengerVerification(document: PassengerSafetyCapture, photo: Blob) {
     setVerificationUploadType(document.type)
     setVerificationError('')
-    let uploadedPath: string | null = null
     try {
-      const path = `${profile.id}/${document.type}_${Date.now()}.jpg`
+      const path = `${profile.id}.jpg`
+      const bucket = document.type === 'passenger_selfie' ? 'passenger-photos' : 'passenger-ids'
       const { error: uploadError } = await supabase.storage
-        .from('driver-documents')
-        .upload(path, photo, { contentType: 'image/jpeg', upsert: false })
+        .from(bucket)
+        .upload(path, photo, { contentType: 'image/jpeg', upsert: true })
       if (uploadError) throw uploadError
-      uploadedPath = path
 
-      const { error: saveError } = await supabase.from('passenger_documents').upsert({
-        user_id: profile.id,
-        doc_type: document.type,
-        file_url: path,
-        status: 'approved',
-      }, { onConflict: 'user_id,doc_type' })
+      const savedValue = document.type === 'passenger_selfie'
+        ? supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl
+        : path
+      const profileField = document.type === 'passenger_selfie'
+        ? { avatar_url: savedValue }
+        : { id_document_url: savedValue }
+      const { error: saveError } = await supabase.from('profiles').update(profileField).eq('id', profile.id)
       if (saveError) throw saveError
 
-      setVerificationDocuments(current => [
-        ...current.filter(item => item.doc_type !== document.type),
-        { doc_type: document.type, file_url: path, status: 'approved' },
-      ])
+      setSafetyProfile(current => document.type === 'passenger_selfie'
+        ? { ...current, avatar_url: savedValue }
+        : { ...current, id_document_url: savedValue })
+      if (document.type === 'passenger_id') setSafetyIdMethod('id_photo')
     } catch (error) {
-      if (uploadedPath) {
-        const { error: cleanupError } = await supabase.storage.from('driver-documents').remove([uploadedPath])
-        if (cleanupError) {
-          setVerificationError(`Could not save verification photo: ${errMsg(error)}. Uploaded photo cleanup failed: ${cleanupError.message}`)
-          setVerificationUploadType(null)
-          return
-        }
-      }
       setVerificationError(`Could not upload verification photo: ${errMsg(error)}`)
     } finally {
       setVerificationUploadType(null)
@@ -630,7 +664,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   async function requestRide() {
-    if (!isVerified) { setRideError('Complete verification to book'); return }
+    if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }
+    if (!pickup.trim() || !dropoff.trim()) {
+      setRideError('Choose a pickup and destination from the location suggestions.')
+      return
+    }
+    if (!isVerified) {
+      setRideError('')
+      setVerificationError('')
+      setShowSafetyModal(true)
+      return
+    }
+    await createRide()
+  }
+
+  async function createRide() {
     if (!pricingReady) { setRideError('Fare configuration is unavailable. Please try again later.'); return }
     setLoading(true); setRideError('')
     try {
@@ -655,6 +703,56 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         window.location.assign(checkout.authorization_url)
       }
     } catch (error) { setRideError(errMsg(error)) } finally { setLoading(false) }
+  }
+
+  async function verifyAndRequestRide(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setVerificationError('')
+    if (!safetyProfile.avatar_url) {
+      setVerificationError('Take a selfie before continuing.')
+      return
+    }
+
+    const trimmedIdNumber = safetyIdNumber.trim()
+    const idDocumentUrl = safetyProfile.id_document_url
+    if (safetyIdMethod === 'id_photo' && !idDocumentUrl) {
+      setVerificationError('Take a photo of your SA ID or passport before continuing.')
+      return
+    }
+    if (safetyIdMethod === 'id_number') {
+      if (!trimmedIdNumber) {
+        setVerificationError('Enter your ID number or passport number.')
+        return
+      }
+      if (/^\d{13}$/.test(trimmedIdNumber) && !isValidSAID(trimmedIdNumber)) {
+        setVerificationError('Enter a valid 13-digit South African ID number.')
+        return
+      }
+    }
+
+    setLoading(true)
+    try {
+      const { error } = await supabase.rpc('verify_passenger_safety', {
+        p_method: safetyIdMethod,
+        p_id_number: safetyIdMethod === 'id_number' ? trimmedIdNumber : null,
+        p_id_document_url: safetyIdMethod === 'id_photo' ? idDocumentUrl : null,
+      })
+      if (error) throw error
+
+      setSafetyProfile(current => ({
+        ...current,
+        id_number: safetyIdMethod === 'id_number' ? trimmedIdNumber : null,
+        id_document_url: safetyIdMethod === 'id_photo' ? idDocumentUrl : null,
+        id_verified: true,
+      }))
+      setVerificationLoaded(true)
+      setShowSafetyModal(false)
+      await createRide()
+    } catch (error) {
+      setVerificationError(`Could not verify your safety details: ${errMsg(error)}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function cancelRide() {
@@ -692,7 +790,24 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
   return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    {cameraDocument && <div role="dialog" aria-modal="true" aria-label={`Capture ${cameraDocument.label}`} style={{ position: 'fixed', inset: 0, zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'rgba(0,0,0,.88)' }}>
+    {showSafetyModal && !isVerified && <PassengerSafetyModal
+      dark={isDark}
+      avatarUrl={safetyProfile.avatar_url}
+      idDocumentUrl={safetyProfile.id_document_url}
+      idNumber={safetyIdNumber}
+      idMethod={safetyIdMethod}
+      paymentMethod={paymentMethod}
+      loading={loading}
+      uploading={verificationUploadType !== null}
+      error={verificationError}
+      onIdNumberChange={setSafetyIdNumber}
+      onIdMethodChange={setSafetyIdMethod}
+      onPaymentMethodChange={setPaymentMethod}
+      onOpenCamera={type => setCameraDocument(type === 'passenger_selfie' ? PASSENGER_SAFETY_CAPTURES[0] : PASSENGER_SAFETY_CAPTURES[1])}
+      onSubmit={event => { void verifyAndRequestRide(event) }}
+      onClose={() => setShowSafetyModal(false)}
+    />}
+    {cameraDocument && <div role="dialog" aria-modal="true" aria-label={`Capture ${cameraDocument.label}`} style={{ position: 'fixed', inset: 0, zIndex: 100002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'rgba(0,0,0,.88)' }}>
       <section style={{ width: '100%', maxWidth: 480, padding: 16, borderRadius: 18, background: bg, color: text }}>
         <h2 style={{ margin: '0 0 12px' }}>{cameraDocument.action}</h2>
         <video ref={cameraVideoRef} autoPlay playsInline muted style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 12, background: '#111', objectFit: 'cover' }} />
@@ -726,31 +841,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60 }}>
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
         {!ride && !completedRide && !completedReceipt && (<>
-          {!isVerified && <section aria-label="Passenger verification" style={{ padding: 14, marginBottom: 14, borderRadius: 16, border: `1px solid ${border}`, background: bg2 }}>
-            <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>Verify to Ride - 3 steps</h2>
-            <p style={{ margin: '0 0 12px', color: muted, fontSize: 13 }}>
-              {verificationLoaded ? `${verificationCount}/3 complete` : 'Checking verification…'}
-            </p>
-            {PASSENGER_VERIFICATION_DOCUMENTS.map(document => {
-              const uploaded = completedVerificationTypes.has(document.type)
-              const uploading = verificationUploadType === document.type
-              return <div key={document.type} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: `1px solid ${border}` }}>
-                <span aria-label={uploaded ? 'Uploaded' : 'Not uploaded'} style={{ width: 22, color: uploaded ? '#16a34a' : muted, fontWeight: 900, fontSize: 18 }}>
-                  {uploaded ? '✓' : '○'}
-                </span>
-                <span style={{ flex: 1, color: text, fontSize: 13, fontWeight: 600 }}>{document.label}</span>
-                {!uploaded && <button
-                  type="button"
-                  disabled={!verificationLoaded || verificationUploadType !== null}
-                  onClick={() => { setCameraError(''); setCameraDocument(document) }}
-                  style={{ padding: '8px 10px', borderRadius: 10, border: 'none', background: '#ff7a00', color: 'white', fontWeight: 700, fontSize: 12, opacity: !verificationLoaded || verificationUploadType !== null ? 0.6 : 1 }}
-                >
-                  {uploading ? 'Uploading…' : document.action}
-                </button>}
-              </div>
-            })}
-            {verificationError && <p role="alert" style={{ margin: '10px 0 0', color: '#dc2626', fontSize: 12 }}>{verificationError}</p>}
-          </section>}
           <h2 style={{ margin: '0 0 12px' }}>Where are you going? {profile.full_name ? `Hi ${profile.full_name.split(' ')[0]}` : ''}</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ position: 'relative' }}>
@@ -781,8 +871,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {rideError && <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 13 }}>{rideError}</p>}
             <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: `10px 0 calc(10px + env(safe-area-inset-bottom))`, background: bg, borderTop: `1px solid ${border}` }}>
               <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '52px', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={requestRide} disabled={loading || !isVerified} style={{ flex: 1.5, minHeight: '52px', padding: '14px', borderRadius: '14px', border: 'none', background: !isVerified ? '#555' : '#16a34a', color: 'white', fontWeight: 'bold', opacity: !isVerified ? 0.6 : 1 }}>
-                {!isVerified ? 'Complete verification to book' : loading ? (paymentMethod === 'paystack' ? 'Opening Paystack…' : 'Finding…') : 'Request Ride'}
+              <button onClick={() => { void requestRide() }} disabled={loading || !verificationLoaded} style={{ flex: 1.5, minHeight: '52px', padding: '14px', borderRadius: '14px', border: 'none', background: loading || !verificationLoaded ? '#555' : '#16a34a', color: 'white', fontWeight: 'bold', opacity: loading || !verificationLoaded ? 0.6 : 1 }}>
+                {loading ? (paymentMethod === 'paystack' ? 'Opening Paystack…' : 'Finding…') : !verificationLoaded ? 'Checking safety…' : !isVerified ? 'Verify & Request Ride' : 'Request Ride'}
               </button>
             </div>
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}

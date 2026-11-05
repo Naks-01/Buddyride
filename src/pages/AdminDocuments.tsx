@@ -4,38 +4,20 @@ import { createDriverDocumentSignedUrl, isFakeFile, REQUIRED_DOCS, normalizeDriv
 
 export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
   id: document.type,
-  label: document.label,
+  label: document.type === 'prdp' ? 'PDP / PrDP' : document.label,
   helper: document.label,
   accept: 'image/*,application/pdf',
-  required: document.type !== 'sa_id',
+  required: true,
   order: index + 1,
 }))
 
 function linkedDriverDocumentTypes(type: string) {
-  if (['drivers_license', 'prdp'].includes(type)) return ['drivers_license', 'prdp']
-  if (['vehicle_registration', 'license_disc'].includes(type)) return ['vehicle_registration', 'license_disc']
-  if (['profile_photo', 'selfie_holding_id', 'selfie_with_id'].includes(type)) {
-    return ['profile_photo', 'selfie_holding_id', 'selfie_with_id']
-  }
-  const carPhoto = type.match(/^(?:car_photo|vehicle_photos)_(\d+)$/)
-  if (carPhoto) return [`car_photo_${carPhoto[1]}`, `vehicle_photos_${carPhoto[1]}`]
   return [type]
 }
 
 function findDriverRequirementDocument(docs: StoredDocument[], type: string) {
   const matchingDocuments = docs.filter(item => normalizeDriverDocType(item.doc_type) === type)
-  const approved = matchingDocuments.find(item =>
-    item.status.trim().toLowerCase() === 'approved' && hasRealDocument(item),
-  )
-  if (approved) return approved
-  if (type === 'prdp') {
-    return docs.find(item =>
-      normalizeDriverDocType(item.doc_type) === 'drivers_license'
-      && item.status.trim().toLowerCase() === 'approved'
-      && hasRealDocument(item),
-    )
-  }
-  return matchingDocuments[0]
+  return matchingDocuments.find(item => hasRealDocument(item)) || matchingDocuments[0]
 }
 
 type StoredDocument = {

@@ -24,6 +24,8 @@ export type DriverDocument = {
   reviewed_at: string | null
   reviewed_by: string | null
   expiry_date: string | null
+  prdp_number?: string | null
+  document_hash?: string | null
   created_at: string
 }
 
@@ -35,6 +37,10 @@ export type Profile = {
   phone: string | null
   phone_number?: string | null
   avatar_url: string | null
+  id_document_url?: string | null
+  id_number?: string | null
+  id_verification_method?: 'id_number' | 'id_photo' | null
+  id_verified?: boolean | null
   is_verified?: boolean | null
   verification_status?: string | null
   is_banned?: boolean | null
@@ -47,6 +53,10 @@ export type Profile = {
   car_model?: string | null
   car_plate?: string | null
   car_color?: string | null
+  bank_name?: string | null
+  bank_account_holder?: string | null
+  bank_account_number?: string | null
+  bank_branch_code?: string | null
   created_at?: string | null
 }
 

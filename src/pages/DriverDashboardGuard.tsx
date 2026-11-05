@@ -1,13 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
 
-const ADMIN_EMAILS = ['buddyride@outlook.com', 'mokgalaka.nt@gmail.com']
-const REQUIRED_GROUPS = [
-  { types: ['drivers_license', 'prdp'], primary: 'drivers_license' },
-  { types: ['vehicle_registration', 'license_disc'], primary: 'vehicle_registration' },
-  { types: ['profile_photo', 'selfie_holding_id'], primary: 'profile_photo' },
-]
-const VEHICLE_PHOTO_TYPES = (number: number) => [`vehicle_photos_${number}`, `car_photo_${number}`]
+type DashboardAccess = 'checking' | 'pending' | 'approved'
 
 export function DriverDashboardGuard({
   profile,
@@ -18,68 +12,68 @@ export function DriverDashboardGuard({
   onRequireOnboarding: () => void
   children: ReactNode
 }) {
-  const [ready, setReady] = useState(false)
+  const [access, setAccess] = useState<DashboardAccess>('checking')
   const [error, setError] = useState('')
 
   useEffect(() => {
     let active = true
+    setAccess('checking')
+    setError('')
     void (async () => {
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('is_verified,verification_status')
+        .eq('id', profile.id)
+        .single()
       if (!active) return
-      if (authError) {
-        setError(`Could not verify your account: ${authError.message}`)
-        return
-      }
-      if (user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase())) {
-        setReady(true)
+      if (profileError) {
+        setError(`Could not check your driver approval: ${profileError.message}`)
         return
       }
 
-      const { data, error: documentsError } = await supabase
+      const { data: documents, error: documentsError } = await supabase
         .from('driver_documents')
-        .select('doc_type,file_url,status')
+        .select('doc_type,status')
         .eq('driver_id', profile.id)
       if (!active) return
       if (documentsError) {
-        setError(`Could not verify required documents: ${documentsError.message}`)
+        setError(`Could not check your driver documents: ${documentsError.message}`)
         return
       }
-      const uploadedDocuments = data || []
-      const uploaded = new Set(uploadedDocuments.filter(document => document.file_url).map(document => document.doc_type))
-      const byType = new Map(uploadedDocuments.map(document => [document.doc_type, document]))
-      const requiredTypes = new Set([
-        ...REQUIRED_GROUPS.flatMap(group => [...group.types, group.primary]),
-        ...[1, 2, 3, 4].flatMap(VEHICLE_PHOTO_TYPES),
-      ])
-      const hasRejectedDocument = uploadedDocuments.some(document =>
-        requiredTypes.has(document.doc_type) && document.status.toUpperCase() === 'REJECTED',
-      )
-      const groupsComplete = REQUIRED_GROUPS.every(group =>
-        group.types.every(type => uploaded.has(type))
-        || (group.primary === 'drivers_license'
-          && Boolean(byType.get(group.primary)?.file_url
-            && byType.get(group.primary)?.status.toUpperCase() === 'APPROVED')),
-      )
-      const vehiclePhotosComplete = [1, 2, 3, 4].every(number =>
-        VEHICLE_PHOTO_TYPES(number).some(type => uploaded.has(type)),
-      )
-      if (hasRejectedDocument || !groupsComplete || !vehiclePhotosComplete) {
+      if ((documents || []).some(document => document.status.toUpperCase() === 'REJECTED')) {
         onRequireOnboarding()
         return
       }
-      setReady(true)
+
+      if (profileData.verification_status === 'pending_verification') {
+        setAccess('pending')
+        return
+      }
+      if (profileData.is_verified !== true || profileData.verification_status !== 'approved') {
+        onRequireOnboarding()
+        return
+      }
+
+      setAccess('approved')
     })()
     return () => { active = false }
   }, [profile.id, onRequireOnboarding])
 
   if (error) return <main role="alert" style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F8F9FA', color: '#b42318', fontFamily: 'Inter, sans-serif' }}>
     <div style={{ maxWidth: 460, padding: 24, borderRadius: 16, background: '#fff', boxShadow: '0 5px 18px rgba(20,33,50,.06)' }}>
-      <strong>Could not check your onboarding documents</strong>
+      <strong>Could not check driver approval</strong>
       <p>{error}</p>
       <button onClick={() => window.location.reload()} style={{ padding: '10px 14px', border: 0, borderRadius: 9, background: '#087f5b', color: '#fff', fontWeight: 700 }}>Retry</button>
     </div>
   </main>
 
-  if (!ready) return <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', background: '#F8F9FA', color: '#667085', fontFamily: 'Inter, sans-serif' }}>Checking driver documents…</main>
+  if (access === 'pending') return <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F8F9FA', color: '#182230', fontFamily: 'Inter, sans-serif' }}>
+    <section style={{ width: 'min(100%, 480px)', padding: 32, borderRadius: 16, background: '#fff', textAlign: 'center', boxShadow: '0 5px 18px rgba(20,33,50,.06)' }}>
+      <h1 style={{ margin: '0 0 12px' }}>Waiting for Admin Approval</h1>
+      <p style={{ margin: 0, color: '#667085', lineHeight: 1.6 }}>You cannot go online yet. We will WhatsApp you when your driver account is approved.</p>
+    </section>
+  </main>
+
+  if (access !== 'approved') return <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', background: '#F8F9FA', color: '#667085', fontFamily: 'Inter, sans-serif' }}>Checking driver approval…</main>
   return children
 }

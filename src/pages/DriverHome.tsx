@@ -10,22 +10,6 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const EXPIRE_SECONDS = 15
-const ADMIN_EMAILS = ['buddyride@outlook.com', 'mokgalaka.nt@gmail.com']
-const REQUIRED_ONLINE_DOCUMENTS = [
-  { key: 'drivers_license', label: 'Driver Licence with PrDP', types: ['drivers_license', 'prdp'] },
-  { key: 'vehicle_registration', label: 'Vehicle Registration', types: ['vehicle_registration', 'license_disc'] },
-  { key: 'profile_photo', label: 'Selfie Verification', types: ['profile_photo', 'selfie_holding_id'] },
-  {
-    key: 'vehicle_photos',
-    label: 'Vehicle Photos (4)',
-    types: [],
-    anyOf: [1, 2, 3, 4].map(number => [`vehicle_photos_${number}`, `car_photo_${number}`]),
-  },
-] as const
-
-function normalizeDocumentType(type: string) {
-  return type.toLowerCase().trim().replace(/[\s-]+/g, '_')
-}
 
 function errMsg(e: any) {
   return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e))
@@ -74,10 +58,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const watchId = useRef<number | null>(null)
   const lastSupabaseUpdate = useRef<number>(0)
   const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
-  const [uploadedDocuments, setUploadedDocuments] = useState<string[]>([])
   const [documentsLoaded, setDocumentsLoaded] = useState(false)
   const [documentsError, setDocumentsError] = useState('')
-  const [adminBypass, setAdminBypass] = useState(false)
+  const [profileVerified, setProfileVerified] = useState(false)
+  const [verificationStatus, setVerificationStatus] = useState('not_started')
+  const [hasRejectedDocuments, setHasRejectedDocuments] = useState(false)
+  const [expiryWarnings, setExpiryWarnings] = useState<string[]>([])
   const [showDriverCancelReason, setShowDriverCancelReason] = useState(false)
   const [driverCancelReason, setDriverCancelReason] = useState('')
   const [rideToCancel, setRideToCancel] = useState<Ride | null>(null)
@@ -261,41 +247,49 @@ export function DriverHome({ profile }: { profile: Profile }) {
       setDocumentsLoaded(false)
       setDocumentsError('')
       try {
-        const [authResult, docsResult, profileResult] = await Promise.all([
-          supabase.auth.getUser(),
-          supabase.from('driver_documents').select('doc_type,file_url').eq('driver_id', profile.id),
-          supabase.from('profiles').select('avatar_url').eq('id', profile.id).single(),
+        const [docsResult, profileResult] = await Promise.all([
+          supabase.from('driver_documents').select('doc_type,status,expiry_date').eq('driver_id', profile.id),
+          supabase.from('profiles').select('is_verified,verification_status').eq('id', profile.id).single(),
         ])
         if (!active) return
 
-        const userEmail = authResult.data.user?.email?.toLowerCase()
-        setAdminBypass(!authResult.error && Boolean(userEmail && ADMIN_EMAILS.includes(userEmail)))
-
-        const errors = [authResult.error, docsResult.error, profileResult.error].filter(Boolean)
+        const errors = [docsResult.error, profileResult.error].filter(Boolean)
         if (errors.length) setDocumentsError(`Could not verify document requirements: ${errors.map(error => error!.message).join('; ')}`)
+        setProfileVerified(!profileResult.error && profileResult.data?.is_verified === true)
+        setVerificationStatus(profileResult.data?.verification_status || 'not_started')
 
-        if (!docsResult.error && !profileResult.error) {
-          const uploadedTypes = new Set(
-            (docsResult.data || [])
-              .filter(document => Boolean(document.file_url))
-              .map(document => normalizeDocumentType(document.doc_type)),
-          )
-          if (profileResult.data?.avatar_url) uploadedTypes.add('profile_photo')
-          setUploadedDocuments([...uploadedTypes])
+        if (docsResult.error) {
+          setHasRejectedDocuments(true)
+          setExpiryWarnings([])
         } else {
-          setUploadedDocuments([])
+          const documents = docsResult.data || []
+          setHasRejectedDocuments(documents.some(document => document.status.toUpperCase() === 'REJECTED'))
+          const today = new Date()
+          today.setHours(0, 0, 0, 0)
+          setExpiryWarnings(documents.flatMap(document => {
+            if (!document.expiry_date) return []
+            const expiry = new Date(`${document.expiry_date}T00:00:00`)
+            const daysRemaining = Math.ceil((expiry.getTime() - today.getTime()) / 86_400_000)
+            if (daysRemaining > 30) return []
+            const label = document.doc_type.replace(/_/g, ' ')
+            return [daysRemaining < 0
+              ? `Your ${label} expired ${Math.abs(daysRemaining)} day${Math.abs(daysRemaining) === 1 ? '' : 's'} ago. Replace it before driving.`
+              : `Your ${label} expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}. Upload a renewed document before it expires.`]
+          }))
         }
       } catch (error) {
         if (!active) return
-        setAdminBypass(false)
-        setUploadedDocuments([])
+        setProfileVerified(false)
+        setHasRejectedDocuments(true)
+        setExpiryWarnings([])
         setDocumentsError(`Could not verify document requirements: ${errMsg(error)}`)
       } finally {
         if (active) setDocumentsLoaded(true)
       }
     }
     void checkDocs()
-    return () => { active = false }
+    const refresh = window.setInterval(() => void checkDocs(), 24 * 60 * 60 * 1000)
+    return () => { active = false; window.clearInterval(refresh) }
   }, [profile.id])
 
   useEffect(() => {
@@ -523,7 +517,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [ride?.id, ride?.status, isNavigating])
 
   async function toggleOnline() {
-    if (!isOnline && !canGoOnline) { alert('Upload all 8 documents to Go Online'); return }
+    if (!isOnline && !canGoOnline) { alert('Waiting for Admin Approval - You cannot go online yet'); return }
     const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('driver_id', profile.id).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).limit(1).maybeSingle()
     if (activeRideError) { alert(`Could not check active rides: ${errMsg(activeRideError)}`); return }
     if (activeRide) {
@@ -706,13 +700,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const curStep = (() => { if (!routeData?.steps?.length) return null; return routeData.steps[activeStepIndex] || routeData.steps[0] })()
   const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
   const distText = nextTurnDistance !== null ? `${nextTurnDistance >= 1000 ? `${(nextTurnDistance / 1000).toFixed(1)}km` : `${Math.ceil(nextTurnDistance / 10) * 10}m`} • ${curStep ? `${Math.ceil(curStep.duration / 60)} min` : ''}` : routeData ? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min` : '0.0km • 0 min'
-  const uploadedTypeSet = new Set(uploadedDocuments)
-  const isDocumentUploaded = (requirement: typeof REQUIRED_ONLINE_DOCUMENTS[number]) =>
-    'anyOf' in requirement
-      ? requirement.anyOf.every(types => types.some(type => uploadedTypeSet.has(type)))
-      : requirement.types.every(type => uploadedTypeSet.has(type))
-  const uploadedRequirementCount = REQUIRED_ONLINE_DOCUMENTS.filter(isDocumentUploaded).length
-  const canGoOnline = adminBypass || (documentsLoaded && uploadedRequirementCount === REQUIRED_ONLINE_DOCUMENTS.length)
+  const canGoOnline = documentsLoaded
+    && profileVerified
+    && verificationStatus === 'approved'
+    && !hasRejectedDocuments
   const showTopBanner = !canGoOnline
   const topBannerHeight = showTopBanner? 42 : 0
   const completedRideForDisplay = ride?.status === 'completed' ? ride : pendingRating
@@ -731,10 +722,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
       <strong>BuddyRide<br/>Driver</strong>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button>
-        {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : 'Complete all 4 document groups to Go Online'}</button>}
+        {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ padding: '8px 14px', borderRadius: '20px', border: 'none', fontWeight: 'bold', background: canGoOnline ? (isOnline ? '#00d181' : '#444') : '#666', color: 'white', fontSize: '12px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? '● ONLINE' : '○ OFFLINE') : verificationStatus === 'pending_verification' ? 'Waiting for Admin Approval - You cannot go online yet' : 'Complete onboarding to Go Online'}</button>}
       </div>
     </header>
-    {showTopBanner && documentsLoaded && (<div style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: '#ff3b30', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>Complete all 4 document groups to Go Online ({uploadedRequirementCount}/4)</div>)}
+    {showTopBanner && documentsLoaded && (<div role="status" style={{ position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 80, background: '#b45309', color: 'white', borderRadius: '12px', padding: '10px 14px', fontSize: '13px', fontWeight: 'bold' }}>Waiting for Admin Approval - You cannot go online yet</div>)}
     {isNavigating && ride && (<div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}><div style={{ width: '44px', height: '44px', borderRadius: '22px', background: '#00d181', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div><div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div></div>)}
     <div style={{ position: 'absolute', top: '14px', left: '50%', transform: 'translateX(-50%)', zIndex: 90, padding: '7px 12px', borderRadius: '999px', color: 'white', background: 'rgba(28,28,30,.88)', fontSize: '13px', fontWeight: 700 }}>{Math.round(speedKmh)} km/h</div>
     <button onClick={() => setZoom(17)} style={{ position: 'absolute', right: '16px', bottom: `calc(${sheetSnap}dvh + 12px)`, zIndex: 50, width: '52px', height: '52px', borderRadius: '26px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', fontSize: '20px', transition: 'bottom 0.3s ease' }}>🎯</button>
@@ -768,8 +759,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {showDriverRating && (pendingRating || ride) && (<div style={{ textAlign: 'center' }}><h2 style={{ margin: '8px 0' }}>Rate Passenger</h2><p style={{ color: subText, fontSize: '13px' }}>{(pendingRating || ride)!.dropoff_address?.split(',')[0]} • Passenger R {(pendingRating || ride)!.fare} / You R {getEarnings((pendingRating || ride)!.fare, (pendingRating || ride)!.driver_earnings, (pendingRating || ride)!.buddyride_commission).driverGets}</p><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: driverRating >= s? '#FF6B00' : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}</div><textarea value={driverRatingComment} maxLength={1000} onChange={event => setDriverRatingComment(event.target.value)} placeholder="Add a comment (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text, resize: 'vertical' }} /><div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}><button onClick={skipRating} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Skip</button><button onClick={submitDriverRating} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : '#FF6B00', color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button></div></div>)}
       {!ride &&!showDriverRating && (<div style={{ textAlign: 'center' }}>
             {documentsError && <p role="alert" style={{ color: '#fca5a5', fontSize: 12 }}>{documentsError}</p>}
+            {expiryWarnings.map((warning, index) => <p key={`${index}-${warning}`} role="alert" style={{ margin: '0 0 8px', padding: 10, borderRadius: 10, background: '#7f1d1d', color: '#fee2e2', fontSize: 12, fontWeight: 700 }}>{warning}</p>)}
             <p style={{ margin: '0 0 12px', color: subText, fontSize: 13 }}>You keep 80%, BuddyRide 20%</p>
-          {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : 'Upload all 8 documents to Go Online'}</button>}
+          {!ride && !pendingRating && !showDriverRating && <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#ff4444' : '#00d181') : '#666', color: 'white', fontWeight: 'bold', fontSize: '16px', opacity: !isOnline && !canGoOnline ? 0.7 : 1, cursor: !isOnline && !canGoOnline ? 'not-allowed' : 'pointer' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : 'Waiting for Admin Approval - You cannot go online yet'}</button>}
         </div>)}
     </BottomSheet>
     </div>

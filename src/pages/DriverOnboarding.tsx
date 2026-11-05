@@ -13,35 +13,29 @@ import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import compressImageFile from '../lib/compressImage'
 
 type StoredDocument = Pick<DriverDocument,
-  'id' | 'doc_type' | 'file_url' | 'status' | 'rejection_reason' | 'created_at'
+  'id' | 'doc_type' | 'file_url' | 'status' | 'rejection_reason' | 'created_at' | 'expiry_date' | 'prdp_number' | 'document_hash'
 >
 const MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
 const DOCUMENT_CARDS = [
-  { type: 'drivers_license', title: 'Driver Licence with PrDP (PDP)', description: 'Upload licence card showing PrDP - counts for both Licence + PrDP', bucket: 'driver-documents', Icon: IdCard, docTypes: ['drivers_license', 'prdp'] },
-  { type: 'vehicle_registration', title: 'Vehicle Registration', description: 'Registration paper + Licence Disc in one photo', bucket: 'vehicle-documents', Icon: CarFront, docTypes: ['vehicle_registration', 'license_disc'] },
-  { type: 'profile_photo', title: 'Selfie Verification', description: 'Take a selfie - replaces profile photo + selfie holding ID', bucket: 'profile-photos', Icon: CircleUserRound, docTypes: ['profile_photo', 'selfie_holding_id'] },
-  { type: 'vehicle_photos', title: 'Vehicle Photos (4)', description: 'Front, Back, Left, Right', bucket: 'vehicle-documents', Icon: CarFront, docTypes: [] },
+  { type: 'sa_id', title: 'SA ID / Passport', description: 'Upload your South African ID or passport.', bucket: 'driver-documents', Icon: IdCard },
+  { type: 'drivers_license', title: "Driver's Licence", description: 'Upload your valid driving licence.', bucket: 'driver-documents', Icon: IdCard, expiryRequired: true },
+  { type: 'prdp', title: 'PDP / PrDP', description: 'Upload your Professional Driving Permit.', bucket: 'driver-documents', Icon: IdCard, expiryRequired: true, prdpNumberRequired: true },
+  { type: 'profile_photo', title: 'Selfie', description: 'Take a clear profile selfie.', bucket: 'profile-photos', Icon: CircleUserRound, camera: 'user' },
+  { type: 'selfie_holding_id', title: 'Selfie Holding ID', description: 'Take a separate photo holding your SA ID or passport next to your face.', bucket: 'profile-photos', Icon: CircleUserRound, camera: 'user' },
+  { type: 'vehicle_registration', title: 'Vehicle Registration', description: 'Upload the vehicle registration document.', bucket: 'vehicle-documents', Icon: CarFront },
+  { type: 'license_disc', title: 'Licence Disc', description: 'Upload a clear image of your current licence disc.', bucket: 'vehicle-documents', Icon: CarFront, expiryRequired: true },
+  { type: 'vehicle_photos', title: 'Vehicle Photos (4)', description: 'Front, Back, Left, Right', bucket: 'vehicle-documents', Icon: CarFront },
 ] as const
 const VEHICLE_PHOTO_SIDES = ['Front', 'Back', 'Left', 'Right'] as const
 const ONBOARDING_DOCUMENT_TYPES = new Set([
-  ...DOCUMENT_CARDS.flatMap(card => [...card.docTypes]),
-  'selfie_with_id',
-  ...[1, 2, 3, 4].flatMap(documentTypesForSlot),
+  ...DOCUMENT_CARDS.filter(card => card.type !== 'vehicle_photos').map(card => card.type),
+  ...[1, 2, 3, 4].map(documentTypeForSlot),
 ])
 
-function documentTypesForSlot(number: number) {
-  return [`vehicle_photos_${number}`, `car_photo_${number}`]
-}
-
-function aliasedDocumentTypes(type: string) {
-  if (type === 'drivers_license') return ['drivers_license', 'prdp']
-  if (type === 'vehicle_registration') return ['vehicle_registration', 'license_disc']
-  if (type === 'profile_photo') return ['profile_photo', 'selfie_with_id', 'selfie_holding_id']
-  const vehiclePhoto = type.match(/^vehicle_photos_(\d+)$/)
-  if (vehiclePhoto) return [`vehicle_photos_${vehiclePhoto[1]}`, `car_photo_${vehiclePhoto[1]}`]
-  return [type]
+function documentTypeForSlot(number: number) {
+  return `vehicle_photos_${number}`
 }
 
 const cardStyle: CSSProperties = {
@@ -59,26 +53,52 @@ function latestDocuments(documents: StoredDocument[]) {
   return [...latest.values()]
 }
 
+function hasIndependentFile(type: string, documents: StoredDocument[]) {
+  const document = documents.find(item => item.doc_type === type && item.file_url)
+  if (!document) return false
+  return !documents.some(item => item.doc_type !== type && item.file_url === document.file_url)
+}
+
+function hasSeparateSelfieFiles(documents: StoredDocument[]) {
+  const selfies = documents.filter(document =>
+    ['profile_photo', 'selfie_holding_id'].includes(document.doc_type) && document.file_url,
+  )
+  if (selfies.length < 2) return true
+  const [profileSelfie, idSelfie] = selfies
+  return profileSelfie.file_url !== idSelfie.file_url
+    && (!profileSelfie.document_hash || !idSelfie.document_hash || profileSelfie.document_hash !== idSelfie.document_hash)
+}
+
 function isCardComplete(card: typeof DOCUMENT_CARDS[number], documents: StoredDocument[]) {
-  const uploaded = new Set(documents.filter(document => document.file_url).map(document => document.doc_type))
   if (card.type === 'vehicle_photos') {
     return [1, 2, 3, 4].every(number =>
-      documentTypesForSlot(number).some(type => uploaded.has(type)),
+      hasIndependentFile(documentTypeForSlot(number), documents),
     )
   }
-  const primaryDocument = documents.find(document => document.doc_type === card.type)
-  return card.docTypes.every(type => uploaded.has(type))
-    || (card.type === 'drivers_license'
-      && Boolean(primaryDocument?.file_url && primaryDocument.status.toUpperCase() === 'APPROVED'))
+  const document = documents.find(item => item.doc_type === card.type)
+  return hasIndependentFile(card.type, documents)
+    && (card.type !== 'selfie_holding_id' || hasSeparateSelfieFiles(documents))
+    && (!('expiryRequired' in card) || !card.expiryRequired || Boolean(document?.expiry_date))
+    && (!('prdpNumberRequired' in card) || Boolean(document?.prdp_number?.trim()))
 }
 
 function isComplete(documents: StoredDocument[]) {
   return DOCUMENT_CARDS.every(card => isCardComplete(card, documents))
 }
 
+const BANK_NAMES = ['Capitec', 'FNB', 'Standard Bank', 'ABSA', 'Nedbank'] as const
+
 export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; onDashboard: () => void }) {
   const [documents, setDocuments] = useState<StoredDocument[]>([])
   const [verificationStatus, setVerificationStatus] = useState('not_started')
+  const [bankDetails, setBankDetails] = useState({
+    bank_name: '',
+    bank_account_holder: '',
+    bank_account_number: '',
+    bank_branch_code: '',
+  })
+  const [expiryDates, setExpiryDates] = useState<Record<string, string>>({})
+  const [prdpNumbers, setPrdpNumbers] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -96,7 +116,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     [documents],
   )
   const uploadedCarPhotos = [1, 2, 3, 4].filter(number =>
-    documentTypesForSlot(number).some(type => uploadedTypes.has(type)),
+    hasIndependentFile(documentTypeForSlot(number), documents),
   ).length
   const completedCards = DOCUMENT_CARDS.filter(card => isCardComplete(card, documents)).length
 
@@ -105,10 +125,13 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setError('')
     const [documentsResult, profileResult] = await Promise.all([
       supabase.from('driver_documents')
-        .select('id,doc_type,file_url,status,rejection_reason,created_at')
+        .select('id,doc_type,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash')
         .order('created_at', { ascending: false })
         .eq('driver_id', profile.id),
-      supabase.from('profiles').select('verification_status').eq('id', profile.id).single(),
+      supabase.from('profiles')
+        .select('verification_status,is_verified,bank_name,bank_account_holder,bank_account_number,bank_branch_code')
+        .eq('id', profile.id)
+        .single(),
     ])
     if (documentsResult.error || profileResult.error) {
       setError(`Could not load your onboarding status: ${documentsResult.error?.message || profileResult.error?.message}`)
@@ -120,12 +143,20 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const status = profileResult.data?.verification_status || 'not_started'
     setDocuments(loadedDocuments)
     setVerificationStatus(status)
+    setExpiryDates(Object.fromEntries(loadedDocuments
+      .filter(document => document.expiry_date)
+      .map(document => [document.doc_type, document.expiry_date!.slice(0, 10)])))
+    setPrdpNumbers(Object.fromEntries(loadedDocuments
+      .filter(document => document.prdp_number)
+      .map(document => [document.doc_type, document.prdp_number!])))
+    setBankDetails({
+      bank_name: profileResult.data.bank_name || '',
+      bank_account_holder: profileResult.data.bank_account_holder || '',
+      bank_account_number: profileResult.data.bank_account_number || '',
+      bank_branch_code: profileResult.data.bank_branch_code || '',
+    })
     setLoading(false)
-    if (isComplete(loadedDocuments) && status === 'pending_verification'
-      && !loadedDocuments.some(document => ONBOARDING_DOCUMENT_TYPES.has(document.doc_type)
-        && document.status.toUpperCase() === 'REJECTED')) {
-      window.setTimeout(onDashboard, 2200)
-    } else if (isComplete(loadedDocuments) && status === 'approved') {
+    if (status === 'approved' && profileResult.data.is_verified) {
       onDashboard()
     }
   }
@@ -133,6 +164,12 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   useEffect(() => {
     void loadDocuments()
   }, [profile.id])
+
+  useEffect(() => {
+    if (verificationStatus !== 'pending_verification') return
+    const refresh = window.setInterval(() => void loadDocuments(), 30_000)
+    return () => window.clearInterval(refresh)
+  }, [verificationStatus, profile.id])
 
   async function uploadFile(cardType: string, bucket: string, file: File, documentType = cardType): Promise<boolean> {
     setUploading(cardType)
@@ -147,7 +184,21 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       }
 
       const isImage = file.type.startsWith('image/')
+      const card = DOCUMENT_CARDS.find(item => item.type === documentType)
+      const expiryDate = expiryDates[documentType] || null
+      const prdpNumber = prdpNumbers[documentType]?.trim() || null
+      if (card && 'expiryRequired' in card && card.expiryRequired && !expiryDate) {
+        throw new Error('Enter the document expiry date before uploading.')
+      }
+      if (expiryDate && expiryDate <= new Date().toISOString().slice(0, 10)) {
+        throw new Error('The document expiry date must be in the future.')
+      }
+      if (documentType === 'prdp' && !prdpNumber) {
+        throw new Error('Enter the PDP / PrDP number before uploading.')
+      }
       const body = isImage ? await compressImageFile(file) : file
+      const digest = await crypto.subtle.digest('SHA-256', await body.arrayBuffer())
+      const documentHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
       if (body.size > MAX_UPLOAD_SIZE) {
         throw new Error('Compressed file must be smaller than 20 MB.')
       }
@@ -171,16 +222,19 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       }
 
       uploadStage = 'database'
-      const newDocuments = aliasedDocumentTypes(documentType).map(type => ({
+      const newDocuments = [{
         driver_id: profile.id,
-        doc_type: type,
+        doc_type: documentType,
         file_url: publicUrl,
         status: 'PENDING',
         created_at: new Date().toISOString(),
-      }))
+        expiry_date: expiryDate,
+        prdp_number: documentType === 'prdp' ? prdpNumber : null,
+        document_hash: documentHash,
+      }]
       const { data: savedDocuments, error: saveError } = await supabase.from('driver_documents')
         .upsert(newDocuments, { onConflict: 'driver_id,doc_type' })
-        .select('id,doc_type,file_url,status,rejection_reason,created_at')
+        .select('id,doc_type,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash')
       if (saveError) {
         console.error('DB ERROR:', saveError)
         try {
@@ -229,9 +283,46 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   }
 
   async function submitForReview() {
-    if (!isComplete(documents) || rejectedTypes.size > 0 || submitting) return
+    const bankDetailsComplete = Object.values(bankDetails).every(value => value.trim())
+    if (!isComplete(documents) || rejectedTypes.size > 0 || !bankDetailsComplete || submitting) return
+    if (['drivers_license', 'prdp', 'license_disc'].some(type =>
+      !expiryDates[type] || expiryDates[type] <= new Date().toISOString().slice(0, 10),
+    )) {
+      setError('All required expiry dates must be in the future.')
+      return
+    }
     setSubmitting(true)
     setError('')
+    const metadataUpdates = await Promise.all(
+      DOCUMENT_CARDS
+        .filter(card => card.type !== 'vehicle_photos' && ('expiryRequired' in card || 'prdpNumberRequired' in card))
+        .map(async card => {
+          const changes: { expiry_date?: string; prdp_number?: string } = {}
+          if ('expiryRequired' in card && card.expiryRequired) changes.expiry_date = expiryDates[card.type]
+          if ('prdpNumberRequired' in card && card.prdpNumberRequired) changes.prdp_number = prdpNumbers[card.type].trim()
+          return supabase.from('driver_documents').update(changes)
+            .eq('driver_id', profile.id)
+            .eq('doc_type', card.type)
+        }),
+    )
+    const metadataError = metadataUpdates.find(result => result.error)?.error
+    if (metadataError) {
+      setError(`Could not save document details: ${metadataError.message}`)
+      setSubmitting(false)
+      return
+    }
+
+    const { error: bankError } = await supabase.from('profiles').update({
+      bank_name: bankDetails.bank_name,
+      bank_account_holder: bankDetails.bank_account_holder.trim(),
+      bank_account_number: bankDetails.bank_account_number.trim(),
+      bank_branch_code: bankDetails.bank_branch_code.trim(),
+    }).eq('id', profile.id)
+    if (bankError) {
+      setError(`Could not save your bank details: ${bankError.message}`)
+      setSubmitting(false)
+      return
+    }
     const { error: submitError } = await supabase.rpc('submit_driver_documents_for_review')
     if (submitError) {
       setError(`Could not submit documents for review: ${submitError.message}`)
@@ -240,9 +331,9 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     }
     setVerificationStatus('pending_verification')
     setSubmitting(false)
-    window.setTimeout(onDashboard, 2200)
   }
 
+  const bankDetailsComplete = Object.values(bankDetails).every(value => value.trim())
   const progress = Math.round(completedCards / DOCUMENT_CARDS.length * 100)
 
   if (loading) {
@@ -252,16 +343,13 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     </main>
   }
 
-  if (isComplete(documents) && verificationStatus === 'pending_verification' && rejectedTypes.size === 0) {
+  if (verificationStatus === 'pending_verification' && rejectedTypes.size === 0) {
     return <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F8F9FA', fontFamily: 'Inter, sans-serif', color: '#182230' }}>
       <section style={{ ...cardStyle, width: 'min(100%, 480px)', padding: '42px 28px', textAlign: 'center' }}>
         <div style={{ margin: '0 auto 20px', width: 76, height: 76, borderRadius: 38, display: 'grid', placeItems: 'center', color: '#087f5b', background: '#dff8ed' }}><Check size={38} strokeWidth={3} /></div>
-        <p style={{ margin: '0 0 8px', color: '#087f5b', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Step 3 of 4</p>
-        <h1 style={{ margin: '0 0 10px', fontSize: 26 }}>Under review</h1>
-        <p style={{ margin: 0, color: '#667085', lineHeight: 1.6 }}>Your documents are waiting for admin review. We’ll take you to your driver dashboard shortly.</p>
-        <LoaderCircle size={22} style={{ marginTop: 24, color: '#087f5b' }} className="driver-onboarding-spin" />
+        <h1 style={{ margin: '0 0 10px', fontSize: 26 }}>Under Review</h1>
+        <p style={{ margin: 0, color: '#667085', lineHeight: 1.6 }}>We will WhatsApp you in 24h. You cannot go online until your driver account is approved.</p>
       </section>
-      <style>{'@keyframes driver-onboarding-spin{to{transform:rotate(360deg)}}.driver-onboarding-spin{animation:driver-onboarding-spin 1s linear infinite}'}</style>
     </main>
   }
 
@@ -273,8 +361,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
           <div><strong style={{ display: 'block', fontSize: 17 }}>BuddyRide Driver</strong><span style={{ fontSize: 13, color: '#667085' }}>Driver onboarding</span></div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'end', marginBottom: 10 }}>
-          <div><p style={{ margin: '0 0 6px', color: '#087f5b', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Step 2 of 4</p><h1 style={{ margin: 0, fontSize: 'clamp(25px, 5vw, 34px)', letterSpacing: '-.03em' }}>Your documents</h1></div>
-          <strong style={{ color: '#344054', whiteSpace: 'nowrap' }}>{completedCards}/4 complete</strong>
+          <div><p style={{ margin: '0 0 6px', color: '#087f5b', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Step 2 of 3</p><h1 style={{ margin: 0, fontSize: 'clamp(25px, 5vw, 34px)', letterSpacing: '-.03em' }}>Your documents</h1></div>
+          <strong style={{ color: '#344054', whiteSpace: 'nowrap' }}>{completedCards}/{DOCUMENT_CARDS.length} complete</strong>
         </div>
         <div style={{ height: 9, overflow: 'hidden', borderRadius: 99, background: '#e5e9ef' }}>
           <div style={{ width: `${progress}%`, height: '100%', borderRadius: 99, background: '#0a8f67', transition: 'width .25s ease' }} />
@@ -286,25 +374,24 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         {DOCUMENT_CARDS.map(card => {
           const { type, title, description, bucket, Icon } = card
           const documentTypes: readonly string[] = type === 'vehicle_photos'
-            ? [1, 2, 3, 4].flatMap(documentTypesForSlot)
-            : card.docTypes
+            ? [1, 2, 3, 4].map(documentTypeForSlot)
+            : [type]
           const cardDocuments = documents.filter(document => documentTypes.includes(document.doc_type))
           const rejectedDocument = cardDocuments.find(document =>
             document.file_url && document.status.toUpperCase() === 'REJECTED',
           )
           const uploaded = isCardComplete(card, documents)
           const needsReplacement = cardDocuments.some(document => rejectedTypes.has(document.doc_type))
+            || (type !== 'vehicle_photos' && Boolean(cardDocuments[0]?.file_url && !hasIndependentFile(type, documents)))
+            || (type === 'profile_photo' && !hasSeparateSelfieFiles(documents))
+            || (type === 'selfie_holding_id' && !hasSeparateSelfieFiles(documents))
           const isApproved = type === 'vehicle_photos'
-            ? [1, 2, 3, 4].every(number => documentTypesForSlot(number).some(documentType =>
+            ? [1, 2, 3, 4].every(number => [documentTypeForSlot(number)].some(documentType =>
               cardDocuments.some(document => document.doc_type === documentType
                 && document.file_url && document.status.toUpperCase() === 'APPROVED'),
             ))
-            : card.docTypes.every(documentType =>
-              cardDocuments.some(document => document.doc_type === documentType
-                && document.file_url && document.status.toUpperCase() === 'APPROVED'),
-            ) || (type === 'drivers_license' && Boolean(cardDocuments.find(document => document.doc_type === type
-              && document.file_url && document.status.toUpperCase() === 'APPROVED'))
-            )
+            : cardDocuments.some(document => document.doc_type === type
+              && document.file_url && document.status.toUpperCase() === 'APPROVED')
           const isPending = cardDocuments.some(document =>
             document.file_url && document.status.toUpperCase() === 'PENDING',
           )
@@ -336,12 +423,13 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
               <div style={{ width: '100%', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                 {VEHICLE_PHOTO_SIDES.map((side, index) => {
                   const number = index + 1
-                  const slotTypes = documentTypesForSlot(number)
+                  const slotTypes = [documentTypeForSlot(number)]
                   const slotDocument = cardDocuments.find(document => slotTypes.includes(document.doc_type))
                   const slotRejected = slotTypes.some(documentType => rejectedTypes.has(documentType))
-                  const slotComplete = slotTypes.some(documentType => uploadedTypes.has(documentType))
-                  const inputKey = `vehicle_photos_${number}`
+                  const inputKey = documentTypeForSlot(number)
+                  const slotComplete = hasIndependentFile(inputKey, documents)
                   return <div key={inputKey}>
+                    <p style={{ margin: '0 0 6px', color: '#667085', fontSize: 12 }}>{slotDocument?.expiry_date ? `Expires ${slotDocument.expiry_date}` : ''}</p>
                     <input
                       ref={element => { fileInputs.current[inputKey] = element }}
                       type="file"
@@ -365,11 +453,31 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
                 })}
               </div>
             ) : <>
+              {'expiryRequired' in card && card.expiryRequired && <label style={{ width: '100%', display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
+                Expiry date
+                <input
+                  type="date"
+                  required
+                  value={expiryDates[type] || ''}
+                  onChange={event => setExpiryDates(current => ({ ...current, [type]: event.target.value }))}
+                  style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
+                />
+              </label>}
+              {'prdpNumberRequired' in card && card.prdpNumberRequired && <label style={{ width: '100%', display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
+                PDP / PrDP number
+                <input
+                  type="text"
+                  required
+                  value={prdpNumbers[type] || ''}
+                  onChange={event => setPrdpNumbers(current => ({ ...current, [type]: event.target.value }))}
+                  style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
+                />
+              </label>}
               <input
                 ref={element => { fileInputs.current[type] = element }}
                 type="file"
-                accept={type === 'profile_photo' ? 'image/*' : 'image/*,application/pdf'}
-                capture={type === 'profile_photo' ? 'user' : undefined}
+                accept={'camera' in card ? 'image/*' : 'image/*,application/pdf'}
+                capture={'camera' in card ? card.camera : undefined}
                 onChange={event => void handleFileChange(type, bucket, event)}
                 style={{ display: 'none' }}
               />
@@ -387,6 +495,38 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         })}
       </div>
 
+      <section style={{ ...cardStyle, marginTop: 16, padding: 17 }}>
+        <p style={{ margin: '0 0 6px', color: '#087f5b', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Step 3 of 3</p>
+        <h2 style={{ margin: '0 0 12px', fontSize: 20 }}>Bank details for payouts</h2>
+        <div style={{ display: 'grid', gap: 10 }}>
+          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 700 }}>
+            Bank Name
+            <select required value={bankDetails.bank_name} onChange={event => setBankDetails(current => ({ ...current, bank_name: event.target.value }))} style={{ minHeight: 42, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9, background: '#fff' }}>
+              <option value="">Select your bank</option>
+              {BANK_NAMES.map(bank => <option key={bank} value={bank}>{bank}</option>)}
+            </select>
+          </label>
+          {([
+            ['bank_account_holder', 'Account Holder'],
+            ['bank_account_number', 'Account Number'],
+            ['bank_branch_code', 'Branch Code'],
+          ] as const).map(([field, label]) => (
+            <label key={field} style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 700 }}>
+              {label}
+              <input
+                type="text"
+                required
+                inputMode={field === 'bank_account_holder' ? 'text' : 'numeric'}
+                autoComplete="off"
+                value={bankDetails[field]}
+                onChange={event => setBankDetails(current => ({ ...current, [field]: event.target.value }))}
+                style={{ minHeight: 42, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
+              />
+            </label>
+          ))}
+        </div>
+      </section>
+
       {error && <p role="alert" style={{ ...cardStyle, margin: '16px 0 0', padding: 14, borderColor: '#fecdca', color: '#b42318', fontSize: 13 }}>{error}</p>}
 
       <section style={{ ...cardStyle, marginTop: 16, padding: 17, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -396,11 +536,11 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
 
       <button
         type="button"
-        disabled={completedCards !== 4 || rejectedTypes.size > 0 || submitting || Boolean(uploading)}
+        disabled={completedCards !== DOCUMENT_CARDS.length || !bankDetailsComplete || rejectedTypes.size > 0 || submitting || Boolean(uploading)}
         onClick={() => void submitForReview()}
-        style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 20, padding: 16, border: 0, borderRadius: 14, background: completedCards === 4 ? '#087f5b' : '#cbd2da', color: '#fff', fontSize: 16, fontWeight: 800, cursor: completedCards === 4 && !submitting ? 'pointer' : 'not-allowed' }}
+        style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 20, padding: 16, border: 0, borderRadius: 14, background: completedCards === DOCUMENT_CARDS.length && bankDetailsComplete ? '#087f5b' : '#cbd2da', color: '#fff', fontSize: 16, fontWeight: 800, cursor: completedCards === DOCUMENT_CARDS.length && bankDetailsComplete && !submitting ? 'pointer' : 'not-allowed' }}
       >
-        {submitting ? 'Submitting for review…' : rejectedTypes.size > 0 ? 'Replace rejected documents to continue' : completedCards === 4 ? <>Continue <ChevronRight size={19} /></> : 'Complete all 4 document groups to continue'}
+        {submitting ? 'Submitting for review…' : rejectedTypes.size > 0 ? 'Replace rejected documents to continue' : completedCards === DOCUMENT_CARDS.length && bankDetailsComplete ? <>Submit for Review <ChevronRight size={19} /></> : 'Complete all documents and bank details to continue'}
       </button>
     </div>
     <style>{'@keyframes driver-onboarding-spin{to{transform:rotate(360deg)}}.driver-onboarding-spin{animation:driver-onboarding-spin 1s linear infinite}@media(max-width:520px){.driver-onboarding-card{flex-wrap:wrap}}'}</style>

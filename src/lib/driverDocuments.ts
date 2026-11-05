@@ -22,7 +22,7 @@ export type DocumentRequirement = { type: string; label: string }
 
 export function normalizeDocType(type: any): string {
   const t = String(type || '').toLowerCase().trim().replace(/[_/-]+/g,' ').replace(/\s+/g,' ')
-  const vehiclePhoto = t.match(/^(?:vehicle|car) photo (\d+)$/)
+  const vehiclePhoto = t.match(/^(?:vehicle|car) photos? (\d+)$/)
   if (vehiclePhoto) return `car_photo_${vehiclePhoto[1]}`
   if (['profile', 'profile photo', 'profile photo selfie', 'selfie', 'photo'].includes(t)) return 'profile_photo'
   if (['sa id', 'sa id passport', 'id document', 'id doc', 'id', 'passport'].includes(t)) return 'sa_id'
