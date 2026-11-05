@@ -727,16 +727,19 @@ begin
 
   if tg_op = 'INSERT' then
     select * into caller_profile from public.profiles where id = auth.uid();
-    if new.passenger_id <> auth.uid()
-      or caller_profile.role <> 'passenger'
-      or (
-        not caller_profile.is_verified
-        and caller_profile.verification_status <> 'pending_verification'
-      )
-      or caller_profile.is_banned
-      or new.status not in ('searching','awaiting_payment')
+    if new.passenger_id is distinct from auth.uid()
+      or caller_profile.id is null
+      or caller_profile.role <> 'passenger' then
+      raise exception 'Only a passenger can request a ride';
+    end if;
+    if caller_profile.is_verified is not true
+      or caller_profile.verification_status not in ('verified', 'approved')
+      or caller_profile.is_banned then
+      raise exception 'Passenger not approved';
+    end if;
+    if new.status not in ('searching','awaiting_payment')
       or new.driver_id is not null then
-      raise exception 'Only an approved passenger can request a ride';
+      raise exception 'Invalid ride request';
     end if;
     if (new.payment_method = 'paystack' and new.status <> 'awaiting_payment')
       or (new.payment_method <> 'paystack' and (new.payment_method <> 'cash' or new.status <> 'searching')) then
@@ -1241,17 +1244,15 @@ for all using (auth.uid() = driver_id) with check (auth.uid() = driver_id);
 create policy "rides_passenger_select" on public.rides for select using (auth.uid() = passenger_id);
 drop policy if exists "rides_passenger_insert" on public.rides;
 create policy "rides_passenger_insert" on public.rides for insert with check (
-  auth.uid() = passenger_id
-  and (
-    public.is_admin()
-    or exists (
+  public.is_admin()
+  or (
+    auth.uid() = passenger_id
+    and exists (
       select 1 from public.profiles p
       where p.id = auth.uid()
         and p.role = 'passenger'
-        and (
-          p.is_verified
-          or p.verification_status = 'pending_verification'
-        )
+        and p.is_verified = true
+        and p.verification_status in ('verified', 'approved')
         and not p.is_banned
     )
   )

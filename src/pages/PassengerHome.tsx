@@ -143,6 +143,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     id_document_url: profile.id_document_url ?? null,
     id_number: profile.id_number ?? null,
     id_verified: profile.id_verified ?? false,
+    is_verified: profile.is_verified ?? false,
   })
   const [verificationStatus, setVerificationStatus] = useState(profile.verification_status || 'not_started')
   const [verificationLoaded, setVerificationLoaded] = useState(false)
@@ -171,13 +172,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const text = isDark? 'white' : 'black'
   const muted = isDark? '#aaa' : '#666'
   const border = isDark? '#333' : '#ddd'
-  const hasPassengerIdentity = Boolean(safetyProfile.id_document_url || safetyProfile.id_number)
   const isVerified = (
     verificationLoaded
-    && safetyProfile.id_verified
+    && safetyProfile.is_verified === true
     && ['verified', 'approved'].includes(verificationStatus)
-    && Boolean(safetyProfile.avatar_url)
-    && hasPassengerIdentity
   )
   const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
 
@@ -199,7 +197,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('avatar_url,id_document_url,id_number,id_verified,id_verification_method,verification_status')
+          .select('avatar_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
           .eq('id', profile.id)
           .single()
         if (error) throw error
@@ -209,6 +207,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           id_document_url: data.id_document_url,
           id_number: data.id_number,
           id_verified: data.id_verified,
+          is_verified: data.is_verified,
         })
         setVerificationStatus(data.verification_status || 'not_started')
         setSafetyIdNumber(data.id_number || '')
@@ -229,7 +228,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     let active = true
     const refreshStatus = async () => {
       const { data, error } = await supabase.from('profiles')
-        .select('avatar_url,id_document_url,id_number,id_verified,id_verification_method,verification_status')
+        .select('avatar_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status')
         .eq('id', profile.id)
         .single()
       if (!active) return
@@ -242,6 +241,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         id_document_url: data.id_document_url,
         id_number: data.id_number,
         id_verified: data.id_verified,
+        is_verified: data.is_verified,
       })
       setVerificationStatus(data.verification_status || 'not_started')
     }
@@ -683,20 +683,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   async function requestRide() {
     if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }
-    if (!pickup.trim() || !dropoff.trim()) {
-      setRideError('Choose a pickup and destination from the location suggestions.')
-      return
-    }
-    if (!isVerified && verificationStatus !== 'pending_verification') {
-      setRideError('')
+    if (!isVerified) {
+      setRideError('Your ID is pending approval by Admin. You cannot request a ride until approved.')
       setVerificationError('')
       setShowSafetyModal(true)
+      return
+    }
+    if (!pickup.trim() || !dropoff.trim()) {
+      setRideError('Choose a pickup and destination from the location suggestions.')
       return
     }
     await createRide()
   }
 
   async function createRide() {
+    if (!isVerified) throw new Error('Not approved')
     if (!pricingReady) { setRideError('Fare configuration is unavailable. Please try again later.'); return }
     setLoading(true); setRideError('')
     try {
@@ -762,11 +763,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         id_number: safetyIdMethod === 'id_number' ? trimmedIdNumber : null,
         id_document_url: safetyIdMethod === 'id_photo' ? idDocumentUrl : null,
         id_verified: false,
+        is_verified: false,
       }))
       setVerificationStatus('pending_verification')
       setVerificationLoaded(true)
       setShowSafetyModal(false)
-      await createRide()
+      setRideError('Your ID is pending approval by Admin. You cannot request a ride until approved.')
     } catch (error) {
       setVerificationError(`Could not verify your safety details: ${errMsg(error)}`)
     } finally {
@@ -809,7 +811,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
   return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    {verificationStatus === 'pending_verification' && <div role="status" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>ID Pending Review - You can ride while we review</div>}
+    {verificationStatus === 'pending_verification' && <div role="status" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>ID Pending Review - You cannot request rides until Admin approves your ID</div>}
     {showSafetyModal && !isVerified && <PassengerSafetyModal
       dark={isDark}
       avatarUrl={safetyProfile.avatar_url}

@@ -93,7 +93,7 @@ export function PassengerSafetyModal({
 
       {error && <p role="alert" style={{ margin: '0 0 12px', color: '#dc2626', fontSize: 13 }}>{error}</p>}
       <button type="submit" disabled={loading || uploading || !avatarUrl || !(idDocumentUrl || idNumber.trim())} style={{ width: '100%', minHeight: 50, padding: 12, borderRadius: 12, border: 0, background: loading || uploading ? '#555' : '#16a34a', color: '#fff', fontWeight: 800, opacity: loading || uploading || !avatarUrl || !(idDocumentUrl || idNumber.trim()) ? 0.6 : 1 }}>
-        {loading ? 'Verifying…' : 'Verify & Request Ride'}
+        {loading ? 'Submitting…' : 'Submit for Admin Approval'}
       </button>
     </form>
   </div>
