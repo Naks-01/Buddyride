@@ -46,7 +46,10 @@ export function PassengerSafetyModal({
   return <div role="dialog" aria-modal="true" aria-labelledby="passenger-safety-title" style={{ position: 'fixed', inset: 0, zIndex: 100001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(0,0,0,.72)' }}>
     <form onSubmit={onSubmit} style={{ width: '100%', maxWidth: 480, maxHeight: '90dvh', overflowY: 'auto', padding: 20, borderRadius: 20, background: bg, color: text, boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-        <h2 id="passenger-safety-title" style={{ flex: 1, margin: 0, fontSize: 21 }}>Quick Safety Check - For Drivers 🛡️</h2>
+        <div style={{ flex: 1 }}>
+          <h2 id="passenger-safety-title" style={{ margin: 0, fontSize: 21 }}>Quick Safety Check - For Your Safety</h2>
+          <p style={{ margin: '4px 0 0', color: muted, fontSize: 13 }}>We verify your ID to keep drivers safe</p>
+        </div>
         <button type="button" onClick={onClose} aria-label="Close safety check" style={{ width: 36, height: 36, borderRadius: 18, border: `1px solid ${border}`, background: bg2, color: text }}>✕</button>
       </div>
 

@@ -4,7 +4,6 @@ import { PassengerHome } from './pages/PassengerHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
 import { getProfile, checkSelfieLock } from './lib/auth'
 import DriverDocuments from './pages/DriverDocuments'
-import PassengerDocuments from './pages/PassengerDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
 import { AdminDashboard } from './pages/AdminDashboard'
 import { AdminRides } from './pages/AdminRides'
@@ -76,7 +75,7 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'passenger-docs'|'admin-docs'|'admin-documents'|'admin-dashboard'|'admin-rides'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'>('landing')
+  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'admin-docs'|'admin-documents'|'admin-dashboard'|'admin-rides'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'>('landing')
   const [showLanding, setShowLanding] = useState(true)
   const [showSelfieCheck, setShowSelfieCheck] = useState(false)
   const [selfieBusy, setSelfieBusy] = useState(false)
@@ -297,7 +296,6 @@ export default function App() {
       }
     }
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
-    if (page === 'passenger-docs') return <PassengerDocuments profile={profile} onBack={()=> setPage('home')} />
     if (hasAdminAccess && (page === 'admin-docs' || page === 'admin-documents')) return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
     if (hasAdminAccess && page === 'admin-dashboard') return <AdminDashboard onBack={()=> setPage('home')} />
     if (hasAdminAccess && page === 'admin-rides') return <AdminRides onBack={()=> setPage('home')} />

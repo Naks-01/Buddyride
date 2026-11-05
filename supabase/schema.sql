@@ -199,9 +199,6 @@ begin
 end;
 $$;
 drop trigger if exists sync_passenger_verification_status on public.passenger_documents;
-create trigger sync_passenger_verification_status
-after insert or update or delete on public.passenger_documents
-for each row execute function public.sync_passenger_verification_status();
 
 create or replace function public.is_valid_sa_id_number(p_id text)
 returns boolean
@@ -315,9 +312,9 @@ begin
 
   perform set_config('buddyride.internal_profile_update', 'on', true);
   update public.profiles
-  set id_verified = true,
-      is_verified = true,
-      verification_status = 'verified',
+  set id_verified = false,
+      is_verified = false,
+      verification_status = 'pending_verification',
       id_number = case when p_method = 'id_number' then btrim(p_id_number) else null end,
       id_document_url = case when p_method = 'id_photo' then p_id_document_url else null end,
       id_verification_method = p_method
@@ -326,6 +323,39 @@ end;
 $$;
 revoke all on function public.verify_passenger_safety(text, text, text) from public;
 grant execute on function public.verify_passenger_safety(text, text, text) to authenticated;
+
+create or replace function public.approve_passenger_safety(p_passenger_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  previous_profile_update_setting text;
+begin
+  if auth.uid() is null or not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  previous_profile_update_setting := current_setting('buddyride.internal_profile_update', true);
+  perform set_config('buddyride.internal_profile_update', 'on', true);
+  update public.profiles
+  set id_verified = true,
+      is_verified = true,
+      verification_status = 'verified'
+  where id = p_passenger_id
+    and role = 'passenger'
+    and verification_status = 'pending_verification'
+    and (id_document_url is not null or id_number is not null);
+  if not found then
+    perform set_config('buddyride.internal_profile_update', coalesce(previous_profile_update_setting, 'off'), true);
+    raise exception 'Pending passenger safety verification not found';
+  end if;
+  perform set_config('buddyride.internal_profile_update', coalesce(previous_profile_update_setting, 'off'), true);
+end;
+$$;
+revoke all on function public.approve_passenger_safety(uuid) from public;
+grant execute on function public.approve_passenger_safety(uuid) to authenticated;
 
 create table if not exists public.driver_locations (
   driver_id uuid primary key references public.profiles(id) on delete cascade,
@@ -699,7 +729,10 @@ begin
     select * into caller_profile from public.profiles where id = auth.uid();
     if new.passenger_id <> auth.uid()
       or caller_profile.role <> 'passenger'
-      or (not caller_profile.is_verified and coalesce(lower(caller_profile.email), '') <> 'buddyride@outlook.com')
+      or (
+        not caller_profile.is_verified
+        and caller_profile.verification_status <> 'pending_verification'
+      )
       or caller_profile.is_banned
       or new.status not in ('searching','awaiting_payment')
       or new.driver_id is not null then
@@ -1206,14 +1239,21 @@ for all using (auth.uid() = driver_id) with check (auth.uid() = driver_id);
 
 -- Rides: passengers see their rides; drivers see searching rides and their accepted rides.
 create policy "rides_passenger_select" on public.rides for select using (auth.uid() = passenger_id);
+drop policy if exists "rides_passenger_insert" on public.rides;
 create policy "rides_passenger_insert" on public.rides for insert with check (
   auth.uid() = passenger_id
-  and exists (
-    select 1 from public.profiles p
-    where p.id = auth.uid()
-      and p.role = 'passenger'
-      and (p.is_verified or coalesce(lower(p.email), '') = 'buddyride@outlook.com')
-      and not p.is_banned
+  and (
+    public.is_admin()
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'passenger'
+        and (
+          p.is_verified
+          or p.verification_status = 'pending_verification'
+        )
+        and not p.is_banned
+    )
   )
 );
 create policy "rides_passenger_update" on public.rides for update to authenticated

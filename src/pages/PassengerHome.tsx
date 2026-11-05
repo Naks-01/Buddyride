@@ -144,6 +144,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     id_number: profile.id_number ?? null,
     id_verified: profile.id_verified ?? false,
   })
+  const [verificationStatus, setVerificationStatus] = useState(profile.verification_status || 'not_started')
   const [verificationLoaded, setVerificationLoaded] = useState(false)
   const [verificationError, setVerificationError] = useState('')
   const [showSafetyModal, setShowSafetyModal] = useState(false)
@@ -155,7 +156,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [cameraReady, setCameraReady] = useState(false)
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null)
   const cameraStreamRef = useRef<MediaStream | null>(null)
-  const [adminVerificationBypass, setAdminVerificationBypass] = useState(false)
   const pickupDebounce = useRef<any>(null)
   const dropoffDebounce = useRef<any>(null)
   const pickupAddressRequest = useRef(0)
@@ -172,9 +172,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const muted = isDark? '#aaa' : '#666'
   const border = isDark? '#333' : '#ddd'
   const hasPassengerIdentity = Boolean(safetyProfile.id_document_url || safetyProfile.id_number)
-  const isVerified = adminVerificationBypass || (
+  const isVerified = (
     verificationLoaded
     && safetyProfile.id_verified
+    && ['verified', 'approved'].includes(verificationStatus)
     && Boolean(safetyProfile.avatar_url)
     && hasPassengerIdentity
   )
@@ -194,23 +195,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     let active = true
     async function loadPassengerVerification() {
       setVerificationLoaded(false)
-      setAdminVerificationBypass(false)
       setVerificationError('')
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
-        if (authError) throw authError
-        if (!active) return
-
-        const isAdmin = user?.email?.toLowerCase() === 'buddyride@outlook.com'
-        setAdminVerificationBypass(isAdmin)
-        if (isAdmin) {
-          setVerificationLoaded(true)
-          return
-        }
-
         const { data, error } = await supabase
           .from('profiles')
-          .select('avatar_url,id_document_url,id_number,id_verified,id_verification_method')
+          .select('avatar_url,id_document_url,id_number,id_verified,id_verification_method,verification_status')
           .eq('id', profile.id)
           .single()
         if (error) throw error
@@ -221,6 +210,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           id_number: data.id_number,
           id_verified: data.id_verified,
         })
+        setVerificationStatus(data.verification_status || 'not_started')
         setSafetyIdNumber(data.id_number || '')
         if (data.id_verification_method === 'id_number') setSafetyIdMethod('id_number')
       } catch (error) {
@@ -233,6 +223,34 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     void loadPassengerVerification()
     return () => { active = false }
   }, [profile.id])
+
+  useEffect(() => {
+    if (verificationStatus !== 'pending_verification') return
+    let active = true
+    const refreshStatus = async () => {
+      const { data, error } = await supabase.from('profiles')
+        .select('avatar_url,id_document_url,id_number,id_verified,id_verification_method,verification_status')
+        .eq('id', profile.id)
+        .single()
+      if (!active) return
+      if (error) {
+        setVerificationError(`Could not refresh safety verification: ${errMsg(error)}`)
+        return
+      }
+      setSafetyProfile({
+        avatar_url: data.avatar_url,
+        id_document_url: data.id_document_url,
+        id_number: data.id_number,
+        id_verified: data.id_verified,
+      })
+      setVerificationStatus(data.verification_status || 'not_started')
+    }
+    const refresh = window.setInterval(() => void refreshStatus(), 30_000)
+    return () => {
+      active = false
+      window.clearInterval(refresh)
+    }
+  }, [verificationStatus, profile.id])
 
   useEffect(() => {
     if (!cameraDocument) return
@@ -669,7 +687,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setRideError('Choose a pickup and destination from the location suggestions.')
       return
     }
-    if (!isVerified) {
+    if (!isVerified && verificationStatus !== 'pending_verification') {
       setRideError('')
       setVerificationError('')
       setShowSafetyModal(true)
@@ -743,8 +761,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         ...current,
         id_number: safetyIdMethod === 'id_number' ? trimmedIdNumber : null,
         id_document_url: safetyIdMethod === 'id_photo' ? idDocumentUrl : null,
-        id_verified: true,
+        id_verified: false,
       }))
+      setVerificationStatus('pending_verification')
       setVerificationLoaded(true)
       setShowSafetyModal(false)
       await createRide()
@@ -790,6 +809,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const sugItemStyle = (dark:boolean) => ({ padding: '12px 14px', borderBottom: `1px solid ${dark? '#333' : '#eee'}`, cursor: 'pointer', fontSize: '14px', color: dark? 'white' : 'black' })
 
   return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    {verificationStatus === 'pending_verification' && <div role="status" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>ID Pending Review - You can ride while we review</div>}
     {showSafetyModal && !isVerified && <PassengerSafetyModal
       dark={isDark}
       avatarUrl={safetyProfile.avatar_url}

@@ -48,7 +48,7 @@ type StoredDocument = {
   } | null
 }
 
-const PASSENGER_DOCUMENTS = [
+const LEGACY_PASSENGER_DOCUMENTS = [
   { id: 'profile_photo', label: 'Profile Photo / Selfie', required: true },
   { id: 'sa_id', label: 'SA ID / Passport', required: true },
 ]
@@ -113,10 +113,17 @@ function displayStatus(doc?: StoredDocument, optional = false) {
   return status === 'APPROVED' || status === 'REJECTED' ? status : 'PENDING'
 }
 
+type PassengerSafetyReview = Pick<Profile,
+  'id' | 'email' | 'full_name' | 'phone' | 'avatar_url' | 'id_document_url' | 'id_number' | 'id_verification_method' | 'verification_status'
+> & {
+  id_photo_preview_url?: string | null
+}
+
 export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile, onBack: ()=>void }){
   const [driverDocs,setDriverDocs]=useState<StoredDocument[]>([])
   const [passengerDocs,setPassengerDocs]=useState<StoredDocument[]>([])
-  const [tab,setTab]=useState<'driver'|'passenger'>('driver')
+  const [passengerSafetyProfiles, setPassengerSafetyProfiles] = useState<PassengerSafetyReview[]>([])
+  const [tab,setTab]=useState<'driver'|'passenger-safety'|'legacy-passenger'>('driver')
   const [showUnapprovedOnly, setShowUnapprovedOnly] = useState(false)
   const [loadingId, setLoadingId] = useState<string|null>(null)
   const [rejectModal, setRejectModal] = useState<{id:string, table:'driver_documents'|'passenger_documents'}|null>(null)
@@ -150,9 +157,14 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function load(){
     setError('')
-    const [driverResult, passengerResult] = await Promise.all([
+    const [driverResult, passengerResult, passengerSafetyResult] = await Promise.all([
       supabase.from('driver_documents').select('*,profiles!driver_documents_driver_id_fkey!inner(*)').order('created_at',{ascending:false}),
       supabase.from('passenger_documents').select('*').order('created_at',{ascending:false}),
+      supabase.from('profiles')
+        .select('id,email,full_name,phone,avatar_url,id_document_url,id_number,id_verification_method,verification_status')
+        .eq('role', 'passenger')
+        .eq('verification_status', 'pending_verification')
+        .or('id_document_url.not.is.null,id_number.not.is.null'),
     ])
     let profileLoadError = ''
     if (!driverResult.error) {
@@ -183,7 +195,25 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         profileLoadError = `Could not load passenger profiles: ${profilesResult.error.message}`
       }
     }
-    const loadErrors = [driverResult.error, passengerResult.error].filter(Boolean)
+    if (!passengerSafetyResult.error) {
+      const signedProfiles = await Promise.all((passengerSafetyResult.data || []).map(async passenger => {
+        if (!passenger.id_document_url) return { ...passenger, id_photo_preview_url: null }
+        const { data, error: signedUrlError } = await supabase.storage
+          .from('passenger-ids')
+          .createSignedUrl(passenger.id_document_url, 60)
+        if (signedUrlError) {
+          profileLoadError = [profileLoadError, `Could not open passenger ID photo for ${passenger.email || passenger.id}: ${signedUrlError.message}`]
+            .filter(Boolean)
+            .join(' · ')
+          return { ...passenger, id_photo_preview_url: null }
+        }
+        return { ...passenger, id_photo_preview_url: data.signedUrl }
+      }))
+      setPassengerSafetyProfiles(signedProfiles as PassengerSafetyReview[])
+    } else {
+      setPassengerSafetyProfiles([])
+    }
+    const loadErrors = [driverResult.error, passengerResult.error, passengerSafetyResult.error].filter(Boolean)
     const loadErrorMessages = [
       ...loadErrors.map(loadError => loadError?.message),
       profileLoadError,
@@ -259,28 +289,6 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           .eq('id', doc.driver_id)
         if (profileError) verificationSyncError = profileError.message
       }
-      if (table === 'passenger_documents' && (doc.user_id || doc.passenger_id)) {
-        const { data: passengerRows, error: passengerDocsError } = await supabase
-          .from('passenger_documents')
-          .select('doc_type,status,file_url')
-          .eq('user_id', doc.user_id || doc.passenger_id)
-        if (passengerDocsError) {
-          verificationSyncError = passengerDocsError.message
-        } else {
-          const isVerified = PASSENGER_DOCUMENTS
-            .filter(requirement => requirement.required)
-            .every(requirement => passengerRows.some(row =>
-              normalizeDriverDocType(row.doc_type) === requirement.id
-              && row.status.trim().toLowerCase() === 'approved'
-              && hasRealDocument(row),
-            ))
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .update({ is_verified: isVerified })
-            .eq('id', doc.user_id || doc.passenger_id)
-          if (profileError) verificationSyncError = profileError.message
-        }
-      }
       if (metadataColumnMissing) {
         console.warn(`Document status updated, but ${status==='approved'?'verified_at':'rejection_reason'} is not available in ${table}.`)
       }
@@ -314,6 +322,39 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       await load()
     } catch (approvalError: any) {
       setError('Could not approve driver to go online: ' + approvalError.message)
+    } finally {
+      setLoadingId(null)
+    }
+  }
+
+  async function reviewPassengerSafety(passengerId: string, action: 'approve' | 'reject') {
+    setLoadingId(`passenger-safety:${passengerId}`)
+    setError('')
+    try {
+      if (action === 'approve') {
+        const { error: approvalError } = await supabase.rpc('approve_passenger_safety', {
+          p_passenger_id: passengerId,
+        })
+        if (approvalError) throw approvalError
+      } else {
+        const { data, error: rejectionError } = await supabase.from('profiles')
+          .update({
+            id_verified: false,
+            is_verified: false,
+            verification_status: 'rejected',
+          })
+          .eq('id', passengerId)
+          .eq('role', 'passenger')
+          .eq('verification_status', 'pending_verification')
+          .select('id')
+          .maybeSingle()
+        if (rejectionError) throw rejectionError
+        if (!data) throw new Error('Pending passenger safety verification was not found.')
+      }
+      await load()
+    } catch (reviewError: unknown) {
+      const message = reviewError instanceof Error ? reviewError.message : String(reviewError)
+      setError(`Could not ${action} passenger safety verification: ${message}`)
     } finally {
       setLoadingId(null)
     }
@@ -381,9 +422,10 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   return <div style={{ padding:'16px', background:'#0e0e10', minHeight:'100vh', color:'white' }}>
     <button onClick={onBack} style={{ background:'#242428', color:'white', border:'1px solid #333', padding:'8px 12px', borderRadius:'8px' }}>⬅ Back</button>
     <h2>👑 Admin Docs</h2>
-    <div style={{ display:'flex', gap:'8px', margin:'12px 0' }}>
-      <button onClick={()=> setTab('driver')} style={{ flex:1, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers ({Object.keys(driversById).length})</button>
-      <button onClick={()=> setTab('passenger')} style={{ flex:1, padding:'12px', background: tab==='passenger'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passengers ({Object.keys(passengerGroups).length})</button>
+    <div style={{ display:'flex', flexWrap:'wrap', gap:'8px', margin:'12px 0' }}>
+      <button onClick={()=> setTab('driver')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers ({Object.keys(driversById).length})</button>
+      <button onClick={()=> setTab('passenger-safety')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='passenger-safety'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passenger Safety ({passengerSafetyProfiles.length})</button>
+      <button onClick={()=> setTab('legacy-passenger')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='legacy-passenger'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Legacy Passengers ({Object.keys(passengerGroups).length})</button>
     </div>
     {error && <p role="alert" style={{color:'#ff6b6b'}}>{error}</p>}
 
@@ -449,10 +491,44 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         })}
         {Object.entries(driversById).filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).length===0 && <p style={{color:'#9ca3af'}}>{showUnapprovedOnly?'No unapproved drivers.':'No driver documents uploaded yet.'}</p>}
       </div>
+    ) : tab === 'passenger-safety' ? (
+      <div>
+        {passengerSafetyProfiles.map(passenger => (
+          <section key={passenger.id} style={{ border:'1px solid #333', padding:14, borderRadius:12, marginTop:10, background:'#18181b' }}>
+            <div style={{ fontWeight:700 }}>{passenger.full_name || passenger.email || 'Passenger'}</div>
+            <div style={{ marginTop:4, fontSize:13, opacity:0.8 }}>{passenger.email || 'No email'}{passenger.phone ? ` - ${passenger.phone}` : ''}</div>
+            <div style={{ marginTop:4, fontSize:11, opacity:0.55 }}>{passenger.id}</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:12, marginTop:14 }}>
+              <div>
+                <strong style={{ display:'block', marginBottom:6 }}>Selfie</strong>
+                {passenger.avatar_url
+                  ? <a href={passenger.avatar_url} target="_blank" rel="noreferrer"><img src={passenger.avatar_url} alt={`${passenger.full_name || 'Passenger'} selfie`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
+                  : <span>Not provided</span>}
+              </div>
+              <div>
+                <strong style={{ display:'block', marginBottom:6 }}>ID Photo</strong>
+                {passenger.id_photo_preview_url
+                  ? <a href={passenger.id_photo_preview_url} target="_blank" rel="noreferrer"><img src={passenger.id_photo_preview_url} alt={`${passenger.full_name || 'Passenger'} ID`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
+                  : <span>{passenger.id_document_url ? 'ID photo preview unavailable' : 'Not provided (number submitted)'}</span>}
+              </div>
+            </div>
+            <div style={{ marginTop:12 }}><strong>ID Number:</strong> {passenger.id_number || 'Not provided'}</div>
+            <div style={{ marginTop:5 }}><strong>Method:</strong> {passenger.id_verification_method || 'Not recorded'}</div>
+            <div style={{ display:'flex', gap:8, marginTop:14 }}>
+              <button type="button" disabled={loadingId===`passenger-safety:${passenger.id}`} onClick={()=>void reviewPassengerSafety(passenger.id, 'approve')} style={{ flex:1, padding:11, border:0, borderRadius:8, background:'#15803d', color:'white', fontWeight:700 }}>
+                {loadingId===`passenger-safety:${passenger.id}` ? 'Saving…' : 'Approve'}
+              </button>
+              <button type="button" disabled={loadingId===`passenger-safety:${passenger.id}`} onClick={()=>void reviewPassengerSafety(passenger.id, 'reject')} style={{ flex:1, padding:11, border:0, borderRadius:8, background:'#b91c1c', color:'white', fontWeight:700 }}>Reject</button>
+            </div>
+          </section>
+        ))}
+        {passengerSafetyProfiles.length===0 && <p style={{ color:'#9ca3af' }}>No passengers are waiting for safety verification.</p>}
+      </div>
     ) : (
       <div>
+        <p role="note" style={{ color:'#fbbf24', fontSize:13 }}>Legacy passenger document records only. Current passenger safety submissions are reviewed in the Passenger Safety tab.</p>
         {Object.entries(passengerGroups).map(([userId, docs]) => {
-          const baseDocs = PASSENGER_DOCUMENTS
+          const baseDocs = LEGACY_PASSENGER_DOCUMENTS
           const uploadedCount = baseDocs.filter(requirement => docs.some(doc =>
             normalizeDriverDocType(doc.doc_type) === requirement.id && hasRealDocument(doc)
           )).length
@@ -469,7 +545,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
               <div style={{fontSize:11, opacity:0.5}}>{userId} - {uploadedCount}/2</div>
             </div>
             <div style={{fontSize:'12px', color:'#9ca3af', marginBottom:'8px'}}>Progress: {uploadedCount}/2 uploaded</div>
-            {PASSENGER_DOCUMENTS.map(requirement => {
+            {LEGACY_PASSENGER_DOCUMENTS.map(requirement => {
               const doc = docs.find(item=>normalizeDriverDocType(item.doc_type)===requirement.id)
               return renderDocumentRow(doc, requirement.id, requirement.label, 'passenger_documents', requirement.required)
             })}

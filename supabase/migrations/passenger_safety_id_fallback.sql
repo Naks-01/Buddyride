@@ -227,9 +227,9 @@ begin
   previous_profile_update_setting := current_setting('buddyride.internal_profile_update', true);
   perform set_config('buddyride.internal_profile_update', 'on', true);
   update public.profiles
-  set id_verified = true,
-      is_verified = true,
-      verification_status = 'verified',
+  set id_verified = false,
+      is_verified = false,
+      verification_status = 'pending_verification',
       id_number = case when p_method = 'id_number' then btrim(p_id_number) else null end,
       id_document_url = case when p_method = 'id_photo' then p_id_document_url else null end,
       id_verification_method = p_method
@@ -239,6 +239,39 @@ end;
 $$;
 revoke all on function public.verify_passenger_safety(text, text, text) from public;
 grant execute on function public.verify_passenger_safety(text, text, text) to authenticated;
+
+create or replace function public.approve_passenger_safety(p_passenger_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  previous_profile_update_setting text;
+begin
+  if auth.uid() is null or not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  previous_profile_update_setting := current_setting('buddyride.internal_profile_update', true);
+  perform set_config('buddyride.internal_profile_update', 'on', true);
+  update public.profiles
+  set id_verified = true,
+      is_verified = true,
+      verification_status = 'verified'
+  where id = p_passenger_id
+    and role = 'passenger'
+    and verification_status = 'pending_verification'
+    and (id_document_url is not null or id_number is not null);
+  if not found then
+    perform set_config('buddyride.internal_profile_update', coalesce(previous_profile_update_setting, 'off'), true);
+    raise exception 'Pending passenger safety verification not found';
+  end if;
+  perform set_config('buddyride.internal_profile_update', coalesce(previous_profile_update_setting, 'off'), true);
+end;
+$$;
+revoke all on function public.approve_passenger_safety(uuid) from public;
+grant execute on function public.approve_passenger_safety(uuid) to authenticated;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('passenger-photos', 'passenger-photos', true, 10485760, array['image/jpeg'])
@@ -289,4 +322,22 @@ drop policy if exists "passenger_ids_storage_delete" on storage.objects;
 create policy "passenger_ids_storage_delete" on storage.objects
 for delete to authenticated using (
   bucket_id = 'passenger-ids' and name = (auth.uid()::text || '.jpg')
+);
+
+drop policy if exists "rides_passenger_insert" on public.rides;
+create policy "rides_passenger_insert" on public.rides for insert with check (
+  auth.uid() = passenger_id
+  and (
+    public.is_admin()
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'passenger'
+        and (
+          p.is_verified
+          or p.verification_status = 'pending_verification'
+        )
+        and not p.is_banned
+    )
+  )
 );
