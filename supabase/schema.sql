@@ -569,8 +569,10 @@ set search_path = public
 as $$
   select exists (
     select 1 from public.profiles
-    where id = auth.uid() and role = 'admin'
-  ) or lower(coalesce(auth.jwt()->>'email', '')) = 'mokgalaka.nt@gmail.com';
+    where id = auth.uid()
+      and role = 'admin'
+      and lower(coalesce(auth.jwt()->>'email', '')) = 'buddyride@outlook.com'
+  );
 $$;
 
 revoke all on function public.is_admin() from public;

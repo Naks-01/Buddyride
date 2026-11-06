@@ -38,9 +38,13 @@ export async function signIn(email: string, password: string) {
 }
 
 export async function signUp(email: string, password: string, role: Role, fullName: string, phone: string) {
+  const normalizedEmail = email.trim().toLowerCase()
+  if (role === 'admin' && normalizedEmail !== 'buddyride@outlook.com') {
+    throw new Error('Admin signup not allowed')
+  }
   console.info('Sign-up role:', role)
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: normalizedEmail,
     password,
     options: { data: { role, full_name: fullName.trim(), phone: phone.trim(), phone_number: phone.trim() } },
   })
@@ -51,7 +55,7 @@ export async function signUp(email: string, password: string, role: Role, fullNa
     // is immediately available.
     const { error: profileError } = await supabase.from('profiles').upsert({
       id: data.user.id,
-      email,
+      email: normalizedEmail,
       role,
       full_name: fullName.trim(),
       phone: phone.trim(),

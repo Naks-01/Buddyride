@@ -5,11 +5,46 @@ import { supabase } from '../lib/supabase'
 type DriverLocation = { driver_id: string, lat: number, lng: number }
 
 export function AdminDashboard({ onBack }: { onBack: () => void }) {
+  const [authorization, setAuthorization] = useState<'checking' | 'authorized' | 'unauthorized'>('checking')
   const [stats, setStats] = useState({ todayRides: 0, activeDrivers: 0, revenue: 0 })
   const [locations, setLocations] = useState<DriverLocation[]>([])
   const [error, setError] = useState('')
 
   useEffect(() => {
+    let active = true
+    let redirectTimeout: number | undefined
+    const denyAccess = () => {
+      if (!active) return
+      setAuthorization('unauthorized')
+      redirectTimeout = window.setTimeout(() => window.location.replace('/'), 800)
+    }
+
+    void (async () => {
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || user?.email?.toLowerCase() !== 'buddyride@outlook.com') {
+        denyAccess()
+        return
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle()
+      if (profileError || profile?.role !== 'admin') {
+        denyAccess()
+        return
+      }
+      if (active) setAuthorization('authorized')
+    })()
+    return () => {
+      active = false
+      if (redirectTimeout !== undefined) window.clearTimeout(redirectTimeout)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (authorization !== 'authorized') return
     async function load() {
       setError('')
       const start = new Date()
@@ -33,7 +68,10 @@ export function AdminDashboard({ onBack }: { onBack: () => void }) {
       ))
     }
     void load()
-  }, [])
+  }, [authorization])
+
+  if (authorization === 'unauthorized') return <main role="alert" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#0f172a', color: 'white' }}>Unauthorized</main>
+  if (authorization !== 'authorized') return <main role="status" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#0f172a', color: 'white' }}>Verifying admin access…</main>
 
   const card = { background:'#1e293b', borderRadius:'12px', padding:'16px' }
   return <main style={{minHeight:'100vh', background:'#0f172a', color:'white', padding:'16px'}}>

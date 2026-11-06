@@ -23,7 +23,7 @@ const DriverHome = lazy(() => import('./pages/DriverHome').then(module => ({ def
 const DriverNavigationView = lazy(() => import('./pages/DriverNavigationView').then(module => ({ default: module.DriverNavigationView })))
 const PassengerHome = lazy(() => import('./pages/PassengerHome').then(module => ({ default: module.PassengerHome })))
 
-const ADMIN_EMAILS = ['buddyride@outlook.com', 'mokgalaka.nt@gmail.com'].map(e => e.toLowerCase())
+const ADMIN_EMAIL = 'buddyride@outlook.com'
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
 const selfieSkipKey = (userId: string) => `buddyride_selfie_skip_${userId}`
 
@@ -100,19 +100,25 @@ export default function App() {
     setDriverPath(path)
   }, [])
 
-  const isAdminEmail = ADMIN_EMAILS.includes(email.trim().toLowerCase())
+  const isAdminEmail = email.trim().toLowerCase() === ADMIN_EMAIL
   const shouldVerifyAdminAccess = Boolean(profile && (
     profile.role === 'admin'
     || page.startsWith('admin-')
-    || ADMIN_EMAILS.includes((profile.email || '').toLowerCase())
+    || currentPath === '/admin'
+    || currentPath.startsWith('/admin/')
   ))
-  const hasAdminAccess = Boolean(profile && verifiedAdminUserId === profile.id)
+  const hasAdminAccess = Boolean(
+    profile
+    && profile.role === 'admin'
+    && profile.email?.trim().toLowerCase() === ADMIN_EMAIL
+    && verifiedAdminUserId === profile.id,
+  )
 
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     setLoading(true)
     try {
       let result = await getProfile(userId)
-      const isOwner = userEmail ? ADMIN_EMAILS.includes(userEmail.toLowerCase()) : false
+      const isOwner = userEmail?.toLowerCase() === ADMIN_EMAIL
       
       if (!result) {
         let finalRole = preferredRole ?? 'passenger'
@@ -153,7 +159,7 @@ export default function App() {
       try {
         const { data: { user }, error } = await supabase.auth.getUser()
         const userEmail = !error ? user?.email?.toLowerCase() : undefined
-        if (userEmail && ADMIN_EMAILS.includes(userEmail)) {
+        if (userEmail && userEmail === ADMIN_EMAIL) {
           setShowSelfieCheck(false)
         } else {
           const canPass = await checkSelfieLock(userId)
@@ -213,11 +219,12 @@ export default function App() {
       if (!active) return
       const userEmail = user?.email?.toLowerCase()
       setCheckedAdminUserId(profile.id)
-      if (error || !userEmail || !ADMIN_EMAILS.includes(userEmail)) {
+      if (error || userEmail !== ADMIN_EMAIL || profile.role !== 'admin') {
         setVerifiedAdminUserId(null)
         setPage('home')
         window.history.replaceState(null, '', '/')
-        setAdminToast(error ? `Could not verify admin access: ${error.message}` : 'Access denied: Admin only')
+        setCurrentPath('/')
+        setAdminToast('Unauthorized')
         return
       }
       setVerifiedAdminUserId(profile.id)
