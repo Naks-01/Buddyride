@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import mapboxgl from 'mapbox-gl'
+import * as mapboxgl from 'mapbox-gl/esm'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { getRoute } from '../lib/mapbox'
 import { createRealtimeChannel } from '../lib/realtime'
@@ -127,7 +127,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
   useEffect(() => {
     if (!mapContainerRef.current) return
     if (!mapboxToken) { setMapError('Add VITE_MAPBOX_TOKEN in Vercel env'); return }
-    mapboxgl.accessToken = mapboxToken
+    mapboxgl.setAccessToken(mapboxToken)
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
       style: 'mapbox://styles/mapbox/navigation-day-v1',

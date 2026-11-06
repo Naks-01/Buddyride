@@ -12,7 +12,7 @@ create type public.ride_status as enum (
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text unique,
-  role public.user_role not null default 'passenger',
+  role public.user_role not null,
   full_name text,
   phone text,
   phone_number text,
@@ -23,7 +23,7 @@ create table if not exists public.profiles (
   id_verification_method text,
   id_verified boolean not null default false,
   is_verified boolean not null default false,
-  verification_status text not null default 'not_started',
+  verification_status text not null default 'pending',
   verification_rejection_reason text,
   verified_at timestamptz,
   is_banned boolean not null default false,
@@ -45,6 +45,7 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+alter table public.profiles alter column role drop default;
 alter table public.profiles add column if not exists phone_number text;
 alter table public.profiles add column if not exists id_document_url text;
 alter table public.profiles add column if not exists selfie_url text;
@@ -74,7 +75,7 @@ alter table public.profiles add column if not exists last_selfie_url text;
 alter table public.profiles drop constraint if exists profiles_verification_status_check;
 alter table public.profiles
   add constraint profiles_verification_status_check
-  check (verification_status in ('not_started', 'pending_verification', 'approved', 'rejected', 'verified'));
+  check (verification_status in ('not_started', 'pending', 'pending_verification', 'approved', 'rejected', 'verified'));
 
 create or replace function public.sync_profile_phone_columns()
 returns trigger language plpgsql as $$
@@ -338,13 +339,16 @@ set search_path = public
 as $$
 declare
   previous_profile_update_setting text;
+  previous_approval_setting text;
 begin
   if auth.uid() is null or not public.is_admin() then
     raise exception 'Admin access required';
   end if;
 
   previous_profile_update_setting := current_setting('buddyride.internal_profile_update', true);
+  previous_approval_setting := current_setting('buddyride.passenger_approval', true);
   perform set_config('buddyride.internal_profile_update', 'on', true);
+  perform set_config('buddyride.passenger_approval', 'on', true);
   update public.profiles
   set id_verified = true,
       is_verified = true,
@@ -355,9 +359,11 @@ begin
     and (id_document_url is not null or id_number is not null);
   if not found then
     perform set_config('buddyride.internal_profile_update', coalesce(previous_profile_update_setting, 'off'), true);
+    perform set_config('buddyride.passenger_approval', coalesce(previous_approval_setting, 'off'), true);
     raise exception 'Pending passenger safety verification not found';
   end if;
   perform set_config('buddyride.internal_profile_update', coalesce(previous_profile_update_setting, 'off'), true);
+  perform set_config('buddyride.passenger_approval', coalesce(previous_approval_setting, 'off'), true);
 end;
 $$;
 revoke all on function public.approve_passenger_safety(uuid) from public;
@@ -410,6 +416,30 @@ insert into public.fare_categories (id,label,base_fare,per_km,per_min,min_fare) 
   ('buddy_xl','XL',22,12,1,50)
 on conflict (id) do nothing;
 
+create table if not exists public.fare_quotes (
+  id uuid primary key default gen_random_uuid(),
+  passenger_id uuid not null references public.profiles(id) on delete cascade,
+  ride_category text not null references public.fare_categories(id),
+  pickup_lng double precision,
+  pickup_lat double precision,
+  dropoff_lng double precision,
+  dropoff_lat double precision,
+  distance_km numeric not null check (distance_km > 0 and distance_km <= 500),
+  duration_min numeric not null check (duration_min >= 0 and duration_min <= 600),
+  fare numeric(10,2) not null check (fare >= 0),
+  booking_fee numeric(10,2) not null default 0,
+  total_fare numeric(10,2) not null,
+  commission_rate numeric(5,2) not null,
+  buddyride_commission numeric(10,2) not null,
+  driver_earnings numeric(10,2) not null,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table public.fare_quotes enable row level security;
+revoke all on public.fare_quotes from anon, authenticated;
+grant all on public.fare_quotes to service_role;
+
 create table if not exists public.vehicles (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete cascade,
@@ -424,6 +454,7 @@ create table if not exists public.vehicles (
 create table if not exists public.rides (
   id uuid primary key default gen_random_uuid(),
   passenger_id uuid not null references public.profiles(id) on delete cascade,
+  fare_quote_id uuid references public.fare_quotes(id),
   driver_id uuid references public.profiles(id) on delete set null,
   pickup_address text not null,
   dropoff_address text not null,
@@ -458,6 +489,7 @@ create table if not exists public.rides (
   cancelled_at timestamptz
 );
 alter table public.rides add column if not exists offer_expires_at timestamptz;
+alter table public.rides add column if not exists fare_quote_id uuid references public.fare_quotes(id);
 alter table public.rides add column if not exists duration_min numeric(8,2) not null default 5;
 alter table public.rides add column if not exists offered_driver_id uuid references public.profiles(id) on delete set null;
 alter table public.rides add column if not exists tried_driver_ids uuid[] not null default '{}';
@@ -585,21 +617,37 @@ security definer
 set search_path = public
 as $$
 begin
-  if auth.uid() is null or public.is_admin() then
-    return new;
-  end if;
-  if current_setting('buddyride.internal_profile_update', true) = 'on' then
-    return new;
-  end if;
-
   if tg_op = 'INSERT' then
-    new.is_verified := false;
-    new.id_verified := false;
-    new.verification_status := 'not_started';
+    if new.role::text in ('passenger', 'rider') then
+      new.is_verified := false;
+      new.id_verified := false;
+      new.verification_status := 'pending';
+    elsif new.role::text = 'driver' then
+      new.is_verified := false;
+      new.id_verified := false;
+      new.verification_status := 'not_started';
+    end if;
     new.is_banned := false;
     new.wallet_balance := 0;
     new.trips_completed := 0;
     new.rating := 5.00;
+    return new;
+  end if;
+
+  if new.role::text in ('passenger', 'rider')
+    and new.verification_status = 'verified'
+    and old.verification_status is distinct from 'verified'
+    and (
+      not public.is_admin()
+      or current_setting('buddyride.passenger_approval', true) is distinct from 'on'
+    ) then
+    raise exception 'Passenger verification must be granted by the admin approval function';
+  end if;
+
+  if auth.uid() is null or public.is_admin() then
+    return new;
+  end if;
+  if current_setting('buddyride.internal_profile_update', true) = 'on' then
     return new;
   end if;
 
@@ -739,7 +787,8 @@ begin
       raise exception 'Only a passenger can request a ride';
     end if;
     if caller_profile.is_verified is not true
-      or caller_profile.verification_status not in ('verified', 'approved')
+      or caller_profile.id_verified is not true
+      or caller_profile.verification_status <> 'verified'
       or caller_profile.is_banned then
       raise exception 'Passenger not approved';
     end if;
@@ -865,6 +914,76 @@ drop trigger if exists guard_ride_changes on public.rides;
 create trigger guard_ride_changes
 before insert or update on public.rides
 for each row execute function public.guard_ride_changes();
+
+create or replace function public.apply_server_fare_quote()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  quote_row public.fare_quotes%rowtype;
+begin
+  if new.fare_quote_id is null then
+    if public.is_admin() then return new; end if;
+    raise exception 'A valid server-calculated fare quote is required';
+  end if;
+
+  select * into quote_row
+  from public.fare_quotes
+  where id = new.fare_quote_id
+  for update;
+  if not found
+    or quote_row.passenger_id is distinct from new.passenger_id
+    or quote_row.passenger_id is distinct from auth.uid()
+    or quote_row.ride_category is distinct from new.ride_category
+    or quote_row.pickup_lng is distinct from new.pickup_lng
+    or quote_row.pickup_lat is distinct from new.pickup_lat
+    or quote_row.dropoff_lng is distinct from new.dropoff_lng
+    or quote_row.dropoff_lat is distinct from new.dropoff_lat
+    or quote_row.expires_at <= now()
+    or quote_row.used_at is not null then
+    raise exception 'Fare quote is missing, expired, already used, or does not match this ride';
+  end if;
+
+  new.distance_km := quote_row.distance_km;
+  new.duration_min := quote_row.duration_min;
+  new.fare := quote_row.fare;
+  new.booking_fee := quote_row.booking_fee;
+  new.total_fare := quote_row.total_fare;
+  new.buddyride_commission := quote_row.buddyride_commission;
+  new.driver_earnings := quote_row.driver_earnings;
+  update public.fare_quotes
+  set used_at = now(),
+      pickup_lng = null,
+      pickup_lat = null,
+      dropoff_lng = null,
+      dropoff_lat = null
+  where id = quote_row.id;
+  return new;
+end;
+$$;
+drop trigger if exists rides_apply_server_fare_quote on public.rides;
+create trigger rides_apply_server_fare_quote
+before insert on public.rides
+for each row execute function public.apply_server_fare_quote();
+
+create or replace function public.prevent_ride_fare_quote_change()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.fare_quote_id is distinct from old.fare_quote_id then
+    raise exception 'A ride fare quote cannot be changed after creation';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists rides_fare_quote_immutable on public.rides;
+create trigger rides_fare_quote_immutable
+before update on public.rides
+for each row execute function public.prevent_ride_fare_quote_change();
 
 create or replace function public.guard_driver_location()
 returns trigger
@@ -1258,8 +1377,9 @@ create policy "rides_passenger_insert" on public.rides for insert with check (
       where p.id = auth.uid()
         and p.role = 'passenger'
         and p.is_verified = true
-        and p.verification_status in ('verified', 'approved')
-        and not p.is_banned
+        and p.id_verified = true
+        and p.verification_status = 'verified'
+        and p.is_banned = false
     )
   )
 );
@@ -1324,12 +1444,12 @@ begin
   end if;
 end $$;
 
--- Automatically create a passenger profile after signup.
+-- Automatically create a profile using the role explicitly selected at signup.
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public
 as $$
 begin
-  insert into public.profiles (id,email,role,full_name,phone,phone_number)
+  insert into public.profiles (id,email,role,full_name,phone,phone_number,is_verified,id_verified,verification_status)
   values (
     new.id,
     new.email,
@@ -1339,7 +1459,10 @@ begin
     end,
     new.raw_user_meta_data->>'full_name',
     coalesce(new.raw_user_meta_data->>'phone_number', new.raw_user_meta_data->>'phone'),
-    coalesce(new.raw_user_meta_data->>'phone_number', new.raw_user_meta_data->>'phone')
+    coalesce(new.raw_user_meta_data->>'phone_number', new.raw_user_meta_data->>'phone'),
+    false,
+    false,
+    case when new.raw_user_meta_data->>'role' = 'driver' then 'not_started' else 'pending' end
   )
   on conflict (id) do update set
     email = excluded.email,

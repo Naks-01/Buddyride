@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
-import mapboxgl from 'mapbox-gl'
+import * as mapboxgl from 'mapbox-gl/esm'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
-mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN as string
+mapboxgl.setAccessToken(import.meta.env.VITE_MAPBOX_TOKEN as string)
 
 function toLngLat(pos: any): [number, number] {
   if (!pos) return [29.4589, -23.9045]

@@ -104,6 +104,7 @@ export type Ride = {
   payment_method?: 'cash' | 'paystack' | null
   payment_status?: 'awaiting_payment' | 'paid' | 'cash_due' | 'failed' | 'refunded' | null
   payment_reference?: string | null
+  fare_quote_id?: string | null
   ride_category?: string | null
   duration_min?: number | null
   driver_rating?: number | null

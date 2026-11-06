@@ -1,6 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { lazy, Suspense, useEffect, useState, useRef } from 'react'
 import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomSheet'
-import { MapboxMapView } from '../components/MapboxMapView'
 import { NavigationMenu } from '../components/NavigationMenu'
 import { RideChat } from '../components/RideChat'
 import { getRoute } from '../lib/mapbox'
@@ -8,6 +7,7 @@ import { createRealtimeChannel } from '../lib/realtime'
 import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
+const MapboxMapView = lazy(() => import('../components/MapboxMapView').then(module => ({ default: module.MapboxMapView })))
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const EXPIRE_SECONDS = 15
 
@@ -715,7 +715,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     <div onClick={() => { setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: 0 }}>
-      <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={true} theme={theme} />
+      <Suspense fallback={<div aria-label="Loading map" style={{ width: '100%', height: '100%', background: bg }} />}>
+        <MapboxMapView center={location} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={true} theme={theme} />
+      </Suspense>
     </div>
     <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
       <NavigationMenu profile={profile} onSignOut={() => { void supabase.auth.signOut() }} />

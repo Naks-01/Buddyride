@@ -9,12 +9,17 @@ export async function getProfile(userId: string): Promise<Profile | null> {
 export async function ensureProfile(userId: string, email: string | null) {
   const existing = await getProfile(userId)
   if (existing) return existing
+  const { data: { user }, error: userError } = await supabase.auth.getUser()
+  if (userError) throw userError
+  const selectedRole: Role = user?.id === userId && user.user_metadata?.role === 'driver'
+    ? 'driver'
+    : 'passenger'
   const { data, error } = await supabase
    .from('profiles')
    .insert({
       id: userId,
       email,
-      role: 'passenger',
+      role: selectedRole,
       wallet_balance: 0,
       trips_completed: 0,
       rating: 5.0,
@@ -33,10 +38,11 @@ export async function signIn(email: string, password: string) {
 }
 
 export async function signUp(email: string, password: string, role: Role, fullName: string, phone: string) {
+  console.info('Sign-up role:', role)
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { role, full_name: fullName, phone, phone_number: phone } },
+    options: { data: { role, full_name: fullName.trim(), phone: phone.trim(), phone_number: phone.trim() } },
   })
   if (error) throw error
   if (data.user) {
@@ -55,7 +61,7 @@ export async function signUp(email: string, password: string, role: Role, fullNa
       rating: 5.0,
       is_online: false,
       ...(role === 'passenger' || role === 'rider'
-        ? { verification_status: 'verified', is_verified: true }
+        ? { verification_status: 'pending', is_verified: false }
         : {})
     } as any, { onConflict: 'id' })
     if (profileError && data.session) throw profileError

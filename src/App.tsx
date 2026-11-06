@@ -1,8 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { AdminHome } from './pages/AdminHome'
-import { PassengerHome } from './pages/PassengerHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
-import { getProfile, checkSelfieLock } from './lib/auth'
+import { getProfile, checkSelfieLock, signUp as createAccount } from './lib/auth'
 import DriverDocuments from './pages/DriverDocuments'
 import { AdminDocuments } from './pages/AdminDocuments'
 import { AdminDashboard } from './pages/AdminDashboard'
@@ -15,13 +14,23 @@ import { AdminSettings } from './pages/AdminSettings'
 import LandingPage from './pages/LandingPage'
 import { DriverOnboarding } from './pages/DriverOnboarding'
 import { DriverDashboardGuard } from './pages/DriverDashboardGuard'
+import { DriverPendingPage } from './pages/DriverPendingPage'
+import { getDriverEntryPath } from './lib/driverRouting.mjs'
+import TermsPage from './pages/TermsPage'
+import PrivacyPage from './pages/PrivacyPage'
 
 const DriverHome = lazy(() => import('./pages/DriverHome').then(module => ({ default: module.DriverHome })))
 const DriverNavigationView = lazy(() => import('./pages/DriverNavigationView').then(module => ({ default: module.DriverNavigationView })))
+const PassengerHome = lazy(() => import('./pages/PassengerHome').then(module => ({ default: module.PassengerHome })))
 
 const ADMIN_EMAILS = ['buddyride@outlook.com', 'mokgalaka.nt@gmail.com'].map(e => e.toLowerCase())
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
 const selfieSkipKey = (userId: string) => `buddyride_selfie_skip_${userId}`
+
+function getMetadataRole(user: { user_metadata?: Record<string, unknown> }): Role | undefined {
+  const role = user.user_metadata?.role
+  return role === 'driver' || role === 'passenger' || role === 'admin' ? role : undefined
+}
 
 async function compressSelfie(file: File): Promise<Blob> {
   const imageUrl = URL.createObjectURL(file)
@@ -83,6 +92,7 @@ export default function App() {
   const [checkedAdminUserId, setCheckedAdminUserId] = useState<string | null>(null)
   const [adminToast, setAdminToast] = useState('')
   const [driverPath, setDriverPath] = useState(window.location.pathname)
+  const [currentPath, setCurrentPath] = useState(window.location.pathname)
 
   const navigateDriverPath = useCallback((path: string, replace = false) => {
     if (replace) window.history.replaceState(null, '', path)
@@ -99,16 +109,14 @@ export default function App() {
   const hasAdminAccess = Boolean(profile && verifiedAdminUserId === profile.id)
 
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
+    setLoading(true)
     try {
       let result = await getProfile(userId)
-      let storedRole = result?.role ?? null
       const isOwner = userEmail ? ADMIN_EMAILS.includes(userEmail.toLowerCase()) : false
       
       if (!result) {
         let finalRole = preferredRole ?? 'passenger'
         if (finalRole === 'admin' && !isOwner) finalRole = 'passenger'
-        storedRole = finalRole
-        
         const upsertData: any = {
           id: userId,
           role: finalRole,
@@ -116,7 +124,7 @@ export default function App() {
           phone_number: phoneValue ?? null,
           phone: phoneValue ?? null,
           ...(finalRole === 'passenger' || finalRole === 'rider'
-            ? { verification_status: 'verified', is_verified: true }
+            ? { verification_status: 'pending', is_verified: false }
             : {}),
         }
         
@@ -124,37 +132,22 @@ export default function App() {
         if (error) throw error
         result = data as Profile
       } else {
-        storedRole = result.role
-        if (isOwner && preferredRole === 'admin' && result.role !== 'admin') {
-          await supabase.from('profiles').update({ role: 'admin' } as any).eq('id', userId)
+        if (isOwner && result.role !== 'admin') {
+          const { error } = await supabase.from('profiles').update({ role: 'admin' } as any).eq('id', userId)
+          if (error) throw error
           result.role = 'admin'
         }
-        if (preferredRole && preferredRole !== 'admin' && result.role !== preferredRole && !isOwner) {
-          result = { ...result, role: preferredRole } as Profile
-        }
       }
-      if (storedRole === 'passenger' || storedRole === 'rider') {
-        const verificationUpdate = {
-          verification_status: 'verified',
-          is_verified: true,
-          ...(preferredRole === 'passenger' && storedRole === 'passenger' ? { role: 'passenger' } : {}),
-        }
-        const { data, error } = await supabase.from('profiles')
-          .update(verificationUpdate as any)
-          .eq('id', userId)
-          .select('*')
-          .single()
-        if (error) throw error
-        result = { ...result, ...data } as Profile
-      }
+      console.log('PROFILE ROLE:', result.role)
       setProfile(result)
       setShowLanding(false)
-      if (result.role === 'driver' && !window.location.pathname.startsWith('/driver/navigation/')) {
-        const currentDriverPath = window.location.pathname
-        const nextPath = /^\/driver\/(onboarding|dashboard)\/?$/.test(currentDriverPath)
-          ? currentDriverPath
-          : '/driver/onboarding'
-        navigateDriverPath(nextPath, true)
+      const driverEntryPath = getDriverEntryPath(
+        result.role,
+        result.verification_status,
+        window.location.pathname,
+      )
+      if (driverEntryPath && driverEntryPath !== window.location.pathname) {
+        navigateDriverPath(driverEntryPath, true)
       }
       
       try {
@@ -173,6 +166,8 @@ export default function App() {
     } catch (error: any) {
       setMessage(error instanceof Error ? error.message : 'Could not load your profile.')
       setProfile(null)
+    } finally {
+      setLoading(false)
     }
   }, [navigateDriverPath])
 
@@ -182,7 +177,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const handlePopState = () => setDriverPath(window.location.pathname)
+    const handlePopState = () => {
+      setDriverPath(window.location.pathname)
+      setCurrentPath(window.location.pathname)
+    }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
@@ -192,12 +190,13 @@ export default function App() {
     supabase.auth.getSession().then(async ({ data, error }) => {
       if (!active) return
       if (error) setMessage(error.message)
-      if (data.session?.user) await loadProfile(data.session.user.id, data.session.user.email ?? null)
-      if (active) setLoading(false)
+      if (data.session?.user) {
+        await loadProfile(data.session.user.id, data.session.user.email ?? null, getMetadataRole(data.session.user))
+      } else if (active) setLoading(false)
     })
     const { data: listener } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       if (!session?.user) { setProfile(null); setLoading(false); setShowLanding(true) }
-      else { void loadProfile(session.user.id, session.user.email ?? null) }
+      else { void loadProfile(session.user.id, session.user.email ?? null, getMetadataRole(session.user)) }
     })
     return () => { active = false; listener.subscription.unsubscribe() }
   }, [loadProfile])
@@ -237,18 +236,16 @@ export default function App() {
     try {
       if (mode === 'signup' && role === 'admin' && !isAdminEmail) throw new Error('Admin signup restricted to owner.')
       if (mode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({ 
-          email: email.trim().toLowerCase(), 
-          password, 
-          options: { data: { role, full_name: fullName.trim(), phone: phone.trim() } } 
-        })
-        if (error) throw error
-        if (data.session && data.user) await loadProfile(data.user.id, data.user.email ?? null, role, fullName.trim(), phone.trim())
-        else { setMessage('Account created. Check email then log in.'); setMode('login') }
+        const user = await createAccount(email.trim().toLowerCase(), password, role, fullName, phone)
+        if (user) {
+          const { data: { session } } = await supabase.auth.getSession()
+          if (session) await loadProfile(user.id, user.email ?? null, role, fullName.trim(), phone.trim())
+          else { setMessage('Account created. Check email then log in.'); setMode('login') }
+        }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
         if (error) throw error;
-        if (data.user) await loadProfile(data.user.id, data.user.email ?? null, role)
+        if (data.user) await loadProfile(data.user.id, data.user.email ?? null, getMetadataRole(data.user))
       }
     } catch (error: any) { setMessage(error instanceof Error ? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
@@ -279,6 +276,9 @@ export default function App() {
     setShowSelfieCheck(false)
   }
 
+  if (currentPath === '/terms') return <TermsPage />
+  if (currentPath === '/privacy') return <PrivacyPage />
+
   if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
@@ -290,8 +290,11 @@ export default function App() {
         <div role="status" style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700, boxShadow: '0 4px 16px rgba(0,0,0,.25)' }}>{adminToast}</div>
         {profile.role === 'driver'
           ? <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
-          : <PassengerHome profile={profile} />}
+          : <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}><PassengerHome profile={profile} /></Suspense>}
       </>
+    }
+    if (profile.role === 'driver' && ['pending', 'pending_verification'].includes(profile.verification_status ?? '')) {
+      return <DriverPendingPage />
     }
     if (showSelfieCheck) {
       return <main className="auth-page"><section className="auth-card" style={{textAlign:'center'}}><Brand /><h1>Safety Check</h1><p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />{selfieBusy && <p>Verifying...</p>}<button onClick={skipSelfieCheck} style={{ marginTop: 12, background: 'none', border: 'none', color: '#9ca3af', fontSize: 12 }}>Skip for now</button></section></main>
@@ -328,7 +331,7 @@ export default function App() {
     if (profile.role === 'driver') {
       return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
     }
-    return <PassengerHome profile={profile} />
+    return <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}><PassengerHome profile={profile} /></Suspense>
   }
 
   if (showLanding) return <LandingPage onLogin={() => setShowLanding(false)} />

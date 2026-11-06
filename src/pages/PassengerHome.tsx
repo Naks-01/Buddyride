@@ -1,16 +1,15 @@
-import { useEffect, useState, useRef, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useState, useRef, type FormEvent } from 'react'
 import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomSheet'
-import { OsmMapView } from '../components/OsmMapView'
 import { PassengerNavigationMenu } from '../components/PassengerNavigationMenu'
 import { PassengerSafetyModal, type PassengerIdMethod } from '../components/PassengerSafetyModal'
 import { RideChat } from '../components/RideChat'
-import { getOSMRoute, reverseOSM } from '../lib/osm'
-import { calculateFareForCategory, DEFAULT_FARE_CONFIG, type FareConfig } from '../lib/fare'
+import { reverseOSM } from '../lib/osm'
 import { useDriverLiveLocation } from '../lib/useDriverLiveLocation'
 import { createRealtimeChannel } from '../lib/realtime'
 import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
+const OsmMapView = lazy(() => import('../components/OsmMapView').then(module => ({ default: module.OsmMapView })))
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 
 function errMsg(e: any) {
@@ -127,7 +126,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [showEstimate, setShowEstimate] = useState(false)
   const [selectedCat, setSelectedCat] = useState('buddy_go')
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'paystack'>('cash')
-  const [fareConfig, setFareConfig] = useState<FareConfig>(DEFAULT_FARE_CONFIG)
   const [categories, setCategories] = useState(CATEGORIES)
   const [pricingReady, setPricingReady] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'light')
@@ -301,30 +299,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   useEffect(() => {
     let active = true
-    async function loadFareConfig() {
-      const [categoryResult, settingsResult] = await Promise.all([
-        supabase.from('fare_categories').select('id,label,base_fare,per_km,per_min,min_fare,max_fare,active').eq('active', true),
-        supabase.from('app_settings').select('commission').eq('id', 1).single(),
-      ])
+    async function loadFareCategories() {
+      const categoryResult = await supabase.from('fare_categories').select('id,label,active').eq('active', true)
       if (!active) return
-      if (categoryResult.error || settingsResult.error || !categoryResult.data?.length) {
-        setRideError(`Fare configuration unavailable: ${errMsg(categoryResult.error) || errMsg(settingsResult.error) || 'No active ride categories'}`)
+      if (categoryResult.error || !categoryResult.data?.length) {
+        setRideError(`Fare configuration unavailable: ${errMsg(categoryResult.error) || 'No active ride categories'}`)
         return
       }
       const iconById = Object.fromEntries(CATEGORIES.map(category => [category.id, category.icon]))
       const activeCategories = categoryResult.data.map(category => ({
         id: category.id, name: category.label, icon: iconById[category.id] || '🚗',
       }))
-      const configuredCategories = Object.fromEntries(categoryResult.data.map(category => [category.id, {
-        base: Number(category.base_fare), perKm: Number(category.per_km), perMin: Number(category.per_min), min: Number(category.min_fare), max: Number(category.max_fare),
-      }]))
       setCategories(activeCategories)
-      setFareConfig({ categories: configuredCategories, commission: Number(settingsResult.data.commission) / 100 })
       setSelectedCat(current => activeCategories.some(category => category.id === current) ? current : activeCategories[0].id)
       setPricingReady(true)
       setRideError('')
     }
-    void loadFareConfig()
+    void loadFareCategories()
     return () => { active = false }
   }, [])
 
@@ -689,10 +680,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!pCoords || !dCoords) { setRideError('Choose valid pickup and destination locations.'); return }
     setRideError(''); setPickupCoords(pCoords); setDropoffCoords(dCoords)
     try {
-      const r = await getOSMRoute(pCoords, dCoords)
-      setRoute(r.geometry); setDistance(r.distanceKm); setDuration(r.durationMin)
-      setPrice(calculateFareForCategory(selectedCat, r.distanceKm, r.durationMin, fareConfig).total); setShowEstimate(true)
-    } catch (error) { setShowEstimate(false); setRideError(`Could not calculate a route: ${errMsg(error)}`) }
+      const { data: quote, error } = await supabase.functions.invoke('calculate-fare', {
+        body: {
+          pickup: { lng: pCoords[0], lat: pCoords[1] },
+          dropoff: { lng: dCoords[0], lat: dCoords[1] },
+          category: selectedCat,
+        },
+      })
+      if (error) throw error
+      if (!quote?.quote_id || !Number.isFinite(quote.fare) || !Number.isFinite(quote.distance_km) || !Number.isFinite(quote.duration_min)) {
+        throw new Error('Fare service returned an invalid quote.')
+      }
+      setRoute(quote.geometry)
+      setDistance(quote.distance_km)
+      setDuration(quote.duration_min)
+      setPrice(quote.fare)
+      setShowEstimate(true)
+    } catch (error) { setShowEstimate(false); setRideError(`Could not calculate a verified fare: ${errMsg(error)}`) }
   }
 
   async function useMyLocation() {
@@ -707,15 +711,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }
     const { data: passengerProfile, error: profileError } = await supabase
       .from('profiles')
-      .select('verification_status')
+      .select('verification_status,is_verified')
       .eq('id', profile.id)
       .single()
     if (profileError || !passengerProfile) {
       setRideError(`Could not check your verification status: ${errMsg(profileError || 'Profile not found')}`)
       return
     }
-    if (passengerProfile.verification_status !== 'verified') {
-      alert('Please complete ID verification first. Go to Profile > Verify.')
+    if (passengerProfile.is_verified !== true || passengerProfile.verification_status !== 'verified') {
+      setSafetyProfile(current => ({ ...current, is_verified: false }))
+      setVerificationStatus(passengerProfile.verification_status)
+      const awaitingReview = passengerProfile.verification_status === 'pending_verification'
+      setRideError(awaitingReview
+        ? 'Waiting for admin approval - we will WhatsApp you on 064 101 8991'
+        : 'Complete your safety verification before requesting a ride.')
+      if (!awaitingReview) {
+        setShowSafetyModal(true)
+      }
       return
     }
     if (!pickup.trim() || !dropoff.trim()) {
@@ -732,14 +744,26 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     try {
       const { pCoords, dCoords } = await ensureCoords()
       if (!pCoords || !dCoords || !pickup.trim() || !dropoff.trim()) throw new Error('Choose a pickup and destination from the location suggestions.')
-      const r = await getOSMRoute(pCoords, dCoords)
-      const estimate = calculateFareForCategory(selectedCat, r.distanceKm, r.durationMin, fareConfig)
+      const { data: quote, error: quoteError } = await supabase.functions.invoke('calculate-fare', {
+        body: {
+          pickup: { lng: pCoords[0], lat: pCoords[1] },
+          dropoff: { lng: dCoords[0], lat: dCoords[1] },
+          category: selectedCat,
+        },
+      })
+      if (quoteError) throw quoteError
+      if (!quote?.quote_id || !Number.isFinite(quote.fare)) throw new Error('Fare service returned an invalid quote.')
+      setDistance(quote.distance_km)
+      setDuration(quote.duration_min)
+      setPrice(quote.fare)
+      setRoute(quote.geometry)
       const { data, error } = await supabase.from('rides').insert({
         passenger_id: profile.id, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup,
         dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff,
         status: paymentMethod === 'paystack' ? 'awaiting_payment' : 'searching',
-        fare: estimate.fare, total_fare: estimate.total, driver_earnings: estimate.driverGets,
-        buddyride_commission: estimate.platformGets, distance_km: r.distanceKm, duration_min: r.durationMin,
+        fare_quote_id: quote.quote_id,
+        fare: quote.fare, total_fare: quote.total_fare, driver_earnings: quote.driver_earnings,
+        buddyride_commission: quote.buddyride_commission, distance_km: quote.distance_km, duration_min: quote.duration_min,
         payment_method: paymentMethod, ride_category: selectedCat,
       } as any).select().single()
       if (error) throw error
@@ -841,7 +865,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     {uploadToast && <div role="alert" style={{ position:'fixed', left:16, right:16, bottom:24, zIndex:100002, margin:'0 auto', maxWidth:480, padding:'12px 16px', borderRadius:10, background:'#b91c1c', color:'white', fontWeight:700, boxShadow:'0 4px 16px rgba(0,0,0,.3)' }}>Verification photo upload failed: {uploadToast}</div>}
-    {verificationStatus === 'pending_verification' && <div role="status" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>ID Pending Review - You cannot request rides until Admin approves your ID</div>}
+    {!isVerified && verificationStatus === 'pending_verification' && <div role="status" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>Waiting for admin approval - we will WhatsApp you on 064 101 8991</div>}
     {showSafetyModal && !isVerified && <PassengerSafetyModal
       dark={isDark}
       avatarUrl={safetyProfile.selfie_url || safetyProfile.avatar_url}
@@ -896,7 +920,9 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     )}
 
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
-      <OsmMapView center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onPickupMapMove} />
+      <Suspense fallback={<div aria-label="Loading map" style={{ width: '100%', height: '100%', background: bg2 }} />}>
+        <OsmMapView center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onPickupMapMove} />
+      </Suspense>
       {!ride && !completedRide && !completedReceipt && <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: 'translate(-50%, -100%)', fontSize: '34px', lineHeight: 1, pointerEvents: 'none' }}>📍</div>}
       <button aria-label="Center map on my location" title="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: '#ff7a00', color: 'white', border: 'none', fontSize: '22px' }}>📍</button>
     </div>
@@ -919,8 +945,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             </div>
             <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
               {categories.map(cat => {
-                const fare = distance ? calculateFareForCategory(cat.id, distance, duration, fareConfig).total : null; const isSel = selectedCat === cat.id
-                return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); if (distance) setPrice(calculateFareForCategory(cat.id, distance, duration, fareConfig).total) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, color: text, textAlign: 'left' }}><div style={{ fontSize: '20px' }}>{cat.icon}</div><div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>{fare !== null && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px' }}>R {fare}</div>}</button>
+                const fare = selectedCat === cat.id && showEstimate ? price : null; const isSel = selectedCat === cat.id
+                return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); setPrice(null); setShowEstimate(false) }} style={{ minWidth: '95px', padding: '10px', borderRadius: '12px', border: isSel? '2px solid #ff7a00' : `1px solid ${border}`, background: isSel? (isDark? '#3a2a1a' : '#fff3e0') : bg2, color: text, textAlign: 'left' }}><div style={{ fontSize: '20px' }}>{cat.icon}</div><div style={{ fontWeight: 'bold', fontSize: '12px', color: text }}>{cat.name}</div>{fare !== null && <div style={{ fontWeight: 'bold', color: '#ff7a00', fontSize: '12px' }}>R {fare}</div>}</button>
               })}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -934,8 +960,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {rideError && <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 13 }}>{rideError}</p>}
             <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: `10px 0 calc(10px + env(safe-area-inset-bottom))`, background: bg, borderTop: `1px solid ${border}` }}>
               <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '52px', padding: '14px', borderRadius: '14px', border: `1px solid ${border}`, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={() => { void requestRide() }} disabled={loading || !verificationLoaded} style={{ flex: 1.5, minHeight: '52px', padding: '14px', borderRadius: '14px', border: 'none', background: loading || !verificationLoaded ? '#555' : '#16a34a', color: 'white', fontWeight: 'bold', opacity: loading || !verificationLoaded ? 0.6 : 1 }}>
-                {loading ? (paymentMethod === 'paystack' ? 'Opening Paystack…' : 'Finding…') : !verificationLoaded ? 'Checking safety…' : !isVerified ? 'Verify & Request Ride' : 'Request Ride'}
+              <button onClick={() => { void requestRide() }} disabled={loading || !verificationLoaded || verificationStatus === 'pending_verification'} style={{ flex: 1.5, minHeight: '52px', padding: '14px', borderRadius: '14px', border: 'none', background: loading || !verificationLoaded || verificationStatus === 'pending_verification' ? '#555' : '#16a34a', color: 'white', fontWeight: 'bold', opacity: loading || !verificationLoaded || verificationStatus === 'pending_verification' ? 0.6 : 1 }}>
+                {loading ? (paymentMethod === 'paystack' ? 'Opening Paystack…' : 'Finding…') : !verificationLoaded ? 'Checking safety…' : verificationStatus === 'pending_verification' ? 'Waiting for approval' : !isVerified ? 'Verify & Request Ride' : 'Request Ride'}
               </button>
             </div>
             {showEstimate && distance!== null && price!== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}

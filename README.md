@@ -96,6 +96,25 @@ driver at a time; declining or expiring an offer advances to the next eligible
 driver. Profile privilege fields and ride status changes are guarded by
 database triggers, and ratings are recorded through a participant-checked RPC.
 
+Passenger accounts start unverified. Passengers must submit safety details and
+wait for admin approval before they can request a ride. The database enforces
+this gate in both profile updates and ride-insert RLS.
+
+Passenger fare estimates and ride inserts use the authenticated
+`calculate-fare` Supabase Edge Function. It requests a route from Mapbox using
+the server-only `MAPBOX_ACCESS_TOKEN`, saves a short-lived, single-use fare
+quote, and returns the verified route and fare. The ride insert trigger checks
+that quote against the authenticated passenger, category, and coordinates and
+sets the stored fare and distance from the quote. Configure the Edge Function
+with `MAPBOX_ACCESS_TOKEN` and `APP_BASE_URL`; do not use the frontend
+`VITE_MAPBOX_TOKEN` as a server secret.
+
+For an existing Supabase project, apply the migrations in order, including
+`20261107000000_remove_instant_passenger_verification.sql` and
+`20261107000100_server_verified_fare_quotes.sql`. Deploy the `calculate-fare`
+Edge Function after setting its secrets. The consolidated `schema.sql` remains
+for fresh projects; do not run it as an incremental production migration.
+
 ## Still required before launch
 
 The app currently supports cash fares only. Before a public launch, complete

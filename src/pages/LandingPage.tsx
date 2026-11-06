@@ -82,14 +82,14 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
             <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 2 }}>
               <a href="/terms" style={{ color: "#94a3b8", textDecoration: "none" }}>Terms & Conditions</a><br/>
               <a href="/privacy" style={{ color: "#94a3b8", textDecoration: "none" }}>Privacy Policy</a><br/>
-              <a href="/refund" style={{ color: "#94a3b8", textDecoration: "none" }}>Refund Policy</a>
+              <a href="/terms#refunds" style={{ color: "#94a3b8", textDecoration: "none" }}>Cancellation & Refunds</a>
             </div>
           </div>
           <div style={{ flex: "1 1 200px" }}>
             <h4 style={{ fontWeight: 700, fontSize: 14 }}>Contact</h4>
             <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 1.8 }}>
               Email: buddyride@outlook.com<br/>
-              Phone: 079 305 1213<br/>
+              Phone: 064 101 8991<br/>
               Address: Polokwane, Limpopo, SA<br/>
               Support: 8am - 8pm daily
             </div>
