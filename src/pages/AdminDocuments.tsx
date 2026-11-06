@@ -454,20 +454,13 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     <button onClick={onBack} style={{ background:'#242428', color:'white', border:'1px solid #333', padding:'8px 12px', borderRadius:'8px' }}>⬅ Back</button>
     <h2>👑 Admin Docs</h2>
     <label style={{ display:'block', margin:'12px 0 8px', color:'#d1d5db', fontSize:14 }}>
-      Search passengers by name, email, phone, ID number, or user ID
+      Search drivers by name, email, phone, or user ID
       <input value={search} onChange={event=>{
-        const query = event.target.value
-        setSearch(query)
-        if (query.trim()) {
-          if (approvedPassengerProfiles.some(passenger => matchesPassenger(passenger, query))) setTab('approved-passengers')
-          else if (pendingPassengerProfiles.some(passenger => matchesPassenger(passenger, query))) setTab('passenger-safety')
-        }
+        setSearch(event.target.value)
       }} placeholder="e.g. MR NAKAMPE T" style={{ display:'block', width:'100%', boxSizing:'border-box', marginTop:6, padding:10, borderRadius:8, border:'1px solid #444', background:'#242428', color:'white' }} />
     </label>
     <div style={{ display:'flex', flexWrap:'wrap', gap:'8px', margin:'12px 0' }}>
       <button onClick={()=> setTab('driver')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers Pending ({pendingDrivers.length})</button>
-      <button onClick={()=> setTab('passenger-safety')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='passenger-safety'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passenger Safety Pending ({pendingPassengerProfiles.length})</button>
-      <button onClick={()=> setTab('approved-passengers')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='approved-passengers'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Passenger Safety Approved ({approvedPassengerProfiles.length})</button>
     </div>
     {error && <p role="alert" style={{color:'#ff6b6b'}}>{error}</p>}
 

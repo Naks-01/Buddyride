@@ -7,7 +7,7 @@ export const isSupabaseConfigured = Boolean(url && anonKey)
 
 export const supabase = createClient(url || 'https://configuration-missing.invalid', anonKey || 'configuration-missing')
 
-export type Role = 'passenger' | 'driver' | 'admin'
+export type Role = 'passenger' | 'rider' | 'driver' | 'admin'
 
 export type DriverDocumentStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 

@@ -53,7 +53,10 @@ export async function signUp(email: string, password: string, role: Role, fullNa
       wallet_balance: 0,
       trips_completed: 0,
       rating: 5.0,
-      is_online: false
+      is_online: false,
+      ...(role === 'passenger' || role === 'rider'
+        ? { verification_status: 'verified', is_verified: true }
+        : {})
     } as any, { onConflict: 'id' })
     if (profileError && data.session) throw profileError
   }

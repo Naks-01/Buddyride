@@ -101,11 +101,13 @@ export default function App() {
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     try {
       let result = await getProfile(userId)
+      let storedRole = result?.role ?? null
       const isOwner = userEmail ? ADMIN_EMAILS.includes(userEmail.toLowerCase()) : false
       
       if (!result) {
         let finalRole = preferredRole ?? 'passenger'
         if (finalRole === 'admin' && !isOwner) finalRole = 'passenger'
+        storedRole = finalRole
         
         const upsertData: any = {
           id: userId,
@@ -113,12 +115,16 @@ export default function App() {
           full_name: fullNameValue ?? null,
           phone_number: phoneValue ?? null,
           phone: phoneValue ?? null,
+          ...(finalRole === 'passenger' || finalRole === 'rider'
+            ? { verification_status: 'verified', is_verified: true }
+            : {}),
         }
         
         const { data, error } = await supabase.from('profiles').upsert(upsertData, { onConflict: 'id' }).select('*').single()
         if (error) throw error
         result = data as Profile
       } else {
+        storedRole = result.role
         if (isOwner && preferredRole === 'admin' && result.role !== 'admin') {
           await supabase.from('profiles').update({ role: 'admin' } as any).eq('id', userId)
           result.role = 'admin'
@@ -126,6 +132,20 @@ export default function App() {
         if (preferredRole && preferredRole !== 'admin' && result.role !== preferredRole && !isOwner) {
           result = { ...result, role: preferredRole } as Profile
         }
+      }
+      if (storedRole === 'passenger' || storedRole === 'rider') {
+        const verificationUpdate = {
+          verification_status: 'verified',
+          is_verified: true,
+          ...(preferredRole === 'passenger' && storedRole === 'passenger' ? { role: 'passenger' } : {}),
+        }
+        const { data, error } = await supabase.from('profiles')
+          .update(verificationUpdate as any)
+          .eq('id', userId)
+          .select('*')
+          .single()
+        if (error) throw error
+        result = { ...result, ...data } as Profile
       }
       setProfile(result)
       setShowLanding(false)
