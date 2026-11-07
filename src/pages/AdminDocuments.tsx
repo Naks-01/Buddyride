@@ -109,6 +109,7 @@ type PassengerSafetyReview = Pick<Profile,
 
 export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile, onBack: ()=>void }){
   const [driverDocs,setDriverDocs]=useState<StoredDocument[]>([])
+  const [pendingDriverDocumentCount, setPendingDriverDocumentCount] = useState(0)
   const [pendingPassengerProfiles, setPendingPassengerProfiles] = useState<PassengerSafetyReview[]>([])
   const [approvedPassengerProfiles, setApprovedPassengerProfiles] = useState<PassengerSafetyReview[]>([])
   const [tab,setTab]=useState<'driver'|'passenger-safety'|'approved-passengers'>('driver')
@@ -162,8 +163,12 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     ])
     let profileLoadError = ''
     if (!driverResult.error) {
+      const loadedDocuments = driverResult.data || []
+      setPendingDriverDocumentCount(loadedDocuments.filter(document =>
+        document.status.trim().toLocaleLowerCase() === 'pending',
+      ).length)
       const latestByType = new Map<string, typeof driverResult.data[number]>()
-      for (const document of driverResult.data || []) {
+      for (const document of loadedDocuments) {
         const key = `${document.driver_id}:${document.doc_type}`
         if (!latestByType.has(key)) latestByType.set(key, document)
       }
@@ -383,8 +388,20 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   }
   const pendingPassengers = pendingPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
   const approvedPassengers = approvedPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
+  const normalizedDriverSearch = search.trim().toLocaleLowerCase()
+  const matchesDriver = (docs: StoredDocument[]) => {
+    const profile = docs[0]?.profiles
+    return !normalizedDriverSearch || [profile?.full_name, profile?.email]
+      .some(value => value?.toLocaleLowerCase().includes(normalizedDriverSearch))
+  }
+  const isPendingDocument = (doc: StoredDocument) => doc.status.trim().toLocaleLowerCase() === 'pending'
+  const isApprovedDocument = (doc: StoredDocument) => doc.status.trim().toLocaleLowerCase() === 'approved'
   const pendingDrivers = Object.entries(driversById).filter(([, docs]) =>
-    docs[0]?.profiles?.verification_status === 'pending_verification',
+    docs.some(isPendingDocument),
+  )
+  const visibleDrivers = Object.entries(driversById).filter(([, docs]) =>
+    docs.some(showUnapprovedOnly ? isPendingDocument : doc => isPendingDocument(doc) || isApprovedDocument(doc))
+      && matchesDriver(docs),
   )
 
   function renderDocumentRow(
@@ -460,7 +477,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       }} placeholder="e.g. MR NAKAMPE T" style={{ display:'block', width:'100%', boxSizing:'border-box', marginTop:6, padding:10, borderRadius:8, border:'1px solid #444', background:'#242428', color:'white' }} />
     </label>
     <div style={{ display:'flex', flexWrap:'wrap', gap:'8px', margin:'12px 0' }}>
-      <button onClick={()=> setTab('driver')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers Pending ({pendingDrivers.length})</button>
+      <button onClick={()=> setTab('driver')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none' }}>Drivers Pending ({pendingDrivers.length}; {pendingDriverDocumentCount} documents)</button>
     </div>
     {error && <p role="alert" style={{color:'#ff6b6b'}}>{error}</p>}
 
@@ -470,7 +487,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           <input type="checkbox" checked={showUnapprovedOnly} onChange={event=>setShowUnapprovedOnly(event.target.checked)} />
           Show only drivers who are not yet approved
         </label>
-        {pendingDrivers.filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).map(([driverId, docs]) => {
+        {visibleDrivers.map(([driverId, docs]) => {
           const driverProfile = docs[0]?.profiles
           const fullName = driverProfile?.full_name
             || `${driverProfile?.first_name || ''} ${driverProfile?.last_name || ''}`.trim()
@@ -524,7 +541,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
             </div>
           </section>
         })}
-        {pendingDrivers.filter(([, docs]) => !showUnapprovedOnly || docs[0]?.profiles?.is_verified !== true).length===0 && <p style={{color:'#9ca3af'}}>No drivers are waiting for verification.</p>}
+        {visibleDrivers.length===0 && <p style={{color:'#9ca3af'}}>No drivers are waiting for verification.</p>}
       </div>
     ) : tab === 'passenger-safety' ? (
       <div>
