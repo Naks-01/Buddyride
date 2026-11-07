@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
+import { REQUIRED_DOCS } from '../lib/driverDocuments'
 
 type AdminModule = 'admin-dashboard'|'admin-documents'|'admin-rides'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'
 type Props = { profile: Profile, onDocs: () => void, onAdminModule: (page: AdminModule) => void }
@@ -16,12 +17,15 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
       const { count: driversCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'driver')
       const { count: passengersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'passenger')
       const { count: activeCount } = await supabase.from('driver_status').select('*', { count: 'exact', head: true }).eq('is_online', true)
+      const requiredDocumentNames = REQUIRED_DOCS.map(document => document.label)
       const [pendingDriversResult, totalDriversResult, pendingPassengersResult] = await Promise.all([
         supabase.from('driver_documents')
           .select('id', { count: 'exact', head: true })
+          .in('document_type', requiredDocumentNames)
           .ilike('status', 'pending'),
         supabase.from('driver_documents')
           .select('id', { count: 'exact', head: true }),
+          
         supabase.from('profiles')
           .select('id', { count: 'exact', head: true })
           .eq('role', 'passenger')

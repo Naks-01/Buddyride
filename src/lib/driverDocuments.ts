@@ -1,18 +1,26 @@
 ﻿import { supabase } from './supabase'
 
 export const REQUIRED_DOCS = [
-  { type: 'sa_id', label: 'SA ID' },
-  { type: 'drivers_license', label: 'Drivers License' },
-  { type: 'prdp', label: 'PrDP' },
-  { type: 'profile_photo', label: 'Profile Photo' },
-  { type: 'selfie_holding_id', label: 'Selfie holding ID' },
-  { type: 'vehicle_registration', label: 'Vehicle Registration Papers' },
-  { type: 'license_disc', label: 'Licence Disc' },
-  { type: 'car_photo_1', label: 'Vehicle Photo 1' },
-  { type: 'car_photo_2', label: 'Vehicle Photo 2' },
-  { type: 'car_photo_3', label: 'Vehicle Photo 3' },
-  { type: 'car_photo_4', label: 'Vehicle Photo 4' },
+  { type: 'sa_id', label: 'SA ID', section: 'Driver Identity' },
+  { type: 'drivers_license', label: 'Drivers License', section: 'Driver Identity', expiryRequired: true },
+  { type: 'prdp', label: 'PDP / PrDP', section: 'Driver Identity', expiryRequired: true },
+  { type: 'profile_photo', label: 'Profile Photo', section: 'Driver Identity' },
+  { type: 'selfie', label: 'Selfie (face verification)', section: 'Driver Identity' },
+  { type: 'vehicle_registration', label: 'Vehicle Registration Papers', section: 'Vehicle Papers' },
+  { type: 'license_disc', label: 'Licence Disc', section: 'Vehicle Papers', expiryRequired: true },
+  { type: 'vehicle_photo_1', label: 'Vehicle Photo 1', section: 'Vehicle Exterior', helper: 'Front' },
+  { type: 'vehicle_photo_2', label: 'Vehicle Photo 2', section: 'Vehicle Exterior', helper: 'Back' },
+  { type: 'vehicle_photo_3', label: 'Vehicle Photo 3', section: 'Vehicle Exterior', helper: 'Left Side' },
+  { type: 'vehicle_photo_4', label: 'Vehicle Photo 4', section: 'Vehicle Exterior', helper: 'Right Side' },
+  { type: 'vehicle_interior_photo_1', label: 'Vehicle Interior Photo 1', section: 'Vehicle Interior', helper: 'Front seats/dashboard' },
+  { type: 'vehicle_interior_photo_2', label: 'Vehicle Interior Photo 2', section: 'Vehicle Interior', helper: 'Back seats' },
+  { type: 'huru_criminal_check', label: 'Huru Criminal Check', section: 'Safety', expiryRequired: true },
+  { type: 'vehicle_inspection_report', label: 'Vehicle Inspection Report', section: 'Safety', expiryRequired: true },
 ]
+
+export const EXPIRING_DRIVER_DOCUMENT_TYPES = new Set(
+  REQUIRED_DOCS.filter(document => document.expiryRequired).map(document => document.type),
+)
 
 export const REQUIRED_DOCS_ALL = REQUIRED_DOCS
 export const DRIVER_DOCUMENTS = REQUIRED_DOCS
@@ -23,13 +31,20 @@ export type DocumentRequirement = { type: string; label: string }
 export function normalizeDocType(type: any): string {
   const t = String(type || '').toLowerCase().trim().replace(/[_/-]+/g,' ').replace(/\s+/g,' ')
   const vehiclePhoto = t.match(/^(?:vehicle|car) photos? (\d+)$/)
-  if (vehiclePhoto) return `car_photo_${vehiclePhoto[1]}`
-  if (['profile', 'profile photo', 'profile photo selfie', 'selfie', 'photo'].includes(t)) return 'profile_photo'
+  if (vehiclePhoto) return `vehicle_photo_${vehiclePhoto[1]}`
+  const interiorPhoto = t.match(/^vehicle interior photos? (\d+)$/)
+  if (interiorPhoto) return `vehicle_interior_photo_${interiorPhoto[1]}`
+  if (['profile', 'profile photo'].includes(t)) return 'profile_photo'
+  if (['selfie', 'selfie face verification', 'face selfie'].includes(t)) return 'selfie'
   if (['sa id', 'sa id passport', 'id document', 'id doc', 'id', 'passport'].includes(t)) return 'sa_id'
   if (['drivers license', 'drivers licence', 'license', 'licence', 'drivers'].includes(t)) return 'drivers_license'
   if (['license disc', 'licence disc', 'disc', 'license doc'].includes(t)) return 'license_disc'
   if (['vehicle registration', 'vehicle registration papers'].includes(t)) return 'vehicle_registration'
-  if (['furn check', 'vehicle photo', 'furn', 'vehicle'].includes(t)) return 'furn_check'
+  if (['huru criminal check', 'huru check'].includes(t)) return 'huru_criminal_check'
+  if (['vehicle inspection report', 'inspection report'].includes(t)) return 'vehicle_inspection_report'
+  if (t === 'vehicle photo') return 'vehicle_photo_1'
+  if (t === 'vehicle') return 'vehicle_registration'
+  if (['furn check', 'furn'].includes(t)) return 'furn_check'
   if (['pdp', 'prdp', 'pdp doc', 'prdp doc'].includes(t)) return 'prdp'
   if (['insurance', 'insurance doc'].includes(t)) return 'insurance'
   return t.replace(/\s+/g, '_')

@@ -11,32 +11,24 @@ import {
 } from 'lucide-react'
 import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import compressImageFile from '../lib/compressImage'
+import { EXPIRING_DRIVER_DOCUMENT_TYPES, normalizeDocType, REQUIRED_DOCS } from '../lib/driverDocuments'
 
 type StoredDocument = Pick<DriverDocument,
-  'id' | 'doc_type' | 'file_url' | 'status' | 'rejection_reason' | 'created_at' | 'expiry_date' | 'prdp_number' | 'document_hash'
+  'id' | 'doc_type' | 'document_type' | 'document_url' | 'document_date' | 'file_url' | 'status' | 'rejection_reason' | 'created_at' | 'expiry_date' | 'prdp_number' | 'document_hash'
 >
 const MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
-const DOCUMENT_CARDS = [
-  { type: 'sa_id', title: 'SA ID / Passport', description: 'Upload your South African ID or passport.', bucket: 'driver-documents', Icon: IdCard },
-  { type: 'drivers_license', title: "Driver's Licence", description: 'Upload your valid driving licence.', bucket: 'driver-documents', Icon: IdCard, expiryRequired: true },
-  { type: 'prdp', title: 'PDP / PrDP', description: 'Upload your Professional Driving Permit.', bucket: 'driver-documents', Icon: IdCard, expiryRequired: true, prdpNumberRequired: true },
-  { type: 'profile_photo', title: 'Selfie', description: 'Take a clear profile selfie.', bucket: 'profile-photos', Icon: CircleUserRound, camera: 'user' },
-  { type: 'selfie_holding_id', title: 'Selfie Holding ID', description: 'Take a separate photo holding your SA ID or passport next to your face.', bucket: 'profile-photos', Icon: CircleUserRound, camera: 'user' },
-  { type: 'vehicle_registration', title: 'Vehicle Registration', description: 'Upload the vehicle registration document.', bucket: 'vehicle-documents', Icon: CarFront },
-  { type: 'license_disc', title: 'Licence Disc', description: 'Upload a clear image of your current licence disc.', bucket: 'vehicle-documents', Icon: CarFront, expiryRequired: true },
-  { type: 'vehicle_photos', title: 'Vehicle Photos (4)', description: 'Front, Back, Left, Right', bucket: 'vehicle-documents', Icon: CarFront },
-] as const
-const VEHICLE_PHOTO_SIDES = ['Front', 'Back', 'Left', 'Right'] as const
-const ONBOARDING_DOCUMENT_TYPES = new Set([
-  ...DOCUMENT_CARDS.filter(card => card.type !== 'vehicle_photos').map(card => card.type),
-  ...[1, 2, 3, 4].map(documentTypeForSlot),
-])
-
-function documentTypeForSlot(number: number) {
-  return `vehicle_photos_${number}`
-}
+const DOCUMENT_CARDS = REQUIRED_DOCS.map(document => ({
+  ...document,
+  title: document.label,
+  description: document.helper ? `Upload a clear ${document.helper.toLowerCase()} image.` : `Upload ${document.label}.`,
+  bucket: document.type === 'profile_photo' || document.type === 'selfie' ? 'profile-photos' : 'driver-documents',
+  Icon: document.type === 'profile_photo' || document.type === 'selfie'
+    ? CircleUserRound
+    : document.type.startsWith('vehicle_') ? CarFront : IdCard,
+}))
+const ONBOARDING_DOCUMENT_TYPES = new Set(REQUIRED_DOCS.map(document => document.type))
 
 const cardStyle: CSSProperties = {
   background: '#fff',
@@ -48,38 +40,18 @@ const cardStyle: CSSProperties = {
 function latestDocuments(documents: StoredDocument[]) {
   const latest = new Map<string, StoredDocument>()
   for (const document of documents) {
-    if (!latest.has(document.doc_type)) latest.set(document.doc_type, document)
+    const rawType = document.document_type || document.doc_type
+    const type = normalizeDocType(rawType)
+    if (!ONBOARDING_DOCUMENT_TYPES.has(type) || /police|holding|selfie with id/i.test(rawType)) continue
+    if (!latest.has(type)) latest.set(type, { ...document, doc_type: type })
   }
   return [...latest.values()]
 }
 
-function hasIndependentFile(type: string, documents: StoredDocument[]) {
-  const document = documents.find(item => item.doc_type === type && item.file_url)
-  if (!document) return false
-  return !documents.some(item => item.doc_type !== type && item.file_url === document.file_url)
-}
-
-function hasSeparateSelfieFiles(documents: StoredDocument[]) {
-  const selfies = documents.filter(document =>
-    ['profile_photo', 'selfie_holding_id'].includes(document.doc_type) && document.file_url,
-  )
-  if (selfies.length < 2) return true
-  const [profileSelfie, idSelfie] = selfies
-  return profileSelfie.file_url !== idSelfie.file_url
-    && (!profileSelfie.document_hash || !idSelfie.document_hash || profileSelfie.document_hash !== idSelfie.document_hash)
-}
-
 function isCardComplete(card: typeof DOCUMENT_CARDS[number], documents: StoredDocument[]) {
-  if (card.type === 'vehicle_photos') {
-    return [1, 2, 3, 4].every(number =>
-      hasIndependentFile(documentTypeForSlot(number), documents),
-    )
-  }
   const document = documents.find(item => item.doc_type === card.type)
-  return hasIndependentFile(card.type, documents)
-    && (card.type !== 'selfie_holding_id' || hasSeparateSelfieFiles(documents))
-    && (!('expiryRequired' in card) || !card.expiryRequired || Boolean(document?.expiry_date))
-    && (!('prdpNumberRequired' in card) || Boolean(document?.prdp_number?.trim()))
+  return Boolean(document?.file_url && document.document_date)
+    && (!card.expiryRequired || Boolean(document?.expiry_date))
 }
 
 function isComplete(documents: StoredDocument[]) {
@@ -97,17 +69,14 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     bank_account_number: '',
     bank_branch_code: '',
   })
+  const [documentDates, setDocumentDates] = useState<Record<string, string>>({})
   const [expiryDates, setExpiryDates] = useState<Record<string, string>>({})
-  const [prdpNumbers, setPrdpNumbers] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  const uploadedTypes = useMemo(() => new Set(
-    documents.filter(document => document.file_url).map(document => document.doc_type),
-  ), [documents])
   const rejectedTypes = useMemo(
     () => new Set(documents
       .filter(document => ONBOARDING_DOCUMENT_TYPES.has(document.doc_type)
@@ -115,9 +84,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       .map(document => document.doc_type)),
     [documents],
   )
-  const uploadedCarPhotos = [1, 2, 3, 4].filter(number =>
-    hasIndependentFile(documentTypeForSlot(number), documents),
-  ).length
   const completedCards = DOCUMENT_CARDS.filter(card => isCardComplete(card, documents)).length
 
   async function loadDocuments() {
@@ -125,7 +91,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setError('')
     const [documentsResult, profileResult] = await Promise.all([
       supabase.from('driver_documents')
-        .select('id,doc_type,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash')
+        .select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash')
         .order('created_at', { ascending: false })
         .eq('driver_id', profile.id),
       supabase.from('profiles')
@@ -143,12 +109,12 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const status = profileResult.data?.verification_status || 'not_started'
     setDocuments(loadedDocuments)
     setVerificationStatus(status)
+    setDocumentDates(Object.fromEntries(loadedDocuments
+      .filter(document => document.document_date)
+      .map(document => [document.doc_type, document.document_date!.slice(0, 10)])))
     setExpiryDates(Object.fromEntries(loadedDocuments
       .filter(document => document.expiry_date)
       .map(document => [document.doc_type, document.expiry_date!.slice(0, 10)])))
-    setPrdpNumbers(Object.fromEntries(loadedDocuments
-      .filter(document => document.prdp_number)
-      .map(document => [document.doc_type, document.prdp_number!])))
     setBankDetails({
       bank_name: profileResult.data.bank_name || '',
       bank_account_holder: profileResult.data.bank_account_holder || '',
@@ -185,20 +151,17 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
 
       const isImage = file.type.startsWith('image/')
       const card = DOCUMENT_CARDS.find(item => item.type === documentType)
+      const documentDate = documentDates[documentType] || ''
       const expiryDate = expiryDates[documentType] || null
-      const prdpNumber = prdpNumbers[documentType]?.trim() || null
-      if (card && 'expiryRequired' in card && card.expiryRequired && !expiryDate) {
-        throw new Error('Enter the document expiry date before uploading.')
+      if (!documentDate) {
+        window.alert('Enter date from document')
+        return false
       }
-      if (expiryDate && expiryDate <= new Date().toISOString().slice(0, 10)) {
-        throw new Error('The document expiry date must be in the future.')
-      }
-      if (documentType === 'prdp' && !prdpNumber) {
-        throw new Error('Enter the PDP / PrDP number before uploading.')
+      if (card?.expiryRequired && !expiryDate) {
+        window.alert('Enter expiry date from document')
+        return false
       }
       const body = isImage ? await compressImageFile(file) : file
-      const digest = await crypto.subtle.digest('SHA-256', await body.arrayBuffer())
-      const documentHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
       if (body.size > MAX_UPLOAD_SIZE) {
         throw new Error('Compressed file must be smaller than 20 MB.')
       }
@@ -222,19 +185,21 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       }
 
       uploadStage = 'database'
+      const documentLabel = card?.label || documentType
       const newDocuments = [{
         driver_id: profile.id,
         doc_type: documentType,
+        document_type: documentLabel,
         file_url: publicUrl,
+        document_url: publicUrl,
+        document_date: documentDate,
         status: 'PENDING',
         created_at: new Date().toISOString(),
         expiry_date: expiryDate,
-        prdp_number: documentType === 'prdp' ? prdpNumber : null,
-        document_hash: documentHash,
       }]
       const { data: savedDocuments, error: saveError } = await supabase.from('driver_documents')
         .upsert(newDocuments, { onConflict: 'driver_id,doc_type' })
-        .select('id,doc_type,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash')
+        .select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash')
       if (saveError) {
         console.error('DB ERROR:', saveError)
         try {
@@ -282,29 +247,45 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     await uploadFile(cardType, bucket, selectedFiles[0], documentType)
   }
 
+  async function updateDocumentDate(documentType: string, field: 'document_date' | 'expiry_date', value: string) {
+    if (field === 'document_date') {
+      setDocumentDates(current => ({ ...current, [documentType]: value }))
+    } else {
+      setExpiryDates(current => ({ ...current, [documentType]: value }))
+    }
+    if (!documents.some(document => document.doc_type === documentType)) return
+
+    const { error: updateError } = await supabase.from('driver_documents')
+      .update({ [field]: value || null })
+      .eq('driver_id', profile.id)
+      .eq('doc_type', documentType)
+    if (updateError) {
+      setError(`Could not save document date: ${updateError.message}`)
+      return
+    }
+    setDocuments(current => current.map(document => document.doc_type === documentType
+      ? { ...document, [field]: value || null }
+      : document))
+  }
+
   async function submitForReview() {
     const bankDetailsComplete = Object.values(bankDetails).every(value => value.trim())
     if (!isComplete(documents) || rejectedTypes.size > 0 || !bankDetailsComplete || submitting) return
-    if (['drivers_license', 'prdp', 'license_disc'].some(type =>
-      !expiryDates[type] || expiryDates[type] <= new Date().toISOString().slice(0, 10),
+    if (REQUIRED_DOCS.some(document =>
+      EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type)
+        && (!expiryDates[document.type] || expiryDates[document.type] < new Date().toISOString().slice(0, 10)),
     )) {
-      setError('All required expiry dates must be in the future.')
+      setError('All five required expiry dates must be current or future dates.')
       return
     }
     setSubmitting(true)
     setError('')
-    const metadataUpdates = await Promise.all(
-      DOCUMENT_CARDS
-        .filter(card => card.type !== 'vehicle_photos' && ('expiryRequired' in card || 'prdpNumberRequired' in card))
-        .map(async card => {
-          const changes: { expiry_date?: string; prdp_number?: string } = {}
-          if ('expiryRequired' in card && card.expiryRequired) changes.expiry_date = expiryDates[card.type]
-          if ('prdpNumberRequired' in card && card.prdpNumberRequired) changes.prdp_number = prdpNumbers[card.type].trim()
-          return supabase.from('driver_documents').update(changes)
-            .eq('driver_id', profile.id)
-            .eq('doc_type', card.type)
-        }),
-    )
+    const metadataUpdates = await Promise.all(REQUIRED_DOCS.map(document =>
+      supabase.from('driver_documents').update({
+        document_date: documentDates[document.type],
+        expiry_date: EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type) ? expiryDates[document.type] : null,
+      }).eq('driver_id', profile.id).eq('doc_type', document.type),
+    ))
     const metadataError = metadataUpdates.find(result => result.error)?.error
     if (metadataError) {
       setError(`Could not save document details: ${metadataError.message}`)
@@ -370,129 +351,87 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         <p style={{ margin: '8px 0 0', fontSize: 13, color: '#667085' }}>{progress}% complete</p>
       </header>
 
-      <div style={{ display: 'grid', gap: 12 }}>
-        {DOCUMENT_CARDS.map(card => {
-          const { type, title, description, bucket, Icon } = card
-          const documentTypes: readonly string[] = type === 'vehicle_photos'
-            ? [1, 2, 3, 4].map(documentTypeForSlot)
-            : [type]
-          const cardDocuments = documents.filter(document => documentTypes.includes(document.doc_type))
-          const rejectedDocument = cardDocuments.find(document =>
-            document.file_url && document.status.toUpperCase() === 'REJECTED',
-          )
-          const uploaded = isCardComplete(card, documents)
-          const needsReplacement = cardDocuments.some(document => rejectedTypes.has(document.doc_type))
-            || (type !== 'vehicle_photos' && Boolean(cardDocuments[0]?.file_url && !hasIndependentFile(type, documents)))
-            || (type === 'profile_photo' && !hasSeparateSelfieFiles(documents))
-            || (type === 'selfie_holding_id' && !hasSeparateSelfieFiles(documents))
-          const isApproved = type === 'vehicle_photos'
-            ? [1, 2, 3, 4].every(number => [documentTypeForSlot(number)].some(documentType =>
-              cardDocuments.some(document => document.doc_type === documentType
-                && document.file_url && document.status.toUpperCase() === 'APPROVED'),
-            ))
-            : cardDocuments.some(document => document.doc_type === type
-              && document.file_url && document.status.toUpperCase() === 'APPROVED')
-          const isPending = cardDocuments.some(document =>
-            document.file_url && document.status.toUpperCase() === 'PENDING',
-          )
-          const badgeLabel = rejectedDocument
-            ? `Action needed${rejectedDocument.rejection_reason ? ` - ${rejectedDocument.rejection_reason}` : ''}`
-            : isApproved
-              ? 'Done'
-              : type === 'vehicle_photos'
-                ? `${uploadedCarPhotos}/4 uploaded`
-              : isPending
-                ? 'Pending'
-                : uploaded
-                  ? 'Uploaded'
-                  : 'Missing'
-          const activeUpload = uploading === type
-          return <section key={type} className="driver-onboarding-card" style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: 16, padding: '18px 16px', flexWrap: 'wrap' }}>
-            <div style={{ flex: '0 0 48px', width: 48, height: 48, display: 'grid', placeItems: 'center', borderRadius: type === 'profile_photo' ? '50%' : 14, border: type === 'profile_photo' ? '2px dashed #0a8f67' : 'none', background: uploaded ? '#e5f7ef' : '#f1f4f7', color: uploaded ? '#087f5b' : '#475467' }}><Icon size={24} /></div>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                <strong style={{ fontSize: 15 }}>{title}</strong>
-                <span style={{ padding: '4px 8px', borderRadius: 99, color: needsReplacement ? '#b42318' : uploaded ? '#067647' : '#667085', background: needsReplacement ? '#fef3f2' : uploaded ? '#ecfdf3' : '#f2f4f7', fontSize: 11, fontWeight: 700 }}>
-                  {badgeLabel}
-                </span>
-              </div>
-              <p style={{ margin: '5px 0 0', color: '#667085', fontSize: 12, lineHeight: 1.4 }}>{description}</p>
-              {type === 'profile_photo' && <p style={{ margin: '5px 0 0', color: '#087f5b', fontSize: 11 }}>Center your face inside the circle for selfie verification.</p>}
-            </div>
-            {type === 'vehicle_photos' ? (
-              <div style={{ width: '100%', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                {VEHICLE_PHOTO_SIDES.map((side, index) => {
-                  const number = index + 1
-                  const slotTypes = [documentTypeForSlot(number)]
-                  const slotDocument = cardDocuments.find(document => slotTypes.includes(document.doc_type))
-                  const slotRejected = slotTypes.some(documentType => rejectedTypes.has(documentType))
-                  const inputKey = documentTypeForSlot(number)
-                  const slotComplete = hasIndependentFile(inputKey, documents)
-                  return <div key={inputKey}>
-                    <p style={{ margin: '0 0 6px', color: '#667085', fontSize: 12 }}>{slotDocument?.expiry_date ? `Expires ${slotDocument.expiry_date}` : ''}</p>
-                    <input
-                      ref={element => { fileInputs.current[inputKey] = element }}
-                      type="file"
-                      accept="image/*"
-                      onChange={event => void handleFileChange(type, bucket, event, inputKey)}
-                      capture="environment"
-                      style={{ display: 'none' }}
-                    />
-                    <button
-                      type="button"
-                      disabled={Boolean(uploading) || (slotComplete && !slotRejected)}
-                      onClick={() => fileInputs.current[inputKey]?.click()}
-                      style={{ width: '100%', minHeight: 74, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 10, borderRadius: 12, border: `1px dashed ${slotComplete && !slotRejected ? '#9bd8bd' : '#b8c2ce'}`, color: slotRejected ? '#b42318' : slotComplete ? '#087f5b' : '#344054', background: slotComplete && !slotRejected ? '#f5fcf8' : '#fff', fontSize: 12, fontWeight: 700 }}
-                    >
-                      {activeUpload && uploading === type && slotDocument?.doc_type === inputKey
-                        ? <LoaderCircle size={16} className="driver-onboarding-spin" />
-                        : slotComplete && !slotRejected ? <Check size={16} /> : <Upload size={16} />}
-                      {side}: {slotRejected ? 'Replace' : slotComplete ? 'Added' : 'Add photo'}
-                    </button>
+      <div style={{ display: 'grid', gap: 18 }}>
+        {(['Driver Identity', 'Vehicle Papers', 'Vehicle Exterior', 'Vehicle Interior', 'Safety'] as const).map(section => (
+          <section key={section} style={{ display: 'grid', gap: 12 }}>
+            <h2 style={{ margin: '4px 0 0', fontSize: 18 }}>{section}</h2>
+            {DOCUMENT_CARDS.filter(card => card.section === section).map(card => {
+              const { type, title, description, bucket, Icon } = card
+              const document = documents.find(item => item.doc_type === type)
+              const uploaded = Boolean(document?.file_url)
+              const rejected = document?.status.toUpperCase() === 'REJECTED'
+              const today = new Date()
+              today.setHours(0, 0, 0, 0)
+              const expiry = document?.expiry_date ? new Date(`${document.expiry_date}T00:00:00`) : null
+              const daysToExpiry = expiry ? Math.ceil((expiry.getTime() - today.getTime()) / 86_400_000) : null
+              const badgeLabel = !uploaded
+                ? 'MISSING'
+                : daysToExpiry !== null && daysToExpiry < 0
+                  ? 'EXPIRED'
+                  : daysToExpiry !== null && daysToExpiry < 30
+                    ? 'EXPIRING SOON'
+                    : rejected ? 'REJECTED' : document?.status.toUpperCase() === 'APPROVED' ? 'VERIFIED' : 'PENDING'
+              const badgeColor = badgeLabel === 'EXPIRED' || badgeLabel === 'REJECTED'
+                ? '#b42318'
+                : badgeLabel === 'VERIFIED' ? '#067647'
+                  : badgeLabel === 'EXPIRING SOON' ? '#b54708' : '#667085'
+              const activeUpload = uploading === type
+              const fileUrl = document?.document_url || document?.file_url
+              return <article key={type} className="driver-onboarding-card" style={{ ...cardStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 14, padding: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  <div style={{ width: 42, height: 42, display: 'grid', flex: '0 0 42px', placeItems: 'center', borderRadius: 12, background: '#f1f4f7', color: '#475467' }}><Icon size={22} /></div>
+                  <div style={{ minWidth: 0 }}>
+                    <strong style={{ fontSize: 14 }}>{title}</strong>
+                    <div style={{ marginTop: 4, color: '#667085', fontSize: 12 }}>{description}</div>
+                    <span style={{ display: 'inline-block', marginTop: 6, padding: '4px 8px', borderRadius: 99, color: badgeColor, background: `${badgeColor}18`, fontSize: 11, fontWeight: 700 }}>{badgeLabel}</span>
                   </div>
-                })}
-              </div>
-            ) : <>
-              {'expiryRequired' in card && card.expiryRequired && <label style={{ width: '100%', display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
-                Expiry date
-                <input
-                  type="date"
-                  required
-                  value={expiryDates[type] || ''}
-                  onChange={event => setExpiryDates(current => ({ ...current, [type]: event.target.value }))}
-                  style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
-                />
-              </label>}
-              {'prdpNumberRequired' in card && card.prdpNumberRequired && <label style={{ width: '100%', display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
-                PDP / PrDP number
-                <input
-                  type="text"
-                  required
-                  value={prdpNumbers[type] || ''}
-                  onChange={event => setPrdpNumbers(current => ({ ...current, [type]: event.target.value }))}
-                  style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
-                />
-              </label>}
-              <input
-                ref={element => { fileInputs.current[type] = element }}
-                type="file"
-                accept={'camera' in card ? 'image/*' : 'image/*,application/pdf'}
-                capture={'camera' in card ? card.camera : undefined}
-                onChange={event => void handleFileChange(type, bucket, event)}
-                style={{ display: 'none' }}
-              />
-              <button
-                type="button"
-                disabled={Boolean(uploading) || (uploaded && !needsReplacement)}
-                onClick={() => fileInputs.current[type]?.click()}
-                style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 11, border: `1px dashed ${uploaded && !needsReplacement ? '#9bd8bd' : '#b8c2ce'}`, color: needsReplacement ? '#b42318' : uploaded ? '#087f5b' : '#344054', background: uploaded && !needsReplacement ? '#f5fcf8' : '#fff', fontSize: 12, fontWeight: 700, cursor: uploading || (uploaded && !needsReplacement) ? 'default' : 'pointer' }}
-              >
-                {activeUpload ? <LoaderCircle size={16} className="driver-onboarding-spin" /> : uploaded && !needsReplacement ? <Check size={16} /> : <Upload size={16} />}
-                <span>{activeUpload ? 'Uploading' : needsReplacement ? 'Replace' : uploaded ? 'Done' : 'Upload'}</span>
-              </button>
-            </>}
+                </div>
+                <div>
+                  <input
+                    ref={element => { fileInputs.current[type] = element }}
+                    type="file"
+                    accept={type.startsWith('vehicle_photo') ? 'image/*' : 'image/*,application/pdf'}
+                    capture={type === 'selfie' ? 'user' : undefined}
+                    onChange={event => void handleFileChange(type, bucket, event)}
+                    style={{ display: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    disabled={Boolean(uploading)}
+                    onClick={() => fileInputs.current[type]?.click()}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 11, border: '1px dashed #b8c2ce', color: '#344054', background: '#fff', fontSize: 12, fontWeight: 700 }}
+                  >
+                    {activeUpload ? <LoaderCircle size={16} className="driver-onboarding-spin" /> : <Upload size={16} />}
+                    {activeUpload ? 'Uploading' : uploaded ? 'Replace' : 'Upload'}
+                  </button>
+                </div>
+                <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: card.expiryRequired ? 'repeat(auto-fit, minmax(190px, 1fr))' : '1fr', gap: 10 }}>
+                  <label style={{ display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
+                    Document Date (date written on document) - REQUIRED
+                    <input
+                      type="date"
+                      required
+                      value={documentDates[type] || ''}
+                      onChange={event => void updateDocumentDate(type, 'document_date', event.target.value)}
+                      style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
+                    />
+                  </label>
+                  {card.expiryRequired && <label style={{ display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
+                    Expiry Date (as printed on document) - REQUIRED
+                    <input
+                      type="date"
+                      required
+                      value={expiryDates[type] || ''}
+                      onChange={event => void updateDocumentDate(type, 'expiry_date', event.target.value)}
+                      style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
+                    />
+                  </label>}
+                </div>
+                {fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer" style={{ gridColumn: '1 / -1', color: '#087f5b', fontSize: 12, fontWeight: 700 }}>Preview uploaded document</a>}
+              </article>
+            })}
           </section>
-        })}
+        ))}
       </div>
 
       <section style={{ ...cardStyle, marginTop: 16, padding: 17 }}>

@@ -4,7 +4,9 @@ import { createDriverDocumentSignedUrl, isFakeFile, REQUIRED_DOCS, normalizeDriv
 
 export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
   id: document.type,
-  label: document.type === 'prdp' ? 'PDP / PrDP' : document.label,
+  label: document.label,
+  section: document.section,
+  expiryRequired: Boolean(document.expiryRequired),
   helper: document.label,
   accept: 'image/*,application/pdf',
   required: true,
@@ -16,7 +18,9 @@ function linkedDriverDocumentTypes(type: string) {
 }
 
 function findDriverRequirementDocument(docs: StoredDocument[], type: string) {
-  const matchingDocuments = docs.filter(item => normalizeDriverDocType(item.doc_type) === type)
+  const matchingDocuments = docs.filter(item =>
+    normalizeDriverDocType(item.document_type || item.doc_type) === type,
+  )
   return matchingDocuments.find(item => hasRealDocument(item)) || matchingDocuments[0]
 }
 
@@ -28,7 +32,10 @@ type StoredDocument = {
   user_email?: string | null
   email?: string | null
   doc_type: string
+  document_type?: string | null
   file_url?: string | null
+  document_url?: string | null
+  document_date?: string | null
   file_path?: string | null
   storage_path?: string | null
   file_name?: string | null
@@ -68,8 +75,8 @@ function isExpired(expiryDate?: string | null) {
   return expiry < today
 }
 
-function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url'>) {
-  return doc?.file_url?.trim() || ''
+function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'document_url'>) {
+  return doc?.document_url?.trim() || doc?.file_url?.trim() || ''
 }
 
 function hasRealDocument(doc?: Pick<StoredDocument, 'file_url'>) {
@@ -96,8 +103,13 @@ function displayStatus(doc?: StoredDocument, optional = false) {
   if (!doc) return optional ? 'OPTIONAL' : 'MISSING'
   if (!hasRealDocument(doc)) return 'MISSING'
   if (doc.status.trim().toLowerCase() === 'expired' || isExpired(doc.expiry_date)) return 'EXPIRED'
+  if (doc.expiry_date) {
+    const daysRemaining = Math.ceil((new Date(`${doc.expiry_date}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86_400_000)
+    if (daysRemaining < 30) return 'EXPIRING SOON'
+  }
   const status = doc.status.trim().toUpperCase()
-  return status === 'APPROVED' || status === 'REJECTED' ? status : 'PENDING'
+  if (status === 'APPROVED') return 'VERIFIED'
+  return status === 'REJECTED' ? status : 'PENDING'
 }
 
 type PassengerSafetyReview = Pick<Profile,
@@ -109,6 +121,7 @@ type PassengerSafetyReview = Pick<Profile,
 
 export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile, onBack: ()=>void }){
   const [driverDocs,setDriverDocs]=useState<StoredDocument[]>([])
+  const [driverProfiles, setDriverProfiles] = useState<Pick<Profile, 'id' | 'email' | 'full_name' | 'phone'>[]>([])
   const [pendingDriverDocumentCount, setPendingDriverDocumentCount] = useState(0)
   const [pendingPassengerProfiles, setPendingPassengerProfiles] = useState<PassengerSafetyReview[]>([])
   const [approvedPassengerProfiles, setApprovedPassengerProfiles] = useState<PassengerSafetyReview[]>([])
@@ -148,8 +161,9 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
 
   async function load(){
     setError('')
-    const [driverResult, pendingPassengerResult, approvedPassengerResult] = await Promise.all([
+    const [driverResult, driverProfilesResult, pendingPassengerResult, approvedPassengerResult] = await Promise.all([
       supabase.from('driver_documents').select('*,profiles!driver_documents_driver_id_fkey!inner(*)').order('created_at',{ascending:false}),
+      supabase.from('profiles').select('id,email,full_name,phone').eq('role', 'driver').order('full_name'),
       supabase.from('profiles')
         .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason,updated_at')
         .eq('role', 'passenger')
@@ -162,18 +176,25 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         .order('updated_at', { ascending: false }),
     ])
     let profileLoadError = ''
+    if (!driverProfilesResult.error) setDriverProfiles(driverProfilesResult.data || [])
     if (!driverResult.error) {
-      const loadedDocuments = driverResult.data || []
+      const requiredTypes = new Set(REQUIRED_DOCS.map(document => document.type))
+      const loadedDocuments = (driverResult.data || []).filter(document => {
+        const docType = document.document_type || document.doc_type
+        return !/police|holding|selfie with id/i.test(docType)
+          && requiredTypes.has(normalizeDriverDocType(docType))
+      })
       setPendingDriverDocumentCount(loadedDocuments.filter(document =>
         document.status.trim().toLocaleLowerCase() === 'pending',
       ).length)
       const latestByType = new Map<string, typeof driverResult.data[number]>()
       for (const document of loadedDocuments) {
-        const key = `${document.driver_id}:${document.doc_type}`
+        const key = `${document.driver_id}:${normalizeDriverDocType(document.document_type || document.doc_type)}`
         if (!latestByType.has(key)) latestByType.set(key, document)
       }
       setDriverDocs([...latestByType.values()].map(document => ({
         ...document,
+        doc_type: normalizeDriverDocType(document.document_type || document.doc_type),
         profiles: Array.isArray(document.profiles) ? document.profiles[0] || null : document.profiles || null,
       })))
     }
@@ -198,6 +219,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     }
     const loadErrors = [
       driverResult.error,
+      driverProfilesResult.error,
       pendingPassengerResult.error,
       approvedPassengerResult.error,
     ].filter(Boolean)
@@ -375,7 +397,12 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     }
   }
 
-  const driversById = groupDriversById(driverDocs)
+  const groupedDriverDocuments = groupDriversById(driverDocs)
+  const driversById = driverProfiles.reduce<Record<string, StoredDocument[]>>((drivers, driver) => {
+    drivers[driver.id] = groupedDriverDocuments[driver.id] || []
+    return drivers
+  }, {})
+  const driverProfileById = new Map(driverProfiles.map(driver => [driver.id, driver]))
   const matchesPassenger = (passenger: PassengerSafetyReview, query: string) => {
     const normalizedQuery = query.trim().toLocaleLowerCase()
     return !normalizedQuery || [
@@ -389,19 +416,21 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   const pendingPassengers = pendingPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
   const approvedPassengers = approvedPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
   const normalizedDriverSearch = search.trim().toLocaleLowerCase()
-  const matchesDriver = (docs: StoredDocument[]) => {
-    const profile = docs[0]?.profiles
+  const matchesDriver = (
+    docs: StoredDocument[],
+    fallbackProfile?: Pick<Profile, 'id' | 'email' | 'full_name' | 'phone'>,
+  ) => {
+    const profile = docs[0]?.profiles || fallbackProfile
     return !normalizedDriverSearch || [profile?.full_name, profile?.email]
       .some(value => value?.toLocaleLowerCase().includes(normalizedDriverSearch))
   }
   const isPendingDocument = (doc: StoredDocument) => doc.status.trim().toLocaleLowerCase() === 'pending'
-  const isApprovedDocument = (doc: StoredDocument) => doc.status.trim().toLocaleLowerCase() === 'approved'
   const pendingDrivers = Object.entries(driversById).filter(([, docs]) =>
     docs.some(isPendingDocument),
   )
-  const visibleDrivers = Object.entries(driversById).filter(([, docs]) =>
-    docs.some(showUnapprovedOnly ? isPendingDocument : doc => isPendingDocument(doc) || isApprovedDocument(doc))
-      && matchesDriver(docs),
+  const visibleDrivers = Object.entries(driversById).filter(([driverId, docs]) =>
+    (!showUnapprovedOnly || docs.some(isPendingDocument))
+      && matchesDriver(docs, driverProfileById.get(driverId)),
   )
 
   function renderDocumentRow(
@@ -413,26 +442,38 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
   ) {
     const status = displayStatus(doc)
     const docUrl = getDocumentUrl(doc)
+    const requirement = DRIVER_DOCUMENTS.find(item => item.id === id)
+    const expired = isExpired(doc?.expiry_date)
+    const documentDateMissing = !doc?.document_date
+    const expiryDateMissing = Boolean(requirement?.expiryRequired && !doc?.expiry_date)
     const canViewDocument = status !== 'MISSING' && hasRealDocument(doc)
+    const canApproveDocument = Boolean(doc && canViewDocument && !documentDateMissing && !expiryDateMissing && !expired)
     const badgeColors: Record<string, { color: string, background: string }> = {
-      APPROVED: { color:'#86efac', background:'#14532d' },
+      VERIFIED: { color:'#86efac', background:'#14532d' },
       MISSING: { color:'#fde68a', background:'#713f12' },
       OPTIONAL: { color:'#d1d5db', background:'#374151' },
       PENDING: { color:'#93c5fd', background:'#1e3a8a' },
       REJECTED: { color:'#fca5a5', background:'#7f1d1d' },
       EXPIRED: { color:'#fca5a5', background:'#7f1d1d' },
+      'EXPIRING SOON': { color:'#fcd34d', background:'#78350f' },
     }
     const badge = badgeColors[status] || badgeColors.PENDING
     return <div key={id} style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', padding:'10px 0', borderTop:'1px solid #333'}}>
       <div style={{minWidth:0}}>
         <strong>{label}</strong>{!required && <span style={{fontSize:'11px', color:'#9ca3af'}}> (Optional)</span>}
         <span style={{display:'inline-block', marginTop:'4px', padding:'3px 8px', borderRadius:'999px', fontSize:'11px', fontWeight:700, color:badge.color, background:badge.background}}>{status}</span>
+        <div style={{fontSize:'12px', color:'#d1d5db', marginTop:4}}>
+          Doc Date: {doc?.document_date || '—'} | Expires: {doc?.expiry_date || '—'}
+        </div>
+        {documentDateMissing && <div role="alert" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>DATE MISSING - Reject</div>}
+        {expiryDateMissing && <div role="alert" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRY DATE MISSING - Reject</div>}
+        {expired && <div role="status" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRED</div>}
         {isFakeFile(docUrl) && <div role="status" style={{fontSize:'12px', color:'#fbbf24'}}>No real file uploaded - test data</div>}
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
-        <button disabled={!canViewDocument} title={isFakeFile(docUrl)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed', opacity:canViewDocument?1:0.5}}>View Doc</button>
-        <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
+        <button disabled={!canViewDocument} title={isFakeFile(docUrl)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed', opacity:canViewDocument?1:0.5}}>Preview</button>
+        <button disabled={!canApproveDocument || loadingId===doc?.id} title={documentDateMissing ? 'Document date is required' : expiryDateMissing ? 'Expiry date is required' : expired ? 'Expired documents cannot be approved' : undefined} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,kind:'driver-document'})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>
     </div>
@@ -488,56 +529,74 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           Show only drivers who are not yet approved
         </label>
         {visibleDrivers.map(([driverId, docs]) => {
-          const driverProfile = docs[0]?.profiles
-          const fullName = driverProfile?.full_name
-            || `${driverProfile?.first_name || ''} ${driverProfile?.last_name || ''}`.trim()
-            || driverProfile?.email
-            || 'Unknown Driver'
-          const email = docs.find(doc=>doc.profiles?.email || doc.user_email || doc.email)?.profiles?.email
-            || docs.find(doc=>doc.user_email || doc.email)?.user_email
-            || docs.find(doc=>doc.email)?.email
-            || driverProfile?.email
-          const userId = docs[0]?.user_id || driverProfile?.id || driverId
-          const requiredDocs = DRIVER_DOCUMENTS.filter(requirement => requirement.required)
-          const approvedCount = requiredDocs.filter(requirement =>
-            displayStatus(findDriverRequirementDocument(docs, requirement.id)) === 'APPROVED',
+          const driverProfile = docs[0]?.profiles || driverProfileById.get(driverId)
+          const fullName = driverProfile?.full_name || driverProfile?.email || 'Unknown Driver'
+          const email = driverProfile?.email || docs.find(doc=>doc.user_email || doc.email)?.user_email || docs.find(doc=>doc.email)?.email
+          const verifiedCount = DRIVER_DOCUMENTS.filter(requirement =>
+            displayStatus(findDriverRequirementDocument(docs, requirement.id)) === 'VERIFIED',
           ).length
-          const missingRequired = requiredDocs.filter(requirement => {
+          const pendingCount = docs.filter(isPendingDocument).length
+          const expiredRequirements = DRIVER_DOCUMENTS.filter(requirement => {
             const doc = findDriverRequirementDocument(docs, requirement.id)
-            return displayStatus(doc)!=='APPROVED'
+            return Boolean(requirement.expiryRequired && isExpired(doc?.expiry_date))
           })
-          const canApproveToDrive = missingRequired.length===0
+          const missingRequired = DRIVER_DOCUMENTS.filter(requirement =>
+            !hasRealDocument(findDriverRequirementDocument(docs, requirement.id)),
+          )
+          const missingDates = DRIVER_DOCUMENTS.filter(requirement => {
+            const doc = findDriverRequirementDocument(docs, requirement.id)
+            return Boolean(doc && (!doc.document_date || (requirement.expiryRequired && !doc.expiry_date)))
+          })
+          const rejectedRequirements = DRIVER_DOCUMENTS.filter(requirement =>
+            findDriverRequirementDocument(docs, requirement.id)?.status.trim().toUpperCase() === 'REJECTED',
+          )
+          const expiredCount = expiredRequirements.length
+          const blockingReasons = [
+            missingRequired.length ? `Missing: ${missingRequired.map(document => document.label).join(', ')}` : '',
+            missingDates.length ? `Date missing: ${missingDates.map(document => document.label).join(', ')}` : '',
+            expiredCount ? `Expired: ${expiredRequirements.map(document => document.label).join(', ')}` : '',
+            rejectedRequirements.length ? `Rejected: ${rejectedRequirements.map(document => document.label).join(', ')}` : '',
+          ].filter(Boolean)
+          const canApproveToDrive = blockingReasons.length === 0
           const progressColor = canApproveToDrive ? '#22c55e' : '#f59e0b'
-          const progressPercent = Math.round(approvedCount / requiredDocs.length * 100)
+          const progressPercent = Math.round(verifiedCount / DRIVER_DOCUMENTS.length * 100)
           const isApproved = docs[0]?.profiles?.is_verified === true
-          const approvalReason = missingRequired.length
-            ? `Missing approval: ${missingRequired.map(requirement=>requirement.label).join(', ')}`
-            : ''
           return <section key={driverId} style={{border:'1px solid #333', padding:'12px', borderRadius:'12px', marginTop:'10px', background:'#18181b'}}>
             <div style={{margin:'0 0 4px'}}>
               <div style={{fontWeight:700}}>{fullName}</div>
               <div style={{fontSize:13, opacity:0.8}}>{email || 'No email'}{driverProfile?.phone ? ` - ${driverProfile.phone}` : ''}</div>
-              <div style={{fontSize:11, opacity:0.5}}>{userId} - {approvedCount}/{requiredDocs.length}</div>
+              <div style={{fontSize:11, opacity:0.8, marginTop:5}}>Documents: {verifiedCount}/{DRIVER_DOCUMENTS.length} verified, {pendingCount} pending, {expiredCount} expired</div>
             </div>
-            <div role="progressbar" aria-label={`${email} document approval progress`} aria-valuemin={0} aria-valuemax={requiredDocs.length} aria-valuenow={approvedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
+            <div role="progressbar" aria-label={`${email || fullName} document verification progress`} aria-valuemin={0} aria-valuemax={DRIVER_DOCUMENTS.length} aria-valuenow={verifiedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
-            {DRIVER_DOCUMENTS.map(requirement => renderDocumentRow(
-              findDriverRequirementDocument(docs, requirement.id),
-              requirement.id,
-              requirement.label,
-              'driver_documents',
-              requirement.required
+            {missingRequired.length > 0 && <div role="alert" style={{padding:10, margin:'8px 0', borderRadius:8, background:'#7f1d1d', color:'#fecaca', fontWeight:700}}>
+              MISSING: {missingRequired.map(document => document.label).join(', ')}
+            </div>}
+            {(['Driver Identity', 'Vehicle Papers', 'Vehicle Exterior', 'Vehicle Interior', 'Safety'] as const).map(section => (
+              <div key={section} style={{marginTop:12}}>
+                <h3 style={{margin:'0 0 4px', fontSize:15}}>{section}</h3>
+                {DRIVER_DOCUMENTS.filter(requirement => requirement.section === section).map(requirement =>
+                  renderDocumentRow(
+                    findDriverRequirementDocument(docs, requirement.id),
+                    requirement.id,
+                    requirement.label,
+                    'driver_documents',
+                    true,
+                  ),
+                )}
+              </div>
             ))}
             <div style={{borderTop:'1px solid #333', marginTop:'8px', paddingTop:'12px'}}>
               <button
                 disabled={!canApproveToDrive || loadingId===`approval:${driverId}` || isApproved}
                 onClick={()=>driverId && void approveToDrive(driverId)}
+                title={!canApproveToDrive ? blockingReasons.join(' · ') : undefined}
                 style={{width:'100%', padding:'14px', borderRadius:'9px', border:'none', color:'white', fontWeight:700, fontSize:'15px', background:canApproveToDrive?'#15803d':'#4b5563', cursor:canApproveToDrive && !isApproved?'pointer':'not-allowed'}}
               >
                 {driverId && loadingId===`approval:${driverId}` ? 'Approving…' : isApproved ? 'Approved to Drive' : 'Approve to Drive - Go Online'}
               </button>
-              {!canApproveToDrive && <div style={{fontSize:'12px', color:'#fca5a5', marginTop:'6px'}}>{approvalReason}</div>}
+              {!canApproveToDrive && <div style={{fontSize:'12px', color:'#fca5a5', marginTop:'6px'}}>{blockingReasons.join(' · ')}</div>}
             </div>
           </section>
         })}

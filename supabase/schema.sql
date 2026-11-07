@@ -94,6 +94,9 @@ for each row execute function public.sync_profile_phone_columns();
 create table if not exists public.driver_documents (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete cascade,
+  document_type text,
+  document_url text,
+  document_date date,
   doc_type text not null,
   file_url text not null,
   status text not null default 'PENDING' check (status in ('PENDING', 'APPROVED', 'REJECTED')),
@@ -105,6 +108,9 @@ alter table public.driver_documents add column if not exists storage_path text;
 alter table public.driver_documents add column if not exists file_name text;
 alter table public.driver_documents add column if not exists file_size bigint;
 alter table public.driver_documents add column if not exists file_type text;
+alter table public.driver_documents add column if not exists document_type text;
+alter table public.driver_documents add column if not exists document_url text;
+alter table public.driver_documents add column if not exists document_date date;
 alter table public.driver_documents add column if not exists expiry_date date;
 alter table public.driver_documents add column if not exists rejection_reason text;
 alter table public.driver_documents add column if not exists reviewed_at timestamptz;
@@ -710,29 +716,24 @@ begin
     select 1
     from public.driver_documents
     where driver_id = caller_id
-      and file_url is not null
+      and doc_type in (
+        'sa_id', 'drivers_license', 'prdp', 'profile_photo', 'selfie',
+        'vehicle_registration', 'license_disc', 'vehicle_photo_1', 'vehicle_photo_2',
+        'vehicle_photo_3', 'vehicle_photo_4', 'vehicle_interior_photo_1',
+        'vehicle_interior_photo_2', 'huru_criminal_check', 'vehicle_inspection_report'
+      )
       and nullif(btrim(file_url), '') is not null
     group by driver_id
-    having count(distinct doc_type) filter (where doc_type in (
-      'sa_id', 'drivers_license', 'prdp', 'profile_photo', 'selfie_holding_id',
-      'vehicle_registration', 'license_disc', 'vehicle_photos_1', 'vehicle_photos_2',
-      'vehicle_photos_3', 'vehicle_photos_4'
-    )) = 11
-      and count(distinct file_url) filter (where doc_type in (
-        'sa_id', 'drivers_license', 'prdp', 'profile_photo', 'selfie_holding_id',
-        'vehicle_registration', 'license_disc', 'vehicle_photos_1', 'vehicle_photos_2',
-        'vehicle_photos_3', 'vehicle_photos_4'
-      )) = 11
-      and count(distinct document_hash) filter (where doc_type in ('profile_photo', 'selfie_holding_id')) = 2
-      and bool_and(expiry_date is not null and expiry_date >= current_date) filter (where doc_type in ('drivers_license', 'prdp', 'license_disc'))
-      and bool_and(nullif(btrim(prdp_number), '') is not null) filter (where doc_type = 'prdp')
-      and bool_and(status <> 'REJECTED') filter (where doc_type in (
-        'sa_id', 'drivers_license', 'prdp', 'profile_photo', 'selfie_holding_id',
-        'vehicle_registration', 'license_disc', 'vehicle_photos_1', 'vehicle_photos_2',
-        'vehicle_photos_3', 'vehicle_photos_4'
-      ))
+    having count(distinct doc_type) = 15
+      and bool_and(document_date is not null)
+      and bool_and(expiry_date is not null and expiry_date >= current_date)
+        filter (where doc_type in (
+          'drivers_license', 'prdp', 'license_disc',
+          'huru_criminal_check', 'vehicle_inspection_report'
+        ))
+      and bool_and(status <> 'REJECTED')
   ) then
-    raise exception 'Upload each required driver document separately and complete expiry and PrDP details';
+    raise exception 'Upload all 15 required documents with document dates and valid expiry dates';
   end if;
 
   perform set_config('buddyride.internal_profile_update', 'on', true);

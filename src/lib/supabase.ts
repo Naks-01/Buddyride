@@ -15,7 +15,10 @@ export type DriverDocument = {
   id: string
   driver_id: string
   doc_type: string
+  document_type?: string | null
   file_url: string
+  document_url?: string | null
+  document_date?: string | null
   file_path: string | null
   storage_path: string | null
   file_name: string | null
