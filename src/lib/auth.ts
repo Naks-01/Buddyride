@@ -23,7 +23,10 @@ export async function ensureProfile(userId: string, email: string | null) {
       wallet_balance: 0,
       trips_completed: 0,
       rating: 5.0,
-      is_online: false
+      is_online: false,
+      // FIXED: Was missing - null verification_status broke pending checks
+      verification_status: 'not_started',
+      is_verified: false,
     } as any)
    .select()
    .single()
@@ -39,7 +42,6 @@ export async function signIn(email: string, password: string) {
 
 export async function signUp(email: string, password: string, role: Exclude<Role, 'admin'>, fullName: string, phone: string) {
   const normalizedEmail = email.trim().toLowerCase()
-  console.info('Sign-up role:', role)
   const { data, error } = await supabase.auth.signUp({
     email: normalizedEmail,
     password,
@@ -47,9 +49,6 @@ export async function signUp(email: string, password: string, role: Exclude<Role
   })
   if (error) throw error
   if (data.user) {
-    // Supabase may require email confirmation; the auth trigger creates the profile
-    // in that case. This upsert also ensures the profile is complete when a session
-    // is immediately available.
     const { error: profileError } = await supabase.from('profiles').upsert({
       id: data.user.id,
       email: normalizedEmail,
@@ -61,40 +60,42 @@ export async function signUp(email: string, password: string, role: Exclude<Role
       trips_completed: 0,
       rating: 5.0,
       is_online: false,
-      ...(role === 'passenger' || role === 'rider'
-        ? { verification_status: 'pending', is_verified: false }
-        : {})
+      // FIXED: Was 'pending' - blocked safety modal. Must match App.tsx + PassengerHome
+      verification_status: 'not_started',
+      is_verified: false,
     } as any, { onConflict: 'id' })
     if (profileError && data.session) throw profileError
   }
   return data.user
 }
 
-// === ADDED: SELFIE LOCK - Monday & Saturday (for both drivers & passengers) ===
+// Selfie lock - Monday & Saturday (drivers & passengers)
 export async function checkSelfieLock(userId: string): Promise<boolean> {
-  const now = new Date();
-  const day = now.getDay(); // 1=Monday, 6=Saturday (0=Sunday)
-
-  const isLockDay = (day === 1 || day === 6);
-  if (!isLockDay) return true; // Not lock day, allow
+  const now = new Date()
+  const day = now.getDay() // 1=Monday, 6=Saturday
+  const isLockDay = (day === 1 || day === 6)
+  if (!isLockDay) return true
 
   const { data } = await supabase
   .from('profiles')
   .select('last_selfie_date')
   .eq('id', userId)
-  .single();
+  .single()
 
-  const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
-  if (data?.last_selfie_date === today) return true; // Already did today
+  // FIXED: Use local SA date, not UTC. toISOString() is UTC - in Polokwane at 01:00, UTC is still yesterday
+  const today = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+  if (data?.last_selfie_date === today) return true
 
-  return false; // Force selfie screen
+  return false
 }
 
 export async function updateSelfieDate(userId: string, selfieUrl: string) {
-  const today = new Date().toISOString().split('T')[0];
+  // FIXED: Same local date fix
+  const now = new Date()
+  const today = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
   const { error } = await supabase.from('profiles').update({
     last_selfie_date: today,
     last_selfie_url: selfieUrl
-  } as any).eq('id', userId);
-  if (error) throw error;
+  } as any).eq('id', userId)
+  if (error) throw error
 }

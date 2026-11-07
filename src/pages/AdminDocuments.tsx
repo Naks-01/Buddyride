@@ -82,7 +82,6 @@ function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'document_url'>)
 function hasRealDocument(doc?: Pick<StoredDocument, 'file_url'>) {
   const filePath = getDocumentUrl(doc)
   if (isFakeFile(filePath)) return false
-
   if (/^https?:\/\//i.test(filePath)) {
     try {
       const fileUrl = new URL(filePath)
@@ -92,7 +91,6 @@ function hasRealDocument(doc?: Pick<StoredDocument, 'file_url'>) {
       return false
     }
   }
-
   const separator = filePath.indexOf(':')
   const bucket = separator >= 0 ? filePath.slice(0, separator) : 'driver-documents'
   const path = separator >= 0 ? filePath.slice(separator + 1) : filePath
@@ -144,7 +142,6 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       setError('No document uploaded yet')
       return
     }
-
     const newWindow = window.open('about:blank', '_blank')
     try {
       const signedUrl = await createDriverDocumentSignedUrl(docUrl)
@@ -258,7 +255,6 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       }
       let { error: updateError } = await update(changes)
       if (updateError) throw updateError
-
       const linkedTypes = new Set(linkedDriverDocumentTypes(doc.doc_type))
       const updateLocal = (documents: StoredDocument[]) => documents.map(item =>
         item.id === doc.id || (item.driver_id === doc.driver_id && linkedTypes.has(item.doc_type)) ? {
@@ -270,7 +266,6 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         } : item
       )
       setDriverDocs(updateLocal)
-
       let verificationSyncError = ''
       if (status === 'rejected') {
         const profileId = doc.driver_id || doc.user_id || doc.profiles?.id
@@ -444,10 +439,10 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
     const docUrl = getDocumentUrl(doc)
     const requirement = DRIVER_DOCUMENTS.find(item => item.id === id)
     const expired = isExpired(doc?.expiry_date)
-    const documentDateMissing = !doc?.document_date
+    // FIXED: Only expiring docs need a date. Non-expiring docs NEVER show DATE MISSING
     const expiryDateMissing = Boolean(requirement?.expiryRequired && !doc?.expiry_date)
     const canViewDocument = status !== 'MISSING' && hasRealDocument(doc)
-    const canApproveDocument = Boolean(doc && canViewDocument && !documentDateMissing && !expiryDateMissing && !expired)
+    const canApproveDocument = Boolean(doc && canViewDocument && !expiryDateMissing && !expired)
     const badgeColors: Record<string, { color: string, background: string }> = {
       VERIFIED: { color:'#86efac', background:'#14532d' },
       MISSING: { color:'#fde68a', background:'#713f12' },
@@ -463,9 +458,8 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
         <strong>{label}</strong>{!required && <span style={{fontSize:'11px', color:'#9ca3af'}}> (Optional)</span>}
         <span style={{display:'inline-block', marginTop:'4px', padding:'3px 8px', borderRadius:'999px', fontSize:'11px', fontWeight:700, color:badge.color, background:badge.background}}>{status}</span>
         <div style={{fontSize:'12px', color:'#d1d5db', marginTop:4}}>
-          Doc Date: {doc?.document_date || '—'} | Expires: {doc?.expiry_date || '—'}
+          {requirement?.expiryRequired ? `Expires: ${doc?.expiry_date || '—'}` : 'No expiry - no date needed'}
         </div>
-        {documentDateMissing && <div role="alert" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>DATE MISSING - Reject</div>}
         {expiryDateMissing && <div role="alert" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRY DATE MISSING - Reject</div>}
         {expired && <div role="status" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRED</div>}
         {isFakeFile(docUrl) && <div role="status" style={{fontSize:'12px', color:'#fbbf24'}}>No real file uploaded - test data</div>}
@@ -473,7 +467,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
         <button disabled={!canViewDocument} title={isFakeFile(docUrl)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed', opacity:canViewDocument?1:0.5}}>Preview</button>
-        <button disabled={!canApproveDocument || loadingId===doc?.id} title={documentDateMissing ? 'Document date is required' : expiryDateMissing ? 'Expiry date is required' : expired ? 'Expired documents cannot be approved' : undefined} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
+        <button disabled={!canApproveDocument || loadingId===doc?.id} title={expiryDateMissing ? 'Expiry date is required' : expired ? 'Expired documents cannot be approved' : undefined} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background:'#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Approve</button>
         <button disabled={!doc || loadingId===doc.id} onClick={()=>doc && setRejectModal({id:doc.id,kind:'driver-document'})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none'}}>Reject</button>
       </div>
     </div>
@@ -543,9 +537,10 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           const missingRequired = DRIVER_DOCUMENTS.filter(requirement =>
             !hasRealDocument(findDriverRequirementDocument(docs, requirement.id)),
           )
+          // FIXED: Only expiry missing blocks approval, not document_date
           const missingDates = DRIVER_DOCUMENTS.filter(requirement => {
             const doc = findDriverRequirementDocument(docs, requirement.id)
-            return Boolean(doc && (!doc.document_date || (requirement.expiryRequired && !doc.expiry_date)))
+            return Boolean(doc && requirement.expiryRequired && !doc.expiry_date)
           })
           const rejectedRequirements = DRIVER_DOCUMENTS.filter(requirement =>
             findDriverRequirementDocument(docs, requirement.id)?.status.trim().toUpperCase() === 'REJECTED',
@@ -553,7 +548,7 @@ export function AdminDocuments({ profile: _profile, onBack }: { profile: Profile
           const expiredCount = expiredRequirements.length
           const blockingReasons = [
             missingRequired.length ? `Missing: ${missingRequired.map(document => document.label).join(', ')}` : '',
-            missingDates.length ? `Date missing: ${missingDates.map(document => document.label).join(', ')}` : '',
+            missingDates.length ? `Expiry missing: ${missingDates.map(document => document.label).join(', ')}` : '',
             expiredCount ? `Expired: ${expiredRequirements.map(document => document.label).join(', ')}` : '',
             rejectedRequirements.length ? `Rejected: ${rejectedRequirements.map(document => document.label).join(', ')}` : '',
           ].filter(Boolean)

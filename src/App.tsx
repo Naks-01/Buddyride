@@ -25,7 +25,7 @@ const PassengerHome = lazy(() => import('./pages/PassengerHome').then(module => 
 
 const ADMIN_EMAIL = 'buddyride@outlook.com'
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
-const selfieSkipKey = (userId: string) => `buddyride_selfie_skip_${userId}`
+const selfieSkipKey = (userId: string) => 'buddyride_selfie_skip_' + userId
 
 function getMetadataRole(user: { user_metadata?: Record<string, unknown> }): Exclude<Role, 'admin'> | undefined {
   const role = user.user_metadata?.role
@@ -38,7 +38,6 @@ async function compressSelfie(file: File): Promise<Blob> {
     const image = new Image()
     image.src = imageUrl
     await image.decode()
-
     const scale = Math.min(1, 800 / image.width, 800 / image.height)
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(image.width * scale))
@@ -46,28 +45,19 @@ async function compressSelfie(file: File): Promise<Blob> {
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Could not prepare the selfie image')
     context.drawImage(image, 0, 0, canvas.width, canvas.height)
-
     const compressed = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(blob => {
-        if (blob) resolve(blob)
-        else reject(new Error('Could not compress the selfie image'))
-      }, 'image/jpeg', 0.7)
+      canvas.toBlob(blob => { if (blob) resolve(blob); else reject(new Error('Could not compress the selfie image')) }, 'image/jpeg', 0.7)
     })
     return compressed
-  } finally {
-    URL.revokeObjectURL(imageUrl)
-  }
+  } finally { URL.revokeObjectURL(imageUrl) }
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
   const [index, setIndex] = useState(0)
   const [failed, setFailed] = useState(false)
-  if (failed) return <div className={`brand ${compact? 'brand-compact' : ''}`}><div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div></div>
-  return <div className={`brand ${compact? 'brand-compact' : ''}`}>
-    <img src={logoCandidates[index]} onError={() => {
-      if (index < logoCandidates.length - 1) setIndex((i: number) => i+1)
-      else setFailed(true)
-    }} alt="BuddyRide logo" />
+  if (failed) return <div className={'brand ' + (compact ? 'brand-compact' : '')}><div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div></div>
+  return <div className={'brand ' + (compact ? 'brand-compact' : '')}>
+    <img src={logoCandidates[index]} onError={() => { if (index < logoCandidates.length - 1) setIndex((i: number) => i + 1); else setFailed(true) }} alt="BuddyRide logo" />
     <div><strong>BuddyRide</strong><span>Limpopo eHailing</span></div>
   </div>
 }
@@ -84,7 +74,7 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [page, setPage] = useState<'home'|'landing'|'driver-docs'|'admin-docs'|'admin-documents'|'admin-dashboard'|'admin-rides'|'admin-passengers'|'admin-finance'|'admin-support'|'admin-zones'|'admin-settings'>('landing')
+  const [page, setPage] = useState<'home' | 'landing' | 'driver-docs' | 'admin-docs' | 'admin-documents' | 'admin-dashboard' | 'admin-rides' | 'admin-passengers' | 'admin-finance' | 'admin-support' | 'admin-zones' | 'admin-settings'>('landing')
   const [showLanding, setShowLanding] = useState(true)
   const [showSelfieCheck, setShowSelfieCheck] = useState(false)
   const [selfieBusy, setSelfieBusy] = useState(false)
@@ -98,27 +88,18 @@ export default function App() {
     if (replace) window.history.replaceState(null, '', path)
     else window.history.pushState(null, '', path)
     setDriverPath(path)
+    setCurrentPath(path)
   }, [])
 
-  const shouldVerifyAdminAccess = Boolean(profile && (
-    profile.role === 'admin'
-    || page.startsWith('admin-')
-    || currentPath === '/admin'
-    || currentPath.startsWith('/admin/')
-  ))
-  const hasAdminAccess = Boolean(
-    profile
-    && profile.role === 'admin'
-    && profile.email?.trim().toLowerCase() === ADMIN_EMAIL
-    && verifiedAdminUserId === profile.id,
-  )
+  // FIXED: Only verify admin when actually on /admin route, not when page state is admin-*
+  const shouldVerifyAdminAccess = Boolean(profile && (profile.role === 'admin' || currentPath === '/admin' || currentPath.startsWith('/admin/')))
+  const hasAdminAccess = Boolean(profile && profile.role === 'admin' && profile.email?.trim().toLowerCase() === ADMIN_EMAIL && verifiedAdminUserId === profile.id)
 
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
     setLoading(true)
     try {
       let result = await getProfile(userId)
       const isOwner = userEmail?.toLowerCase() === ADMIN_EMAIL
-      
       if (!result) {
         let finalRole = preferredRole ?? 'passenger'
         if (finalRole === 'admin' && !isOwner) finalRole = 'passenger'
@@ -128,11 +109,10 @@ export default function App() {
           full_name: fullNameValue ?? null,
           phone_number: phoneValue ?? null,
           phone: phoneValue ?? null,
-          ...(finalRole === 'passenger' || finalRole === 'rider'
-            ? { verification_status: 'pending', is_verified: false }
-            : {}),
+          // FIXED: passenger starts as not_started, not pending - pending blocks safety modal
+          ...(finalRole === 'passenger' ? { verification_status: 'not_started', is_verified: false } : {}),
+          ...(finalRole === 'driver' ? { verification_status: 'not_started', is_verified: false } : {}),
         }
-        
         const { data, error } = await supabase.from('profiles').upsert(upsertData, { onConflict: 'id' }).select('*').single()
         if (error) throw error
         result = data as Profile
@@ -143,49 +123,33 @@ export default function App() {
           result.role = 'admin'
         }
       }
-      console.log('PROFILE ROLE:', result.role)
       setProfile(result)
       setShowLanding(false)
-      const driverEntryPath = getDriverEntryPath(
-        result.role,
-        result.verification_status,
-        window.location.pathname,
-      )
+      const driverEntryPath = getDriverEntryPath(result.role, result.verification_status, window.location.pathname)
       if (driverEntryPath && driverEntryPath !== window.location.pathname) {
         navigateDriverPath(driverEntryPath, true)
       }
-      
       try {
         const { data: { user }, error } = await supabase.auth.getUser()
-        const userEmail = !error ? user?.email?.toLowerCase() : undefined
-        if (userEmail && userEmail === ADMIN_EMAIL) {
+        const userEmail2 = !error ? user?.email?.toLowerCase() : undefined
+        if (userEmail2 && userEmail2 === ADMIN_EMAIL) {
           setShowSelfieCheck(false)
         } else {
           const canPass = await checkSelfieLock(userId)
           const skippedToday = localStorage.getItem(selfieSkipKey(userId)) === new Date().toISOString().split('T')[0]
           setShowSelfieCheck(!canPass && !skippedToday)
         }
-      } catch {
-        setShowSelfieCheck(false)
-      }
+      } catch { setShowSelfieCheck(false) }
     } catch (error: any) {
       setMessage(error instanceof Error ? error.message : 'Could not load your profile.')
       setProfile(null)
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [navigateDriverPath])
 
-  useEffect(() => {
-    const t = window.setTimeout(() => setSplashVisible(false), 1900)
-    return () => window.clearTimeout(t)
-  }, [])
+  useEffect(() => { const t = window.setTimeout(() => setSplashVisible(false), 1900); return () => window.clearTimeout(t) }, [])
 
   useEffect(() => {
-    const handlePopState = () => {
-      setDriverPath(window.location.pathname)
-      setCurrentPath(window.location.pathname)
-    }
+    const handlePopState = () => { setDriverPath(window.location.pathname); setCurrentPath(window.location.pathname) }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
@@ -200,35 +164,24 @@ export default function App() {
       } else if (active) setLoading(false)
     })
     const { data: listener } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
-      if (!session?.user) { setProfile(null); setLoading(false); setShowLanding(true) }
+      if (!session?.user) { setProfile(null); setLoading(false); setShowLanding(true); setVerifiedAdminUserId(null); setCheckedAdminUserId(null) }
       else { void loadProfile(session.user.id, session.user.email ?? null, getMetadataRole(session.user)) }
     })
     return () => { active = false; listener.subscription.unsubscribe() }
   }, [loadProfile])
 
   useEffect(() => {
-    if (!profile || !shouldVerifyAdminAccess) {
-      setVerifiedAdminUserId(null)
-      return
-    }
-
+    if (!profile || !shouldVerifyAdminAccess) { setVerifiedAdminUserId(null); return }
     let active = true
     void (async () => {
       const { data: { user }, error } = await supabase.auth.getUser()
       if (!active) return
       const userEmail = user?.email?.toLowerCase()
       setCheckedAdminUserId(profile.id)
-      if (
-        error
-        || userEmail !== ADMIN_EMAIL
-        || profile.email?.trim().toLowerCase() !== ADMIN_EMAIL
-        || profile.role !== 'admin'
-      ) {
+      if (error || userEmail !== ADMIN_EMAIL || profile.email?.trim().toLowerCase() !== ADMIN_EMAIL || profile.role !== 'admin') {
         setVerifiedAdminUserId(null)
-        setPage('home')
-        window.history.replaceState(null, '', '/')
-        setCurrentPath('/')
-        setAdminToast('Unauthorized')
+        // FIXED: Don't force setPage('home') + history replace here - causes loop. Just toast.
+        setAdminToast('Unauthorized - admin access required')
         return
       }
       setVerifiedAdminUserId(profile.id)
@@ -236,11 +189,7 @@ export default function App() {
     return () => { active = false }
   }, [profile?.id, profile?.role, profile?.email, shouldVerifyAdminAccess])
 
-  useEffect(() => {
-    if (!adminToast) return
-    const timeout = window.setTimeout(() => setAdminToast(''), 3000)
-    return () => window.clearTimeout(timeout)
-  }, [adminToast])
+  useEffect(() => { if (!adminToast) return; const timeout = window.setTimeout(() => setAdminToast(''), 3000); return () => window.clearTimeout(timeout) }, [adminToast])
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setMessage('')
@@ -254,7 +203,7 @@ export default function App() {
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
-        if (error) throw error;
+        if (error) throw error
         if (data.user) await loadProfile(data.user.id, data.user.email ?? null, getMetadataRole(data.user))
       }
     } catch (error: any) { setMessage(error instanceof Error ? error.message : 'Auth failed.') } finally { setBusy(false) }
@@ -263,11 +212,10 @@ export default function App() {
   async function handleSelfieUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !profile) return
-    setSelfieBusy(true)
-    setMessage('')
+    setSelfieBusy(true); setMessage('')
     try {
       const compressed = await compressSelfie(file)
-      const fileName = `${profile.id}/${Date.now()}.jpg`
+      const fileName = profile.id + '/' + Date.now() + '.jpg'
       const { error: uploadError } = await supabase.storage.from('safety-selfies').upload(fileName, compressed, { contentType: 'image/jpeg' })
       if (uploadError) throw uploadError
       const today = new Date().toISOString().split('T')[0]
@@ -289,7 +237,7 @@ export default function App() {
   if (currentPath === '/terms') return <TermsPage />
   if (currentPath === '/privacy') return <PrivacyPage />
 
-  if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
+  if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading ? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
     if (shouldVerifyAdminAccess && checkedAdminUserId !== profile.id && !adminToast) {
@@ -298,16 +246,12 @@ export default function App() {
     if (adminToast) {
       return <>
         <div role="status" style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700, boxShadow: '0 4px 16px rgba(0,0,0,.25)' }}>{adminToast}</div>
-        {profile.role === 'driver'
-          ? <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
-          : <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}><PassengerHome profile={profile} /></Suspense>}
+        {profile.role === 'driver' ? <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense> : <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}><PassengerHome profile={profile} /></Suspense>}
       </>
     }
-    if (profile.role === 'driver' && ['pending', 'pending_verification'].includes(profile.verification_status ?? '')) {
-      return <DriverPendingPage />
-    }
+    // FIXED: Removed early DriverPendingPage block - it blocked onboarding. Guard handles pending now.
     if (showSelfieCheck) {
-      return <main className="auth-page"><section className="auth-card" style={{textAlign:'center'}}><Brand /><h1>Safety Check</h1><p style={{fontSize:'14px', marginBottom:'16px'}}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{margin:'16px 0'}} />{selfieBusy && <p>Verifying...</p>}<button onClick={skipSelfieCheck} style={{ marginTop: 12, background: 'none', border: 'none', color: '#9ca3af', fontSize: 12 }}>Skip for now</button></section></main>
+      return <main className="auth-page"><section className="auth-card" style={{ textAlign: 'center' }}><Brand /><h1>Safety Check</h1><p style={{ fontSize: '14px', marginBottom: '16px' }}>Safety first! Take a selfie to continue.</p><input type="file" accept="image/*" capture="user" onChange={handleSelfieUpload} style={{ margin: '16px 0' }} />{selfieBusy && <p>Verifying...</p>}<button onClick={skipSelfieCheck} style={{ marginTop: 12, background: 'none', border: 'none', color: '#9ca3af', fontSize: 12 }}>Skip for now</button></section></main>
     }
     const navigationRideId = window.location.pathname.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {
@@ -320,24 +264,25 @@ export default function App() {
         return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
       }
       if (driverRoute === '/driver/dashboard' || driverRoute === '/driver') {
-        return <DriverDashboardGuard
-          profile={profile}
-          onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}
-        >
+        return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
           <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
         </DriverDashboardGuard>
       }
+      // FIXED: Pending driver who has NOT submitted docs goes to onboarding, not pending page
+      if (['pending', 'pending_verification'].includes(profile.verification_status ?? '')) {
+        return <DriverPendingPage />
+      }
     }
-    if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={()=> setPage('home')} />
-    if (hasAdminAccess && (page === 'admin-docs' || page === 'admin-documents')) return <AdminDocuments profile={profile} onBack={()=> setPage('home')} />
-    if (hasAdminAccess && page === 'admin-dashboard') return <AdminDashboard onBack={()=> setPage('home')} />
-    if (hasAdminAccess && page === 'admin-rides') return <AdminRides onBack={()=> setPage('home')} />
-    if (hasAdminAccess && page === 'admin-passengers') return <AdminPassengers onBack={()=> setPage('home')} />
-    if (hasAdminAccess && page === 'admin-finance') return <AdminFinance onBack={()=> setPage('home')} />
-    if (hasAdminAccess && page === 'admin-support') return <AdminSupport onBack={()=> setPage('home')} />
-    if (hasAdminAccess && page === 'admin-zones') return <AdminZones onBack={()=> setPage('home')} />
-    if (hasAdminAccess && page === 'admin-settings') return <AdminSettings onBack={()=> setPage('home')} />
-    if (hasAdminAccess) return <AdminHome profile={profile} onDocs={()=> setPage('admin-docs')} onAdminModule={(m: any) => setPage(m as any)} />
+    if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={() => setPage('home')} />
+    if (hasAdminAccess && (page === 'admin-docs' || page === 'admin-documents')) return <AdminDocuments profile={profile} onBack={() => setPage('home')} />
+    if (hasAdminAccess && page === 'admin-dashboard') return <AdminDashboard onBack={() => setPage('home')} />
+    if (hasAdminAccess && page === 'admin-rides') return <AdminRides onBack={() => setPage('home')} />
+    if (hasAdminAccess && page === 'admin-passengers') return <AdminPassengers onBack={() => setPage('home')} />
+    if (hasAdminAccess && page === 'admin-finance') return <AdminFinance onBack={() => setPage('home')} />
+    if (hasAdminAccess && page === 'admin-support') return <AdminSupport onBack={() => setPage('home')} />
+    if (hasAdminAccess && page === 'admin-zones') return <AdminZones onBack={() => setPage('home')} />
+    if (hasAdminAccess && page === 'admin-settings') return <AdminSettings onBack={() => setPage('home')} />
+    if (hasAdminAccess) return <AdminHome profile={profile} onDocs={() => setPage('admin-docs')} onAdminModule={(m: any) => setPage(m as any)} />
     if (profile.role === 'driver') {
       return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
     }
@@ -346,21 +291,20 @@ export default function App() {
 
   if (showLanding) return <LandingPage onLogin={() => setShowLanding(false)} />
 
-  // Admin locked to buddyride@outlook.com via DB trigger
   return <main className="auth-page">
-    <section className="auth-card" style={{position:'relative'}}>
-      <button onClick={()=> setShowLanding(true)} style={{marginBottom:'10px', background:'none', border:'none', fontSize:'14px'}}>← Back to Home</button>
-      <Brand /><h1>{mode === 'login'? 'Welcome back' : 'Create your account'}</h1>
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'16px'}}>
-        <button type="button" onClick={() => setRole('passenger')} style={{padding:'10px', borderRadius:'10px', fontWeight:600, border: role==='passenger'? '2px solid black' : '1px solid #e5e7eb', background: role==='passenger'? '#111' : 'white', color: role==='passenger'? 'white' : 'black'}}>👤 Passenger</button>
-        <button type="button" onClick={() => setRole('driver')} style={{padding:'10px', borderRadius:'10px', fontWeight:600, border: role==='driver'? '2px solid black' : '1px solid #e5e7eb', background: role==='driver'? '#111' : 'white', color: role==='driver'? 'white' : 'black'}}>🚗 Driver</button>
+    <section className="auth-card" style={{ position: 'relative' }}>
+      <button onClick={() => setShowLanding(true)} style={{ marginBottom: '10px', background: 'none', border: 'none', fontSize: '14px' }}>← Back to Home</button>
+      <Brand /><h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+        <button type="button" onClick={() => setRole('passenger')} style={{ padding: '10px', borderRadius: '10px', fontWeight: 600, border: role === 'passenger' ? '2px solid black' : '1px solid #e5e7eb', background: role === 'passenger' ? '#111' : 'white', color: role === 'passenger' ? 'white' : 'black' }}>👤 Passenger</button>
+        <button type="button" onClick={() => setRole('driver')} style={{ padding: '10px', borderRadius: '10px', fontWeight: 600, border: role === 'driver' ? '2px solid black' : '1px solid #e5e7eb', background: role === 'driver' ? '#111' : 'white', color: role === 'driver' ? 'white' : 'black' }}>🚗 Driver</button>
       </div>
       <form onSubmit={submit}>
         {mode === 'signup' && <><label>Full name<input value={fullName} onChange={(e: any) => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={(e: any) => setPhone(e.target.value)} required /></label></>}
         <label>Email<input type="email" value={email} onChange={(e: any) => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} required /></label>
-        <button className="primary full-width" disabled={busy} type="submit">{busy? 'Wait…' : mode === 'login'? 'Log in' : 'Create account'}</button>
+        <button className="primary full-width" disabled={busy} type="submit">{busy ? 'Wait…' : mode === 'login' ? 'Log in' : 'Create account'}</button>
       </form>
-      <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login'? 'signup' : 'login'); setMessage('') }}>{mode === 'login'? 'No account? Sign up' : 'Already registered? Log in'}</button>
+      <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setMessage('') }}>{mode === 'login' ? 'No account? Sign up' : 'Already registered? Log in'}</button>
       {message && <div className="notice">{message}</div>}
     </section>
   </main>

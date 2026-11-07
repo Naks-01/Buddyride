@@ -6,50 +6,60 @@ type AdminModule = 'admin-dashboard'|'admin-documents'|'admin-rides'|'admin-pass
 type Props = { profile: Profile, onDocs: () => void, onAdminModule: (page: AdminModule) => void }
 
 export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
-  const [stats, setStats] = useState({ rides: 0, drivers: 0, passengers: 0, active: 0, revenue: 0 })
+  const [stats, setStats] = useState({ rides: 0, drivers: 0, passengers: 0, active: 0, revenue: 0, pendingDrivers: 0 })
   const [pendingDocumentCounts, setPendingDocumentCounts] = useState({ drivers: 0, passengers: 0, total: 0 })
   const [documentCountError, setDocumentCountError] = useState('')
   const [tab, setTab] = useState<'overview'|'finance'|'zones'>('overview')
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    (async () => {
-      const { count: ridesCount } = await supabase.from('rides').select('*', { count: 'exact', head: true })
-      const { count: driversCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'driver')
-      const { count: passengersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'passenger')
-      const { count: activeCount } = await supabase.from('driver_status').select('*', { count: 'exact', head: true }).eq('is_online', true)
-      const requiredDocumentNames = REQUIRED_DOCS.map(document => document.label)
-      const [pendingDriversResult, totalDriversResult, pendingPassengersResult] = await Promise.all([
-        supabase.from('driver_documents')
-          .select('id', { count: 'exact', head: true })
-          .in('document_type', requiredDocumentNames)
-          .ilike('status', 'pending'),
-        supabase.from('driver_documents')
-          .select('id', { count: 'exact', head: true }),
-          
-        supabase.from('profiles')
-          .select('id', { count: 'exact', head: true })
-          .eq('role', 'passenger')
-          .eq('verification_status', 'pending_verification'),
-      ])
-      if (pendingDriversResult.error || totalDriversResult.error || pendingPassengersResult.error) {
-        setDocumentCountError(
-          pendingDriversResult.error?.message
-          || totalDriversResult.error?.message
-          || pendingPassengersResult.error?.message
-          || 'Could not load pending document counts.',
-        )
-      } else {
-        setPendingDocumentCounts({
-          drivers: pendingDriversResult.count || 0,
-          passengers: pendingPassengersResult.count || 0,
-          total: totalDriversResult.count || 0,
-        })
-      }
-      const { data: completedRides } = await supabase.from('rides').select('buddyride_commission').in('status', ['completed', 'rated'])
-      const revenue = (completedRides || []).reduce((total, ride) => total + Number(ride.buddyride_commission || 0), 0)
-      setStats({ rides: ridesCount||0, drivers: driversCount||0, passengers: passengersCount||0, active: activeCount||0, revenue })
-    })()
-  }, [])
+  async function load() {
+    setLoading(true)
+    const [ridesRes, driversRes, passengersRes, activeRes] = await Promise.all([
+      supabase.from('rides').select('*', { count: 'exact', head: true }),
+      supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'driver'),
+      supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'passenger'),
+      supabase.from('driver_status').select('*', { count: 'exact', head: true }).eq('is_online', true),
+    ])
+    // FIXED: Use document.type (sa_id) not label (SA ID) + also check doc_type column
+    const requiredTypes = REQUIRED_DOCS.map(document => document.type)
+    const [pendingDriversResult, totalDriversResult, pendingPassengersResult, pendingProfilesResult] = await Promise.all([
+      supabase.from('driver_documents')
+        .select('id', { count: 'exact', head: true })
+        .or(`document_type.in.(${requiredTypes.join(',')}),doc_type.in.(${requiredTypes.join(',')})`)
+        .ilike('status', 'pending'),
+      supabase.from('driver_documents')
+        .select('id', { count: 'exact', head: true }),
+      supabase.from('profiles')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'passenger')
+        .eq('verification_status', 'pending_verification'),
+      supabase.from('profiles')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'driver')
+        .eq('verification_status', 'pending_verification'),
+    ])
+    if (pendingDriversResult.error || totalDriversResult.error || pendingPassengersResult.error) {
+      setDocumentCountError(
+        pendingDriversResult.error?.message
+        || totalDriversResult.error?.message
+        || pendingPassengersResult.error?.message
+        || 'Could not load pending document counts.',
+      )
+    } else {
+      setPendingDocumentCounts({
+        drivers: pendingDriversResult.count || 0,
+        passengers: pendingPassengersResult.count || 0,
+        total: totalDriversResult.count || 0,
+      })
+    }
+    // FIXED: Fallback to 20% of fare when buddyride_commission is null
+    const { data: completedRides } = await supabase.from('rides').select('fare,buddyride_commission').in('status', ['completed', 'rated'])
+    const revenue = (completedRides || []).reduce((total, ride: any) => total + Number(ride.buddyride_commission ?? Math.round(Number(ride.fare || 0) * 0.2)), 0)
+    setStats({ rides: ridesRes.count||0, drivers: driversRes.count||0, passengers: passengersRes.count||0, active: activeRes.count||0, revenue, pendingDrivers: pendingProfilesResult.count || 0 })
+    setLoading(false)
+  }
+
+  useEffect(() => { void load() }, [])
 
   const card: any = { background:'#1e293b', borderRadius:'16px', padding:'14px', marginBottom:'12px', color:'white' }
   const grid2: any = { display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }
@@ -62,7 +72,10 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
           <h1 style={{ fontSize:'22px', fontWeight:'bold', margin:0 }}>Admin Command Center</h1>
           <p style={{ fontSize:'12px', color:'#94a3b8', margin:0 }}>Welcome {profile.full_name || profile.email} 👑</p>
         </div>
-        <button onClick={() => supabase.auth.signOut()} style={{ padding:'8px 14px', borderRadius:'999px', background:'#334155', color:'white', border:'none', fontSize:'12px' }}>Log out</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => load()} style={{ padding:'8px 14px', borderRadius:'999px', background:'#0ea5e9', color:'white', border:'none', fontSize:'12px' }}>{loading ? '...' : '↻ Refresh'}</button>
+          <button onClick={() => supabase.auth.signOut()} style={{ padding:'8px 14px', borderRadius:'999px', background:'#334155', color:'white', border:'none', fontSize:'12px' }}>Log out</button>
+        </div>
       </div>
 
       <div style={grid2}>
@@ -71,6 +84,13 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
         <div style={card}><p style={{ fontSize:'10px', color:'#94a3b8' }}>PASSENGERS</p><p style={{ fontSize:'22px', fontWeight:'bold' }}>{stats.passengers}</p></div>
         <div style={{...card, background:'#f97316' }}><p style={{ fontSize:'10px' }}>RECORDED PLATFORM COMMISSION</p><p style={{ fontSize:'22px', fontWeight:'bold' }}>R {stats.revenue.toFixed(2)}</p><p style={{ fontSize:'11px' }}>From completed rides</p></div>
       </div>
+
+      {stats.pendingDrivers > 0 && (
+        <div style={{ background: '#7f1d1d', borderRadius: 16, padding: 14, marginBottom: 12 }}>
+          <p style={{ margin: 0, fontWeight: 'bold' }}>⚠️ {stats.pendingDrivers} driver(s) waiting for approval</p>
+          <button onClick={onDocs} style={{ marginTop: 8, width: '100%', padding: 12, borderRadius: 10, background: 'white', color: 'black', fontWeight: 'bold', border: 'none' }}>Approve Now →</button>
+        </div>
+      )}
 
       <div style={{ display:'flex', gap:'8px', marginBottom:'14px', overflowX:'auto' }}>
         <button onClick={()=>setTab('overview')} style={btnTab(tab==='overview')}>📊 Overview</button>
@@ -91,7 +111,7 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
               👑 Approve Documents {pendingDocumentCounts.drivers}
             </p>
             <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>
-              Driver documents pending: {pendingDocumentCounts.drivers} · Passengers pending: {pendingDocumentCounts.passengers}
+              Driver documents pending: {pendingDocumentCounts.drivers} · Passengers pending: {pendingDocumentCounts.passengers} · Drivers waiting: {stats.pendingDrivers}
             </p>
             {documentCountError && <p role="alert" style={{ fontSize:'12px', color:'#fca5a5' }}>Could not load document counts: {documentCountError}</p>}
             <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>Verify driver IDs, licenses, vehicles + passenger IDs + selfies</p>

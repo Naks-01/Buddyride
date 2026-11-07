@@ -24,16 +24,22 @@ export const EXPIRING_DRIVER_DOCUMENT_TYPES = new Set(
 
 export const REQUIRED_DOCS_ALL = REQUIRED_DOCS
 export const DRIVER_DOCUMENTS = REQUIRED_DOCS
-export const PASSENGER_DOCUMENTS = REQUIRED_DOCS
+
+export const PASSENGER_DOCUMENTS = [
+  { type: 'sa_id', label: 'SA ID', section: 'Identity' },
+  { type: 'profile_photo', label: 'Profile Photo', section: 'Identity' },
+  { type: 'selfie', label: 'Selfie (face verification)', section: 'Identity' },
+]
+
 export type DriverDocumentType = string
-export type DocumentRequirement = { type: string; label: string }
+export type DocumentRequirement = { type: string; label: string; section?: string; expiryRequired?: boolean; helper?: string }
 
 export function normalizeDocType(type: any): string {
   const t = String(type || '').toLowerCase().trim().replace(/[_/-]+/g,' ').replace(/\s+/g,' ')
   const vehiclePhoto = t.match(/^(?:vehicle|car) photos? (\d+)$/)
-  if (vehiclePhoto) return `vehicle_photo_${vehiclePhoto[1]}`
+  if (vehiclePhoto) return 'vehicle_photo_' + vehiclePhoto[1]
   const interiorPhoto = t.match(/^vehicle interior photos? (\d+)$/)
-  if (interiorPhoto) return `vehicle_interior_photo_${interiorPhoto[1]}`
+  if (interiorPhoto) return 'vehicle_interior_photo_' + interiorPhoto[1]
   if (['profile', 'profile photo'].includes(t)) return 'profile_photo'
   if (['selfie', 'selfie face verification', 'face selfie'].includes(t)) return 'selfie'
   if (['sa id', 'sa id passport', 'id document', 'id doc', 'id', 'passport'].includes(t)) return 'sa_id'
@@ -84,7 +90,11 @@ export async function createDriverDocumentSignedUrl(filePath?: string | null): P
   if (error) throw error
   return data.signedUrl
 }
-export async function createPassengerDocumentSignedUrl(filePath: string): Promise<string> { 
-  return createDriverDocumentSignedUrl(filePath) 
+export async function createPassengerDocumentSignedUrl(filePath: string): Promise<string> {
+  return createDriverDocumentSignedUrl(filePath)
 }
-export function getRequiredDocsForRole(_role: string) { return REQUIRED_DOCS }
+
+export function getRequiredDocsForRole(role: string) {
+  if (role === 'passenger' || role === 'rider') return PASSENGER_DOCUMENTS
+  return REQUIRED_DOCS
+}

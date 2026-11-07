@@ -12,7 +12,9 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
     cancellation: 0.0,
     phone: '',
     email: '',
-    earnings: 1320.00,
+    earnings: 0,
+    docsApproved: 0,
+    docsTotal: 15,
     loading: true
   })
   const [active, setActive] = useState('profile')
@@ -39,11 +41,33 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
       // 3. Calculate stats from rides if drivers table missing
       let acceptance = 82
       let rating = profile?.rating || 5.00
+      let earnings = 0
+      let cancellation = 0
       try {
-        const { data: rides } = await supabase.from('rides').select('status').eq('driver_id', user.id)
+        const { data: rides } = await supabase.from('rides').select('status,fare,driver_earnings').eq('driver_id', user.id)
         if (rides && rides.length > 0) {
-          const completed = rides.filter(r => r.status === 'completed' || r.status === 'rated').length
-          acceptance = Math.round((completed / rides.length) * 100) || 82
+          const completed = rides.filter(r => r.status === 'completed' || r.status === 'rated')
+          acceptance = Math.round((completed.length / rides.length) * 100) || 82
+          cancellation = Math.round((rides.filter(r => r.status === 'cancelled').length / rides.length) * 100 * 10) / 10
+          // Real earnings: sum driver_earnings or 80% of fare
+          earnings = rides.reduce((sum, r: any) => {
+            if (r.status !== 'completed' && r.status !== 'rated') return sum
+            return sum + Number(r.driver_earnings || (r.fare ? r.fare * 0.8 : 0))
+          }, 0)
+        }
+      } catch {}
+
+      // 4. Real docs count - 15 docs now, not 7
+      let docsApproved = 0
+      try {
+        const { data: docs } = await supabase.from('driver_documents').select('doc_type,status').eq('driver_id', user.id)
+        const profilePhotoApproved = profile?.avatar_url ? 1 : 0
+        const approvedDocs = docs?.filter(d => String(d.status).toLowerCase() === 'approved').length || 0
+        docsApproved = approvedDocs + profilePhotoApproved
+        // If docs table has duplicates, count unique types
+        if (docs && docs.length > 0) {
+          const uniqueApproved = new Set(docs.filter(d => String(d.status).toLowerCase() === 'approved').map(d => d.doc_type)).size
+          docsApproved = uniqueApproved + profilePhotoApproved
         }
       } catch {}
 
@@ -56,8 +80,10 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
         score: driverData?.driver_score || 95,
         rating: driverData?.rating || rating,
         acceptance: driverData?.acceptance_rate || acceptance,
-        cancellation: driverData?.cancellation_rate || 0,
+        cancellation: driverData?.cancellation_rate ?? cancellation,
         tier: driverData?.tier || 'Silver',
+        earnings,
+        docsApproved,
         loading: false
       }))
     }
@@ -106,7 +132,7 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
     { icon: '💳', label: 'Earnings', sub: `R ${driver.earnings.toFixed(2)}`, action: () => alert('Earnings: R' + driver.earnings) },
     { icon: '🚕', label: 'My Trips', action: () => window.location.href = '/trips' },
     { icon: '💰', label: 'Wallet / Payouts', action: () => alert('Wallet coming soon') },
-    { icon: '📄', label: 'Documents', sub: '7/7 Approved ✓', action: () => window.location.href = '/driver/documents' },
+    { icon: '📄', label: 'Documents', sub: `${driver.docsApproved}/${driver.docsTotal} Approved ${driver.docsApproved === driver.docsTotal ? '✓' : ''}`, action: () => window.location.href = '/driver/documents' },
     { icon: '🚗', label: 'Vehicles', action: () => alert('Vehicles') },
     { icon: '🛡️', label: 'Safety', action: () => alert('Safety Centre') },
     { icon: '⚙️', label: 'Settings', action: () => alert('Settings') },

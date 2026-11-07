@@ -3,7 +3,6 @@ import * as mapboxgl from 'mapbox-gl/esm'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { getRoute } from '../lib/mapbox'
 import { createRealtimeChannel } from '../lib/realtime'
-import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
@@ -16,6 +15,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const markerRef = useRef<mapboxgl.Marker | null>(null)
+  const destMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const latestLocationRef = useRef<[number, number] | null>(null)
   const lastLocationSyncRef = useRef(0)
   
@@ -35,6 +35,8 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
   const [activeStepIndex, setActiveStepIndex] = useState(0)
   const [now, setNow] = useState(Date.now())
   const [actionBusy, setActionBusy] = useState(false)
+  const [passenger, setPassenger] = useState<{ full_name?: string, phone?: string } | null>(null)
+  const [arrivedAt, setArrivedAt] = useState<number | null>(null)
 
   const rideStatus = String(ride?.status || '').toLowerCase()
   const isOnPickupLeg = ['accepted', 'driver_arriving', 'arrived', 'driver_arrived'].includes(rideStatus)
@@ -47,7 +49,6 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     return () => window.clearInterval(interval)
   }, [])
 
-  // Load ride + realtime
   useEffect(() => {
     let active = true
     setRideLoading(true)
@@ -55,42 +56,36 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
       .then(({ data, error }) => {
         if (!active) return
         if (error || !data) setRideError(error?.message || 'Ride not assigned to you')
-        else setRide(data as Ride)
+        else {
+          setRide(data as Ride)
+          if ((data as any).passenger_id) {
+            supabase.from('profiles').select('full_name,phone').eq('id', (data as any).passenger_id).single().then(({ data: p }) => { if (p) setPassenger(p as any) })
+          }
+          if (String((data as any).status).toLowerCase() === 'arrived' && (data as any).arrived_at) setArrivedAt(new Date((data as any).arrived_at).getTime())
+        }
         setRideLoading(false)
       })
-
     const channel = createRealtimeChannel(`driver-nav-${rideId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${rideId}` },
-        p => { if (active && p.new) setRide(p.new as Ride) }
+        p => { if (active && p.new) { setRide(p.new as Ride); if (String((p.new as any).status).toLowerCase() === 'arrived' && !arrivedAt) setArrivedAt(Date.now()) } }
       ).subscribe()
     return () => { active = false; void supabase.removeChannel(channel) }
   }, [profile.id, rideId])
 
-  // Location watch + sync to BOTH tables (profiles + driver_locations) - FIXED for RLS
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setLocationError('Location not available')
-      return
-    }
+    if (!navigator.geolocation) { setLocationError('Location not available'); return }
     const watchId = navigator.geolocation.watchPosition(pos => {
       const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude]
       if (latestLocationRef.current) {
         const [oldLng, oldLat] = latestLocationRef.current
         const dLng = coords[0] - oldLng; const dLat = coords[1] - oldLat
-        if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) {
-          setBearing((Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360)
-        }
+        if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) setBearing((Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360)
       }
       latestLocationRef.current = coords
-      setLocation(coords)
-      setLocationError('')
-
+      setLocation(coords); setLocationError('')
       if (Date.now() - lastLocationSyncRef.current < 3000) return
       lastLocationSyncRef.current = Date.now()
-      // Silent sync - don't break UI if RLS blocks
-      void supabase.from('driver_locations').upsert({
-        driver_id: profile.id, lat: coords[1], lng: coords[0], is_online: true, updated_at: new Date().toISOString()
-      }, { onConflict: 'driver_id' }).then(()=>{})
+      void supabase.from('driver_locations').upsert({ driver_id: profile.id, lat: coords[1], lng: coords[0], is_online: true, updated_at: new Date().toISOString() }, { onConflict: 'driver_id' }).then(()=>{})
       void supabase.from('profiles').update({ current_lat: coords[1], current_lng: coords[0] } as any).eq('id', profile.id).then(()=>{})
     }, err => setLocationError(err.message), { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 })
     return () => navigator.geolocation.clearWatch(watchId)
@@ -98,42 +93,29 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
 
   const hasLocation = location !== null
 
-  // Route refresh every 15s
   useEffect(() => {
     if (!ride || !target) return
-    let active = true
-    let refreshing = false
+    let active = true; let refreshing = false
     const refresh = async () => {
       if (refreshing) return
-      const origin = latestLocationRef.current
-      if (!origin) return
+      const origin = latestLocationRef.current; if (!origin) return
       refreshing = true
       try {
         const nextRoute = await getRoute(origin, target)
         if (!active) return
         setRouteData(nextRoute); setRouteUpdatedAt(Date.now()); setRouteError(''); setActiveStepIndex(0)
-      } catch (e:any) {
-        if (active) setRouteError(e.message)
-      } finally {
-        refreshing = false
-      }
+      } catch (e:any) { if (active) setRouteError(e.message) } finally { refreshing = false }
     }
     void refresh()
     const interval = window.setInterval(refresh, 15000)
     return () => { active = false; window.clearInterval(interval) }
   }, [ride?.id, ride?.status, target?.[0], target?.[1], hasLocation])
 
-  // Map init
   useEffect(() => {
     if (!mapContainerRef.current) return
     if (!mapboxToken) { setMapError('Add VITE_MAPBOX_TOKEN in Vercel env'); return }
     mapboxgl.setAccessToken(mapboxToken)
-    const map = new mapboxgl.Map({
-      container: mapContainerRef.current,
-      style: 'mapbox://styles/mapbox/navigation-day-v1',
-      center: location || POLOKWANE_CENTER,
-      zoom: 16, pitch: 55, antialias: true
-    })
+    const map = new mapboxgl.Map({ container: mapContainerRef.current, style: 'mapbox://styles/mapbox/navigation-day-v1', center: location || POLOKWANE_CENTER, zoom: 16, pitch: 55, antialias: true })
     mapRef.current = map
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false, showZoom: false }), 'bottom-left')
     map.on('load', () => {
@@ -145,7 +127,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
       setMapReady(true)
     })
     map.on('error', e => setMapError(e.error?.message || 'Map error'))
-    return () => { map.remove(); mapRef.current = null; markerRef.current = null }
+    return () => { map.remove(); mapRef.current = null; markerRef.current = null; destMarkerRef.current = null }
   }, [])
 
   useEffect(() => {
@@ -161,6 +143,16 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
   }, [bearing, followDriver, location, mapReady, threeDimensional])
 
   useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map || !target) return
+    if (!destMarkerRef.current) {
+      const el = document.createElement('div')
+      el.innerHTML = `<div style="width:36px;height:36px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${isOnPickupLeg ? '#2563eb' : '#dc2626'};border:3px solid #fff;display:grid;place-items:center;box-shadow:0 3px 12px #0007"><span style="transform:rotate(45deg);font-size:18px">${isOnPickupLeg ? '📍' : '🏁'}</span></div>`
+      destMarkerRef.current = new mapboxgl.Marker({ element: el }).setLngLat(target).addTo(map)
+    } else destMarkerRef.current.setLngLat(target)
+  }, [mapReady, target?.[0], target?.[1], isOnPickupLeg])
+
+  useEffect(() => {
     const source = mapRef.current?.getSource('driver-route') as mapboxgl.GeoJSONSource | undefined
     if (!source || !routeData?.geometry?.coordinates) return
     source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: routeData.geometry.coordinates } })
@@ -170,10 +162,40 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     if (!ride) return
     setActionBusy(true)
     try {
-      const { data, error } = await updateRide({ status }).eq('id', ride.id).eq('driver_id', profile.id).select('*').single()
+      const { data, error } = await supabase
+        .from('rides')
+        .update({
+          status,
+          arrived_at: status === 'arrived' ? new Date().toISOString() : undefined,
+        } as any)
+        .eq('id', ride.id)
+        .eq('driver_id', profile.id)
+        .select('*')
+        .single()
       if (error) throw error
       setRide(data as Ride)
+      if (status === 'arrived') setArrivedAt(Date.now())
     } catch (e:any) { setRideError(e.message) } finally { setActionBusy(false) }
+  }
+
+  async function cancelNoShow() {
+    if (!ride || !confirm('Passenger did not show after 5 min. Cancel as No-Show?')) return
+    setActionBusy(true)
+    try {
+      const { error } = await supabase
+        .from('rides')
+        .update({ status: 'cancelled', cancel_reason: 'no_show' } as any)
+        .eq('id', ride.id)
+        .eq('driver_id', profile.id)
+      if (error) throw error
+      onBack()
+    } catch (e:any) { setRideError(e.message) } finally { setActionBusy(false) }
+  }
+
+  async function sendSos() {
+    if (!confirm('Send SOS alert to admin?')) return
+    await supabase.from('sos_reports').insert({ user_id: profile.id, ride_id: ride?.id, message: 'Driver SOS from navigation', status: 'open' } as any)
+    alert('SOS sent to admin. Help is on the way.')
   }
 
   if (rideLoading) return <main style={{ padding: 24, background: '#0b0b0c', color: 'white', minHeight: '100dvh' }}>Loading navigation…</main>
@@ -183,13 +205,17 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
   const currentStep = steps[Math.min(activeStepIndex, Math.max(steps.length - 1, 0))]
   const instruction = currentStep?.maneuver?.instruction || 'Continue to destination'
   const etaSeconds = routeData ? Math.max(0, Math.ceil(routeData.duration - (Date.now() - routeUpdatedAt) / 1000)) : null
+  const waitedSeconds = arrivedAt ? Math.floor((now - arrivedAt) / 1000) : 0
+  const canNoShow = rideStatus === 'arrived' && waitedSeconds >= PASSENGER_WAIT_SECONDS
+  const waitLeft = rideStatus === 'arrived' ? Math.max(0, PASSENGER_WAIT_SECONDS - waitedSeconds) : 0
 
   return (
     <main style={{ position: 'fixed', inset: 0, overflow: 'hidden', background: '#dbe4e8', color: '#111827', fontFamily: 'system-ui, sans-serif' }}>
       <div ref={mapContainerRef} style={{ position: 'absolute', inset: 0 }} />
       <button onClick={onBack} style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 14px)', left: 14, zIndex: 5, minWidth: 46, minHeight: 46, border: 0, borderRadius: 14, background: '#111827', color: 'white', fontSize: 18, fontWeight: 700 }}>←</button>
+      <button onClick={() => sendSos()} style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 14px)', right: 14, zIndex: 5, minWidth: 46, minHeight: 46, border: 0, borderRadius: 14, background: '#dc2626', color: 'white', fontSize: 18, fontWeight: 800 }}>SOS</button>
 
-      <section style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 12px)', left: 68, right: 14, zIndex: 4, minHeight: 78, borderRadius: 16, background: '#050505', color: 'white', display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', boxShadow: '0 8px 24px #0005' }}>
+      <section style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 12px)', left: 68, right: 68, zIndex: 4, minHeight: 78, borderRadius: 16, background: '#050505', color: 'white', display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', boxShadow: '0 8px 24px #0005' }}>
         <div style={{ width: 42, height: 42, flex: 'none', borderRadius: 12, background: '#171717', display: 'grid', placeItems: 'center', color: '#35df9c', fontSize: 26 }}>↑</div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 800, lineHeight: 1.25 }}>{instruction}</div>
@@ -208,6 +234,12 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
           <div><div style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: 11, fontWeight: 800 }}>{isOnPickupLeg ? 'Heading to pickup' : 'Passenger on board'}</div><div style={{ fontSize: 19, fontWeight: 800, marginTop: 3 }}>{isOnPickupLeg ? ride.pickup_address : ride.dropoff_address}</div></div>
           <div style={{ textAlign: 'right' }}><div style={{ fontSize: 21, fontWeight: 900 }}>{etaSeconds !== null ? `${Math.floor(etaSeconds/60)} min` : '--'}</div><div style={{ color: '#6b7280', fontSize: 12 }}>{routeData?.distanceKm.toFixed(1) || '0'} km</div></div>
         </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f3f4f6', padding: '10px 12px', borderRadius: 12, marginTop: 12 }}>
+          <div><div style={{ fontWeight: 800 }}>{passenger?.full_name || 'Passenger'}</div><div style={{ fontSize: 12, color: '#6b7280' }}>Fare: R{(ride as any).fare_amount || (ride as any).fare || '—'} • {rideStatus === 'arrived' ? `Waiting ${Math.floor(waitedSeconds / 60)}:${String(waitedSeconds % 60).padStart(2,'0')}` : rideStatus}</div></div>
+          {passenger?.phone && <a href={`tel:${passenger.phone}`} style={{ padding: '10px 14px', borderRadius: 10, background: '#111827', color: 'white', fontWeight: 800, textDecoration: 'none' }}>📞 Call</a>}
+        </div>
+        {rideStatus === 'arrived' && !canNoShow && <p style={{ fontSize: 13, color: '#b45309', background: '#fef3c7', padding: '8px 10px', borderRadius: 8 }}>Waiting for passenger... No-show available in {Math.floor(waitLeft/60)}:{String(waitLeft%60).padStart(2,'0')}</p>}
+        {canNoShow && <button disabled={actionBusy} onClick={() => cancelNoShow()} style={{ width: '100%', minHeight: 48, marginTop: 10, border: '1px solid #fecaca', borderRadius: 12, background: '#fef2f2', color: '#b91c1c', fontWeight: 800 }}>Cancel - Passenger No-Show</button>}
         {isOnPickupLeg && rideStatus !== 'arrived' && (
           <button disabled={actionBusy} onClick={() => void updateRideStatus('arrived')} style={{ width: '100%', minHeight: 50, marginTop: 16, border: 0, borderRadius: 14, background: '#111827', color: 'white', fontSize: 15, fontWeight: 800 }}>{actionBusy ? 'Updating…' : 'I have arrived'}</button>
         )}

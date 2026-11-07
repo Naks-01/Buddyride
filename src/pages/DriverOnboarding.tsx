@@ -50,8 +50,9 @@ function latestDocuments(documents: StoredDocument[]) {
 
 function isCardComplete(card: typeof DOCUMENT_CARDS[number], documents: StoredDocument[]) {
   const document = documents.find(item => item.doc_type === card.type)
-  return Boolean(document?.file_url && document.document_date)
-    && (!card.expiryRequired || Boolean(document?.expiry_date))
+  if (!document?.file_url) return false
+  if (card.expiryRequired) return Boolean(document?.expiry_date)
+  return true
 }
 
 function isComplete(documents: StoredDocument[]) {
@@ -151,12 +152,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
 
       const isImage = file.type.startsWith('image/')
       const card = DOCUMENT_CARDS.find(item => item.type === documentType)
-      const documentDate = documentDates[documentType] || ''
+      const documentDate = documentDates[documentType] || new Date().toISOString().split('T')[0]
       const expiryDate = expiryDates[documentType] || null
-      if (!documentDate) {
-        window.alert('Enter date from document')
-        return false
-      }
       if (card?.expiryRequired && !expiryDate) {
         window.alert('Enter expiry date from document')
         return false
@@ -178,7 +175,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         return false
       }
 
-      const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path)
+      const { data: { publicUrl } } = supabase.storage.from('driver-docs').getPublicUrl(path)
       console.log('publicUrl:', publicUrl)
       if (!publicUrl) {
         throw new Error('Storage did not return a public URL for the uploaded document.')
@@ -282,7 +279,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setError('')
     const metadataUpdates = await Promise.all(REQUIRED_DOCS.map(document =>
       supabase.from('driver_documents').update({
-        document_date: documentDates[document.type],
+        document_date: documentDates[document.type] || new Date().toISOString().split('T')[0],
         expiry_date: EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type) ? expiryDates[document.type] : null,
       }).eq('driver_id', profile.id).eq('doc_type', document.type),
     ))
@@ -405,18 +402,9 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
                     {activeUpload ? 'Uploading' : uploaded ? 'Replace' : 'Upload'}
                   </button>
                 </div>
-                <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: card.expiryRequired ? 'repeat(auto-fit, minmax(190px, 1fr))' : '1fr', gap: 10 }}>
+                {card.expiryRequired && (
+                <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 10 }}>
                   <label style={{ display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
-                    Document Date (date written on document) - REQUIRED
-                    <input
-                      type="date"
-                      required
-                      value={documentDates[type] || ''}
-                      onChange={event => void updateDocumentDate(type, 'document_date', event.target.value)}
-                      style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
-                    />
-                  </label>
-                  {card.expiryRequired && <label style={{ display: 'grid', gap: 5, color: '#344054', fontSize: 12, fontWeight: 700 }}>
                     Expiry Date (as printed on document) - REQUIRED
                     <input
                       type="date"
@@ -425,8 +413,9 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
                       onChange={event => void updateDocumentDate(type, 'expiry_date', event.target.value)}
                       style={{ minHeight: 40, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }}
                     />
-                  </label>}
+                  </label>
                 </div>
+                )}
                 {fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer" style={{ gridColumn: '1 / -1', color: '#087f5b', fontSize: 12, fontWeight: 700 }}>Preview uploaded document</a>}
               </article>
             })}
