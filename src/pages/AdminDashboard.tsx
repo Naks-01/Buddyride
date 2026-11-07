@@ -28,10 +28,14 @@ export function AdminDashboard({ onBack }: { onBack: () => void }) {
 
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role,email')
         .eq('id', user.id)
         .maybeSingle()
-      if (profileError || profile?.role !== 'admin') {
+      if (
+        profileError
+        || profile?.role !== 'admin'
+        || profile.email?.trim().toLowerCase() !== 'buddyride@outlook.com'
+      ) {
         denyAccess()
         return
       }

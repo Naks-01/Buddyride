@@ -37,11 +37,8 @@ export async function signIn(email: string, password: string) {
   return data.user
 }
 
-export async function signUp(email: string, password: string, role: Role, fullName: string, phone: string) {
+export async function signUp(email: string, password: string, role: Exclude<Role, 'admin'>, fullName: string, phone: string) {
   const normalizedEmail = email.trim().toLowerCase()
-  if (role === 'admin' && normalizedEmail !== 'buddyride@outlook.com') {
-    throw new Error('Admin signup not allowed')
-  }
   console.info('Sign-up role:', role)
   const { data, error } = await supabase.auth.signUp({
     email: normalizedEmail,

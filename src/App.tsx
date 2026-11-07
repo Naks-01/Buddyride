@@ -27,9 +27,9 @@ const ADMIN_EMAIL = 'buddyride@outlook.com'
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
 const selfieSkipKey = (userId: string) => `buddyride_selfie_skip_${userId}`
 
-function getMetadataRole(user: { user_metadata?: Record<string, unknown> }): Role | undefined {
+function getMetadataRole(user: { user_metadata?: Record<string, unknown> }): Exclude<Role, 'admin'> | undefined {
   const role = user.user_metadata?.role
-  return role === 'driver' || role === 'passenger' || role === 'admin' ? role : undefined
+  return role === 'driver' || role === 'passenger' ? role : undefined
 }
 
 async function compressSelfie(file: File): Promise<Blob> {
@@ -76,7 +76,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [splashVisible, setSplashVisible] = useState(true)
-  const [role, setRole] = useState<Role>('passenger')
+  const [role, setRole] = useState<Exclude<Role, 'admin'>>('passenger')
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -100,7 +100,6 @@ export default function App() {
     setDriverPath(path)
   }, [])
 
-  const isAdminEmail = email.trim().toLowerCase() === ADMIN_EMAIL
   const shouldVerifyAdminAccess = Boolean(profile && (
     profile.role === 'admin'
     || page.startsWith('admin-')
@@ -219,7 +218,12 @@ export default function App() {
       if (!active) return
       const userEmail = user?.email?.toLowerCase()
       setCheckedAdminUserId(profile.id)
-      if (error || userEmail !== ADMIN_EMAIL || profile.role !== 'admin') {
+      if (
+        error
+        || userEmail !== ADMIN_EMAIL
+        || profile.email?.trim().toLowerCase() !== ADMIN_EMAIL
+        || profile.role !== 'admin'
+      ) {
         setVerifiedAdminUserId(null)
         setPage('home')
         window.history.replaceState(null, '', '/')
@@ -241,7 +245,6 @@ export default function App() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setMessage('')
     try {
-      if (mode === 'signup' && role === 'admin' && !isAdminEmail) throw new Error('Admin signup restricted to owner.')
       if (mode === 'signup') {
         const user = await createAccount(email.trim().toLowerCase(), password, role, fullName, phone)
         if (user) {
@@ -343,9 +346,9 @@ export default function App() {
 
   if (showLanding) return <LandingPage onLogin={() => setShowLanding(false)} />
 
+  // Admin locked to buddyride@outlook.com via DB trigger
   return <main className="auth-page">
     <section className="auth-card" style={{position:'relative'}}>
-      <div style={{position:'absolute', top:'0px', right:'0px'}}><button onClick={() => setRole(role==='admin'? 'passenger' : 'admin')} style={{ background: role==='admin'? '#111' : 'transparent', color: role==='admin'? 'white' : '#9ca3af', border: role==='admin'? '1px solid #111' : '1px solid transparent', fontSize:'10px', padding:'3px 8px', borderRadius:'999px' }}>{role==='admin'? '👑 admin ×' : '· admin'}</button></div>
       <button onClick={()=> setShowLanding(true)} style={{marginBottom:'10px', background:'none', border:'none', fontSize:'14px'}}>← Back to Home</button>
       <Brand /><h1>{mode === 'login'? 'Welcome back' : 'Create your account'}</h1>
       <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'16px'}}>

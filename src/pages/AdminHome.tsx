@@ -6,7 +6,7 @@ type Props = { profile: Profile, onDocs: () => void, onAdminModule: (page: Admin
 
 export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
   const [stats, setStats] = useState({ rides: 0, drivers: 0, passengers: 0, active: 0, revenue: 0 })
-  const [pendingDocumentCounts, setPendingDocumentCounts] = useState({ drivers: 0, passengers: 0 })
+  const [pendingDocumentCounts, setPendingDocumentCounts] = useState({ drivers: 0, passengers: 0, total: 0 })
   const [documentCountError, setDocumentCountError] = useState('')
   const [tab, setTab] = useState<'overview'|'finance'|'zones'>('overview')
 
@@ -16,21 +16,21 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
       const { count: driversCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'driver')
       const { count: passengersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'passenger')
       const { count: activeCount } = await supabase.from('driver_status').select('*', { count: 'exact', head: true }).eq('is_online', true)
-      const [pendingDriversResult, pendingPassengersResult] = await Promise.all([
+      const [pendingDriversResult, totalDriversResult, pendingPassengersResult] = await Promise.all([
         supabase.from('driver_documents')
-          .select('driver_id,profiles!driver_documents_driver_id_fkey!inner(id,role,verification_status)', { count: 'exact', head: true })
-          .eq('doc_type', 'drivers_license')
-          .not('file_url', 'is', null)
-          .eq('profiles.role', 'driver')
-          .eq('profiles.verification_status', 'pending_verification'),
+          .select('id', { count: 'exact', head: true })
+          .ilike('status', 'pending'),
+        supabase.from('driver_documents')
+          .select('id', { count: 'exact', head: true }),
         supabase.from('profiles')
           .select('id', { count: 'exact', head: true })
           .eq('role', 'passenger')
           .eq('verification_status', 'pending_verification'),
       ])
-      if (pendingDriversResult.error || pendingPassengersResult.error) {
+      if (pendingDriversResult.error || totalDriversResult.error || pendingPassengersResult.error) {
         setDocumentCountError(
           pendingDriversResult.error?.message
+          || totalDriversResult.error?.message
           || pendingPassengersResult.error?.message
           || 'Could not load pending document counts.',
         )
@@ -38,6 +38,7 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
         setPendingDocumentCounts({
           drivers: pendingDriversResult.count || 0,
           passengers: pendingPassengersResult.count || 0,
+          total: totalDriversResult.count || 0,
         })
       }
       const { data: completedRides } = await supabase.from('rides').select('buddyride_commission').in('status', ['completed', 'rated'])
@@ -83,21 +84,21 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
           </div>
           <div style={card}>
             <p style={{ fontWeight:'bold', margin:'0 0 6px 0' }}>
-              👑 Approve Documents {pendingDocumentCounts.drivers + pendingDocumentCounts.passengers}
+              👑 Approve Documents {pendingDocumentCounts.drivers}
             </p>
             <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>
-              Drivers pending: {pendingDocumentCounts.drivers} · Passengers pending: {pendingDocumentCounts.passengers}
+              Driver documents pending: {pendingDocumentCounts.drivers} · Passengers pending: {pendingDocumentCounts.passengers}
             </p>
             {documentCountError && <p role="alert" style={{ fontSize:'12px', color:'#fca5a5' }}>Could not load document counts: {documentCountError}</p>}
             <p style={{ fontSize:'12px', color:'#94a3b8', margin:'0 0 10px 0' }}>Verify driver IDs, licenses, vehicles + passenger IDs + selfies</p>
-            <button onClick={onDocs} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'black', fontWeight:'bold', border:'none', cursor:'pointer' }}>Go to Documents ({pendingDocumentCounts.drivers + pendingDocumentCounts.passengers}) →</button>
+            <button onClick={onDocs} style={{ width:'100%', padding:'14px', borderRadius:'12px', background:'white', color:'black', fontWeight:'bold', border:'none', cursor:'pointer' }}>Go to Documents ({pendingDocumentCounts.drivers}) →</button>
           </div>
           <div style={card}>
             <h3 style={{marginTop:0}}>Admin Modules</h3>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:'8px'}}>
               {([
                 ['Dashboard','admin-dashboard'], 
-                ['Documents 7/7','admin-documents'], // FIXED ✅ was admin-drivers
+                [`Documents: ${pendingDocumentCounts.total} total, ${pendingDocumentCounts.drivers} pending`,'admin-documents'],
                 ['Rides','admin-rides'], 
                 ['Passengers','admin-passengers'], 
                 ['Finance','admin-finance'], 
