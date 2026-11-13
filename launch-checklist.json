@@ -1,0 +1,167 @@
+{
+  "report": "LAUNCH_REPORT.md",
+  "date": "2026-11-06",
+  "auditor": "VS Code Agent",
+  "ready_to_launch": false,
+  "readiness_score": 34,
+  "critical_issues_count": 1,
+  "assessment_scope": "Source-code and configuration review plus production build; no live provider, infrastructure, legal, or penetration-test verification.",
+  "issues": [
+    {
+      "id": "PASSENGER-VERIFICATION-BYPASS",
+      "section": "Driver vs Passenger Flow",
+      "severity": "critical",
+      "status": "open",
+      "confidence": 10,
+      "summary": "Passenger profiles are automatically marked verified during signup/profile loading, and a migration explicitly enables instant verification. This conflicts with the intended ID/selfie and admin-review flow and may permit rides before safety approval.",
+      "evidence": [
+        "src/App.tsx",
+        "src/lib/auth.ts",
+        "supabase/migrations/20261106190000_instant_passenger_verification.sql"
+      ],
+      "fix": "Remove automatic verification from signup, profile loading, triggers, and migrations. Require explicit admin approval; add database-backed regression tests that pending and rejected passengers cannot create rides."
+    },
+    {
+      "id": "CLIENT-SUPPLIED-ROUTE-DISTANCE",
+      "section": "Security Audit",
+      "severity": "high",
+      "status": "open",
+      "confidence": 9,
+      "summary": "Ride fare is calculated from client-supplied distance. The database bounds the value but does not independently verify the route, allowing submitted distance to differ from actual route distance.",
+      "evidence": [
+        "supabase/schema.sql",
+        "README.md"
+      ],
+      "fix": "Calculate or validate route distance on a trusted backend and derive fare from the verified route."
+    },
+    {
+      "id": "WHATSAPP-OTP-NOT-IMPLEMENTED",
+      "section": "WhatsApp OTP Readiness",
+      "severity": "high",
+      "status": "open",
+      "confidence": 10,
+      "summary": "The number is displayed as a contact phone, but the repository has no OTP issuance/verification flow or WhatsApp provider integration. Account authentication is email/password.",
+      "evidence": [
+        "src/App.tsx",
+        "src/pages/LandingPage.tsx",
+        "src/lib/auth.ts"
+      ],
+      "fix": "Verify the number and provider account out of band; implement server-side OTP with consent, expiry, attempt limits, abuse controls, delivery handling, and production testing."
+    },
+    {
+      "id": "LEGAL-PAGES-MISSING",
+      "section": "Legal Pages",
+      "severity": "high",
+      "status": "open",
+      "confidence": 9,
+      "summary": "The landing page links to Terms and Privacy pages, but corresponding routes/content are not implemented. Consent, cancellation/refund, and safety policies are not evidenced.",
+      "evidence": [
+        "src/pages/LandingPage.tsx",
+        "src/App.tsx"
+      ],
+      "fix": "Create reviewed legal documents, implement working public routes, and test direct navigation and fresh-page loads."
+    },
+    {
+      "id": "DATABASE-MIGRATION-DRIFT",
+      "section": "Database",
+      "severity": "high",
+      "status": "open",
+      "confidence": 9,
+      "summary": "The consolidated schema is documented for fresh projects while separate migrations are present; passenger instant-verification migration behavior conflicts with the documented admin-review flow. Deployed migration state is unknown.",
+      "evidence": [
+        "README.md",
+        "ALERT-project-structure.md",
+        "supabase/schema.sql",
+        "supabase/migrations/20261106190000_instant_passenger_verification.sql"
+      ],
+      "fix": "Reconcile a single authoritative schema/migration history and validate fresh install and upgrade paths against staging, including RLS and storage policies."
+    },
+    {
+      "id": "PAYMENT-AND-PAYOUT-OPERATIONS-UNVERIFIED",
+      "section": "API & Backend",
+      "severity": "high",
+      "status": "open",
+      "confidence": 8,
+      "summary": "Paystack Edge Functions exist, but live secrets, webhook/callback configuration, end-to-end payment behavior, and driver payout/settlement are not verified; the README identifies payout/settlement as unfinished.",
+      "evidence": [
+        "supabase/functions/start-paystack-checkout/index.ts",
+        "supabase/functions/verify-paystack-payment/index.ts",
+        "supabase/functions/paystack-webhook/index.ts",
+        "README.md"
+      ],
+      "fix": "Test payment lifecycle in staging, validate provider configuration and duplicate-event handling, implement payout/settlement, and document operational reconciliation."
+    },
+    {
+      "id": "NO-TEST-AND-OPERATIONS-COVERAGE",
+      "section": "API & Backend",
+      "severity": "medium",
+      "status": "open",
+      "confidence": 9,
+      "summary": "package.json has no test/lint scripts. Rate limiting, centralized error monitoring, and operational alerts are not evidenced in the reviewed source.",
+      "evidence": [
+        "package.json",
+        "README.md"
+      ],
+      "fix": "Add targeted automated tests, API abuse controls, error monitoring, and an on-call/incident response process."
+    },
+    {
+      "id": "MOBILE-RELEASE-AND-PUSH-UNVERIFIED",
+      "section": "Frontend & Mobile",
+      "severity": "medium",
+      "status": "open",
+      "confidence": 8,
+      "summary": "Capacitor configuration exists, but native release/signing, device testing, background location, and push-notification behavior were not verified; the README lists push notifications as outstanding.",
+      "evidence": [
+        "capacitor.config.ts",
+        "README.md"
+      ],
+      "fix": "Build and test target native apps on devices, validate permissions/background behavior, and implement/test push notifications before relying on them."
+    },
+    {
+      "id": "LARGE-MAP-BUNDLE",
+      "section": "Performance",
+      "severity": "medium",
+      "status": "open",
+      "confidence": 10,
+      "summary": "The production build emitted a map-related JavaScript chunk of approximately 1.92 MB minified (about 540 KB gzip) and a large-chunk warning.",
+      "evidence": [
+        "vite.config.ts",
+        "production build output"
+      ],
+      "fix": "Lazy-load map features, split mapping dependencies, and benchmark startup and interaction on representative mobile devices and networks."
+    },
+    {
+      "id": "PRODUCTION-PROVIDER-CONFIG-UNVERIFIED",
+      "section": "Production Config",
+      "severity": "medium",
+      "status": "open",
+      "confidence": 9,
+      "summary": "The repository has environment-variable examples and Vercel SPA rewrites, but production secrets, Supabase Auth redirect/email settings, provider configuration, domain HTTPS, backups, and monitoring were not verified.",
+      "evidence": [
+        ".env.example",
+        ".gitignore",
+        "vercel.json",
+        "supabase/functions"
+      ],
+      "fix": "Configure and verify production values in provider dashboards, keep secrets out of source control, and run a production-like smoke test and rollback exercise."
+    },
+    {
+      "id": "SELFIE-CHECK-SKIPPABLE",
+      "section": "Security Audit",
+      "severity": "low",
+      "status": "open",
+      "confidence": 10,
+      "summary": "The recurring selfie screen has a 'Skip for now' action and is client-side only, so it is not an identity-verification guarantee.",
+      "evidence": [
+        "src/App.tsx"
+      ],
+      "fix": "Do not use the prompt as an identity control; use a server-enforced verification process appropriate to the safety requirement."
+    }
+  ],
+  "verification": {
+    "production_build": "passed",
+    "production_build_warning": "Vite reported an oversized map-related JavaScript chunk.",
+    "automated_tests": "not available via package.json scripts",
+    "live_services": "not tested"
+  }
+}
