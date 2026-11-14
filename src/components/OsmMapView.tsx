@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -21,9 +21,9 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
   const onMapMoveRef = useRef(onMapMove)
   const isUserDraggingRef = useRef(false)
   const lastProgrammaticCenterRef = useRef<[number, number] | null>(null)
-  // FIX: Track last center PROP, not map center - so drag doesn't snap back
   const lastCenterPropRef = useRef<[number, number] | null>(null)
   const userHasDraggedRef = useRef(false)
+  const [zoomLevel, setZoomLevel] = useState(14)
   useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
 
   useEffect(() => {
@@ -35,15 +35,17 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       scrollWheelZoom: true,
       doubleClickZoom: true,
       boxZoom: false,
-      keyboard: false,
+      keyboard: true,
       zoomSnap: 0.5,
+      zoomDelta: 1,
+      tap: true,
     } as any).setView([center[1], center[0]], 14)
-    L.control.zoom({ position: 'bottomright' }).addTo(map)
+    map.on('zoomend', () => setZoomLevel(map.getZoom()))
     map.on('movestart', () => { isUserDraggingRef.current = true })
     map.on('moveend', () => {
       const c = map.getCenter()
       isUserDraggingRef.current = false
-      userHasDraggedRef.current = true // FIX: User took control, stop auto-centering
+      userHasDraggedRef.current = true
       const last = lastProgrammaticCenterRef.current
       if (last && Math.abs(last[0] - c.lng) < 0.00005 && Math.abs(last[1] - c.lat) < 0.00005) {
         lastProgrammaticCenterRef.current = null
@@ -54,7 +56,6 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     mapRef.current = map
     lastCenterPropRef.current = [center[0], center[1]]
     setTimeout(() => map.invalidateSize(), 500)
-    // FIX: invalidate on resize - bottom sheet snap was breaking tiles
     const onResize = () => map.invalidateSize()
     window.addEventListener('resize', onResize)
     return () => { window.removeEventListener('resize', onResize); map.remove(); mapRef.current = null }
@@ -71,19 +72,16 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     tileLayerRef.current = L.tileLayer(url, { maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map)
   }, [theme])
 
-  // FIXED: Only re-center if PROP actually changed (real GPS move), not on every render
   useEffect(() => {
     if (!mapRef.current || !center) return
     const prev = lastCenterPropRef.current
-    // First run already set, or prop didn't really change -> do nothing, let user drag freely
     if (prev && Math.abs(prev[0] - center[0]) < 0.00001 && Math.abs(prev[1] - center[1]) < 0.00001) return
     lastCenterPropRef.current = [center[0], center[1]]
-    // If user already dragged, don't snap back unless GPS moved a lot (>500m)
     if (userHasDraggedRef.current) {
       const cur = mapRef.current.getCenter()
       const dLat = Math.abs(cur.lat - center[1])
       const dLng = Math.abs(cur.lng - center[0])
-      if (dLat < 0.005 && dLng < 0.005) return // GPS barely moved, keep user's dragged position
+      if (dLat < 0.005 && dLng < 0.005) return
     }
     if (isUserDraggingRef.current) return
     lastProgrammaticCenterRef.current = [center[0], center[1]]
@@ -119,10 +117,6 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       routeLineRef.current.setLatLngs(latLngs)
     }
     routeLineRef.current.bringToFront()
-    // FIX: Don't fitBounds on every route update - it snaps map while user drags
-    // Only fit once when route first appears
-    if (!routeLineRef.current) return
-    // removed auto fitBounds - keep user's view
   }, [route])
 
   useEffect(() => {
@@ -161,5 +155,16 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     })
   }, [availableCars])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#f8f9fa', zIndex: 0, touchAction: 'none' }} />
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#f8f9fa', zIndex: 0, touchAction: 'none' }} />
+      {/* VISIBLE ZOOM BUTTONS - TOP RIGHT, ABOVE SHEET */}
+      <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <button onClick={(e) => { e.stopPropagation(); mapRef.current?.zoomIn(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer' }}>+</button>
+        <button onClick={(e) => { e.stopPropagation(); mapRef.current?.zoomOut(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer' }}>−</button>
+        <button onClick={(e) => { e.stopPropagation(); userHasDraggedRef.current = false; if (mapRef.current) mapRef.current.setView([center[1], center[0]], 15); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '20px', cursor: 'pointer' }}>🎯</button>
+      </div>
+      <div style={{ position: 'absolute', bottom: '12px', left: '12px', zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '4px 10px', borderRadius: '20px', fontSize: '11px' }}>Zoom: {zoomLevel.toFixed(1)}</div>
+    </div>
+  )
 }
