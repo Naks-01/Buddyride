@@ -108,6 +108,12 @@ export default function App() {
       }
       setProfile(result); setShowLanding(false)
       if (result.role === 'driver') {
+        // FIX ONLY: identity_complete → dashboard, not onboarding
+        const vs = String((result as any).verification_status || '').toLowerCase()
+        if (vs === 'identity_complete') {
+          if (window.location.pathname !== '/driver/dashboard' && window.location.pathname !== '/driver') navigateDriverPath('/driver/dashboard', true)
+          return
+        }
         const driverEntryPath = getDriverEntryPath(result.role, result.verification_status, window.location.pathname)
         if (driverEntryPath && driverEntryPath !== window.location.pathname) navigateDriverPath(driverEntryPath, true)
       } else {
@@ -162,7 +168,6 @@ export default function App() {
 
   useEffect(() => { if (!adminToast) return; const timeout = window.setTimeout(() => setAdminToast(''), 3000); return () => window.clearTimeout(timeout) }, [adminToast])
 
-  // FIXED 100% OTP - Separate send vs verify
   async function handleSendOtp() {
     if (!phone.trim()) { setMessage('Enter your phone number first (e.g. 0821234567)'); return }
     setBusy(true); setMessage('')
@@ -177,13 +182,11 @@ export default function App() {
     try {
       if (mode === 'signup') {
         if (!role) throw new Error('Please choose: Are you a Passenger or a Driver? Tap one above.')
-        // STEP 1: If OTP not sent yet, just send it - do NOT try to create account
         if (!otpSent || otpStep === 'details') {
           setBusy(false)
           await handleSendOtp()
           return
         }
-        // STEP 2: OTP sent, now verify + create
         if (!otpCode.trim() || otpCode.length !== 6) throw new Error('Enter the 6-digit code sent via SMS')
         const ok = await verifySmsOtp(phone.trim(), otpCode.trim())
         if (!ok) throw new Error('Wrong or expired code. Try resend.')
@@ -211,7 +214,6 @@ export default function App() {
     if (shouldVerifyAdminAccess && checkedAdminUserId !== profile.id) {
       return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>Verifying admin access…</p><div className="loading-dots"><i /><i /><i /></div></main>
     }
-    // FIXED: Admin toast no longer blocks - show toast + continue to admin
     const navigationRideId = window.location.pathname.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {
       if (profile.role !== 'driver') return <main className="auth-page"><section className="auth-card"><h1>Driver access required</h1><p>This navigation screen is only available to the assigned driver.</p><button className="primary" style={{ background: BLUE }} onClick={() => window.location.assign('/')}>Back to home</button></section></main>
@@ -219,6 +221,14 @@ export default function App() {
     }
     if (profile.role === 'driver') {
       const driverRoute = driverPath.replace(/\/+$/, '') || '/'
+      // FIX ONLY: identity_complete = inside app, Go Online blocked in DriverHome, NOT pending, NOT onboarding
+      if (profile.verification_status === 'identity_complete') {
+        if (driverRoute === '/driver/onboarding') return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
+        // Allow dashboard + /driver - DriverHome shows banner + blocks Go Online
+        return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
+          <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
+        </DriverDashboardGuard>
+      }
       if (driverRoute === '/driver/onboarding') return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
       if (driverRoute === '/driver/dashboard' || driverRoute === '/driver') {
         return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
@@ -262,7 +272,6 @@ export default function App() {
           </div>
         </>
       )}
-      {/* FIXED: Login has NO role buttons - role comes from your account */}
       <form onSubmit={submit}>
         {mode === 'signup' && <><label>Full name<input value={fullName} onChange={(e: any) => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={(e: any) => setPhone(e.target.value)} required placeholder="0821234567" /></label></>}
         <label>Email<input type="email" value={email} onChange={(e: any) => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} required /></label>
