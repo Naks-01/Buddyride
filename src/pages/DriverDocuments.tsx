@@ -24,6 +24,7 @@ const DOC_TYPES = [
 ] as const
 
 type DocKey = typeof DOC_TYPES[number]['key']
+const TOTAL_DOCS = DOC_TYPES.length
 const southAfricanToday = () => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Africa/Johannesburg', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date())
@@ -39,6 +40,19 @@ const EXPIRING_DOCS = new Set<string>([
 function safeUUID() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
   return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+}
+
+function isValidSAID(id: string) {
+  if (!/^\d{13}$/.test(id)) return false
+  const yy = Number(id.slice(0, 2)); const month = Number(id.slice(2, 4)); const day = Number(id.slice(4, 6))
+  const currentYear = new Date().getFullYear(); const currentYearTwoDigits = currentYear % 100
+  const year = yy <= currentYearTwoDigits ? 2000 + yy : 1900 + yy
+  const birthDate = new Date(year, month - 1, day)
+  const validBirthDate = birthDate.getFullYear() === year && birthDate.getMonth() === month - 1 && birthDate.getDate() === day && birthDate <= new Date()
+  if (!validBirthDate) return false
+  let sum = 0; let doubleDigit = true
+  for (let index = 11; index >= 0; index -= 1) { let digit = Number(id[index]); if (doubleDigit) { digit *= 2; if (digit > 9) digit -= 9 } sum += digit; doubleDigit = !doubleDigit }
+  return (sum + Number(id[12])) % 10 === 0
 }
 
 function compressImage(file: File): Promise<Blob> {
@@ -63,10 +77,9 @@ function compressImage(file: File): Promise<Blob> {
   })
 }
 
-// FIXED: Private docs must use signed URL, never public URL
 async function signedUrlFor(ref: string): Promise<string | null> {
   if (!ref) return null
-  if (ref.startsWith('http')) return ref // legacy public docs - still viewable
+  if (ref.startsWith('http')) return ref
   const [bucket, ...rest] = ref.split(':')
   const path = rest.join(':')
   if (!bucket || !path) return null
@@ -84,26 +97,35 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
   const [isError, setIsError] = useState(false)
   const [expiryDates, setExpiryDates] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+  // FIX ONLY: ID number + licence number - must match passenger rule: ID number + ID document
+  const [driverIdNumber, setDriverIdNumber] = useState('')
+  const [licenceNumber, setLicenceNumber] = useState('')
 
   async function load() {
     const { data: { user } } = await supabase.auth.getUser()
     const effectiveId = user?.id || driverId
     const [docsRes, profileRes] = await Promise.all([
-      supabase.from('driver_documents').select('id,doc_type,document_type,status,file_url,document_url,file_path,storage_path,expiry_date').eq('driver_id', effectiveId),
-      supabase.from('profiles').select('avatar_url').eq('id', effectiveId).single()
+      supabase.from('driver_documents').select('id,doc_type,document_type,status,file_url,document_url,file_path,storage_path,expiry_date,created_at').eq('driver_id', effectiveId).order('created_at', { ascending: false }),
+      supabase.from('profiles').select('avatar_url,id_number,licence_number,driver_licence_number').eq('id', effectiveId).single()
     ])
     if (docsRes.error) console.warn('load docs error', docsRes.error.message)
     if (docsRes.data) {
-      setDocs(docsRes.data)
+      // FIX ONLY: Dedupe - keep latest per type
+      const latest = new Map<string, any>()
+      for (const d of docsRes.data as any[]) {
+        const key = (d.doc_type || d.document_type || '').toLowerCase()
+        if (!latest.has(key)) latest.set(key, d)
+      }
+      const deduped = [...latest.values()]
+      setDocs(deduped)
       const exp: Record<string, string> = {}
-      for (const d of (docsRes.data as any[])) {
+      for (const d of deduped) {
         const key = d.doc_type || d.document_type
         if (key && d.expiry_date && !exp[key]) exp[key] = String(d.expiry_date).slice(0, 10)
       }
       setExpiryDates(exp)
-      // Build signed previews for private docs
       const previews: Record<string, string> = {}
-      await Promise.all((docsRes.data as any[]).map(async (d) => {
+      await Promise.all(deduped.map(async (d) => {
         const key = d.doc_type || d.document_type
         const ref = d.file_url || d.document_url
         if (key && ref) {
@@ -113,8 +135,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       }))
       setPreviewUrls(previews)
     }
-    const avatar = profileRes.data?.avatar_url
+    const avatar = (profileRes.data as any)?.avatar_url
     if (typeof avatar === 'string' && avatar.startsWith('http')) setProfileUrl(avatar)
+    // FIX ONLY: Load saved numbers
+    setDriverIdNumber((profileRes.data as any)?.id_number || '')
+    setLicenceNumber((profileRes.data as any)?.licence_number || (profileRes.data as any)?.driver_licence_number || '')
   }
 
   useEffect(() => { void load() }, [driverId])
@@ -155,7 +180,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       })
       if (upErr) throw upErr
 
-      // FIXED: Store bucket:path, NOT public URL - private docs
       const storageRef = `${meta.bucket}:${path}`
 
       const payload: any = {
@@ -183,7 +207,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       }
       if (dbErr) throw dbErr
 
-      // FIXED: Delete duplicates AFTER successful save, keep only latest (was deleting wrong rows before)
       const { data: allForType } = await supabase.from('driver_documents').select('id,created_at').eq('driver_id', ownerId).or(`doc_type.eq.${key},document_type.eq.${key}`).order('created_at', { ascending: false })
       if (allForType && allForType.length > 1) {
         const idsToDelete = allForType.slice(1).map((r: any) => r.id)
@@ -213,6 +236,15 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     setMsg('')
     setIsError(false)
     try {
+      // FIX ONLY: ID number + licence number required before submit - same as onboarding
+      const trimmedId = driverIdNumber.trim()
+      if (!trimmedId) throw new Error('Enter your SA ID number / Passport number - required.')
+      if (/^\d{13}$/.test(trimmedId) && !isValidSAID(trimmedId)) throw new Error('Enter a valid 13-digit SA ID number.')
+      if (!licenceNumber.trim()) throw new Error('Enter your driver licence number - required.')
+      const { data: { user } } = await supabase.auth.getUser()
+      const ownerId = user?.id || driverId
+      const { error: saveErr } = await supabase.from('profiles').update({ id_number: trimmedId, licence_number: licenceNumber.trim() } as any).eq('id', ownerId)
+      if (saveErr) throw new Error('Could not save ID numbers: ' + saveErr.message)
       const { error } = await supabase.rpc('submit_driver_documents_for_review')
       if (error) {
         const msg = error.message.toLowerCase()
@@ -231,17 +263,17 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     }
   }
 
+  const getDoc = (key: DocKey) => docs.find(d => (d.doc_type || d.document_type || '').toLowerCase() === key)
   const getStatus = (key: DocKey) => {
-    const latest = docs.find(d => (d.doc_type || d.document_type || '').toLowerCase() === key)
+    const latest = getDoc(key)
     return latest ? latest.status : 'Missing'
   }
-
-  const getDoc = (key: DocKey) => docs.find(d => (d.doc_type || d.document_type || '').toLowerCase() === key)
-  // FIXED: Count bucket:path too, not just http
   const uploadedCount = DOC_TYPES.filter(t => {
     const d = getDoc(t.key)
     return Boolean(d?.file_url)
   }).length
+  const hasIdNumbers = driverIdNumber.trim() && licenceNumber.trim()
+  const canSubmit = uploadedCount === TOTAL_DOCS && hasIdNumbers
 
   return (
     <main style={{ minHeight: '100dvh', background: '#F8F9FA', color: '#182230', padding: '20px 16px 32px', fontFamily: 'Inter, sans-serif' }}>
@@ -249,14 +281,26 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         <button onClick={onBack} style={{ background: '#fff', border: '1px solid #E4E7EC', color: '#344054', padding: '8px 14px', borderRadius: 10, marginBottom: 12, fontWeight: 700, cursor: 'pointer' }}>← Back</button>
         <p style={{ color: BLUE, fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', margin: 0 }}>Step 4 of 4</p>
         <h1 style={{ fontSize: 26, fontWeight: 800, margin: '6px 0 0', letterSpacing: '-.02em' }}>Driver documents</h1>
-        <p style={{ color: '#667085', marginTop: 6, fontSize: 14 }}>Your 15 driver verification documents - ID, licence, licence disk and selfie.</p>
+        <p style={{ color: '#667085', marginTop: 6, fontSize: 14 }}>Your {TOTAL_DOCS} driver verification documents - ID, licence, licence disk and selfie.</p>
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
           <div style={{ flex: 1, height: 9, background: '#E5E9EF', borderRadius: 99, overflow: 'hidden' }}>
-            <div style={{ width: `${(uploadedCount/15)*100}%`, height: '100%', background: BLUE, transition: 'width 0.3s', borderRadius: 99 }} />
+            <div style={{ width: `${(uploadedCount/TOTAL_DOCS)*100}%`, height: '100%', background: BLUE, transition: 'width 0.3s', borderRadius: 99 }} />
           </div>
-          <span style={{ fontSize: 13, fontWeight: 800, color: uploadedCount === 15 ? BLUE : '#667085' }}>{uploadedCount}/15 {uploadedCount === 15 ? '✅ READY' : ''}</span>
+          <span style={{ fontSize: 13, fontWeight: 800, color: uploadedCount === TOTAL_DOCS ? BLUE : '#667085' }}>{uploadedCount}/{TOTAL_DOCS} {uploadedCount === TOTAL_DOCS ? '✅ READY' : ''}</span>
         </div>
         {msg && <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: isError ? '#FEF3F2' : BLUE_LIGHT, color: isError ? '#B42318' : BLUE_DARK, fontSize: 13, border: `1px solid ${isError ? '#FECDCA' : '#B2CCFF'}` }}>{msg}</div>}
+        {/* FIX ONLY: ID numbers section */}
+        <div style={{ marginTop: 16, padding: 16, borderRadius: 16, background: '#fff', border: '1px solid #EDF0F3', display: 'grid', gap: 10 }}>
+          <strong style={{ fontSize: 14 }}>ID & Licence Numbers - Required</strong>
+          <p style={{ margin: 0, fontSize: 12, color: '#667085' }}>Enter numbers exactly as on documents. Must match SA ID + Licence photos below.</p>
+          <label style={{ display: 'grid', gap: 4, fontSize: 12, fontWeight: 700 }}>SA ID Number / Passport Number *
+            <input value={driverIdNumber} onChange={e => setDriverIdNumber(e.target.value.trim())} placeholder="e.g. 9001015009087" inputMode="numeric" style={{ padding: '10px 8px', border: '1px solid #D0D5DD', borderRadius: 9 }} />
+          </label>
+          <label style={{ display: 'grid', gap: 4, fontSize: 12, fontWeight: 700 }}>Driver Licence Number *
+            <input value={licenceNumber} onChange={e => setLicenceNumber(e.target.value)} placeholder="As on licence card" style={{ padding: '10px 8px', border: '1px solid #D0D5DD', borderRadius: 9 }} />
+          </label>
+          {driverIdNumber && /^\d{13}$/.test(driverIdNumber.trim()) && !isValidSAID(driverIdNumber.trim()) && <p style={{ color: '#B42318', fontSize: 12, margin: 0 }}>Invalid SA ID - check digits.</p>}
+        </div>
         <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>
           {DOC_TYPES.map(t => {
             const status = getStatus(t.key)
@@ -289,8 +333,8 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
             )
           })}
         </div>
-        <button disabled={uploadedCount !== 15 || submitting || !!uploading} onClick={() => void submitForReview()} style={{ marginTop: 20, width: '100%', padding: 16, borderRadius: 14, background: uploadedCount === 15 && !submitting ? BLUE : '#CBD2DA', color: 'white', border: 0, fontWeight: 800, fontSize: 16, opacity: submitting ? 0.7 : 1, cursor: uploadedCount === 15 ? 'pointer' : 'not-allowed' }}>
-          {submitting ? 'Submitting…' : uploadedCount === 15 ? '✅ SUBMIT FOR REVIEW' : `Upload all 15 documents (${uploadedCount}/15)`}
+        <button disabled={!canSubmit || submitting || !!uploading} onClick={() => void submitForReview()} style={{ marginTop: 20, width: '100%', padding: 16, borderRadius: 14, background: canSubmit && !submitting ? BLUE : '#CBD2DA', color: 'white', border: 0, fontWeight: 800, fontSize: 16, opacity: submitting ? 0.7 : 1, cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
+          {submitting ? 'Submitting…' : canSubmit ? '✅ SUBMIT FOR REVIEW' : !hasIdNumbers ? `Enter ID Number + Licence Number (${uploadedCount}/${TOTAL_DOCS})` : `Upload all ${TOTAL_DOCS} documents (${uploadedCount}/${TOTAL_DOCS})`}
         </button>
       </section>
     </main>

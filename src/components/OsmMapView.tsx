@@ -19,15 +19,32 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
   const tileLayerRef = useRef<L.TileLayer | null>(null)
   const carsRef = useRef<Map<string, L.Marker>>(new Map())
   const onMapMoveRef = useRef(onMapMove)
+  const isUserDraggingRef = useRef(false)
+  const lastProgrammaticCenterRef = useRef<[number, number] | null>(null)
   useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
-    const map = L.map(containerRef.current, { zoomControl: false }).setView([center[1], center[0]], 14)
+    const map = L.map(containerRef.current, {
+      zoomControl: false,
+      dragging: true,
+      touchZoom: true,
+      scrollWheelZoom: true,
+      doubleClickZoom: true,
+      boxZoom: false,
+      keyboard: false,
+      zoomSnap: 0.5,
+    } as any).setView([center[1], center[0]], 14)
     L.control.zoom({ position: 'bottomright' }).addTo(map)
-    // FIXED: moveend not dragend - works on mobile pinch + drag
+    map.on('movestart', () => { isUserDraggingRef.current = true })
     map.on('moveend', () => {
       const c = map.getCenter()
+      isUserDraggingRef.current = false
+      const last = lastProgrammaticCenterRef.current
+      if (last && Math.abs(last[0] - c.lng) < 0.00005 && Math.abs(last[1] - c.lat) < 0.00005) {
+        lastProgrammaticCenterRef.current = null
+        return
+      }
       onMapMoveRef.current?.([c.lng, c.lat])
     })
     mapRef.current = map
@@ -35,7 +52,6 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
-  // FIXED 100%: OSM tiles, no key needed. Dark mode uses CARTO dark like Bolt.
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -49,14 +65,17 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
 
   useEffect(() => {
     if (mapRef.current && center) {
+      if (isUserDraggingRef.current) return
       const cur = mapRef.current.getCenter()
-      if (Math.abs(cur.lat - center[1]) > 0.000001 || Math.abs(cur.lng - center[0]) > 0.000001) {
-        mapRef.current.setView([center[1], center[0]], mapRef.current.getZoom())
+      const dLat = Math.abs(cur.lat - center[1])
+      const dLng = Math.abs(cur.lng - center[0])
+      if (dLat > 0.001 || dLng > 0.001) {
+        lastProgrammaticCenterRef.current = [center[0], center[1]]
+        mapRef.current.setView([center[1], center[0]], mapRef.current.getZoom(), { animate: false })
       }
     }
   }, [center])
 
-  // FIXED 100%: Handles ALL 3 route formats - TomTom points, GeoJSON, [lon,lat] array
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -66,14 +85,11 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       return
     }
     let latLngs: [number, number][] = []
-    // Format 1: TomTom points [{latitude, longitude}]
     if (Array.isArray(route) && route.length > 0 && route[0]?.latitude !== undefined) {
       latLngs = route.map((p: any) => [p.latitude, p.longitude] as [number, number])
     } else if (Array.isArray(route) && route.length > 0 && Array.isArray(route[0])) {
-      // Format 2: [[lon, lat]]
       latLngs = route.map((c: any) => [c[1], c[0]] as [number, number])
     } else {
-      // Format 3: GeoJSON
       const geometry = route.type === 'Feature' ? route.geometry : route
       const coords = geometry?.coordinates || []
       latLngs = coords.filter((c: any) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1])).map((c: any) => [c[1], c[0]] as [number, number])
@@ -104,11 +120,9 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       driverMarkerRef.current = L.marker(latLng, { icon }).addTo(mapRef.current)
     } else {
       driverMarkerRef.current.setLatLng(latLng)
-      mapRef.current.panTo(latLng)
     }
   }, [driverLocation])
 
-  // FIXED 100%: Supports current_lat/current_lng + lat/lng + latitude/longitude
   useEffect(() => {
     if (!mapRef.current || !availableCars) return
     const currentIds = new Set(availableCars.map((c: any) => c.driver_id))
@@ -130,5 +144,5 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     })
   }, [availableCars])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#f8f9fa', zIndex: 0 }} />
+  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#f8f9fa', zIndex: 0, touchAction: 'none' }} />
 }

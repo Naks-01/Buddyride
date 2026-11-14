@@ -102,6 +102,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null); const audioRef = useRef<HTMLAudioElement | null>(null); const prevStatusRef = useRef<string>('')
   const isDark = theme === 'dark'; const bg = isDark ? '#121212' : '#ffffff'; const bg2 = isDark ? '#1e1e1e' : '#F2F4F7'; const text = isDark ? 'white' : 'black'; const muted = isDark ? '#aaa' : '#667085'; const border = isDark ? '#333' : '#E4E7EC'
   const isVerified = verificationLoaded && (safetyProfile.is_verified === true || ['verified', 'approved'].includes(verificationStatus)); const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
+  // FIX ONLY: Passenger must have ID number + ID doc to request - helper
+  const hasIdNumber = !!(safetyProfile.id_number || safetyIdNumber.trim())
+  const hasIdDoc = !!safetyProfile.id_document_url
+  const hasSelfie = !!(safetyProfile.avatar_url || safetyProfile.selfie_url)
+  const hasRequiredDocs = hasSelfie && hasIdNumber && hasIdDoc
   useEffect(() => {
     if (rideStatus === 'searching' || rideStatus === 'finding') setSheetSnap(25)
     else if (['driver_assigned', 'accepted', 'driver_arriving'].includes(rideStatus)) setSheetSnap(50)
@@ -167,12 +172,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     })
     async function loadActiveRide() {
       const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
-      // FIX ONLY: Auto-cancel stale awaiting_payment > 10 mins so app never opens with old R28 ride
       try {
         await supabase.from('rides').update({ status: 'cancelled', cancel_reason: 'Auto-cancelled stale awaiting_payment on open', cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any)
           .eq('passenger_id', effectiveId).eq('status', 'awaiting_payment').lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
       } catch {}
-      // FIX ONLY: Removed awaiting_payment from active statuses - it should NOT block Where are you going?
       const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('passenger_id', effectiveId).in('status', ['searching', 'driver_assigned', 'accepted', 'arrived', 'picked_up', 'en_route', 'in_progress', 'on_trip', 'driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (activeRideError) { if (active) setRideError('Could not restore your active ride: ' + errMsg(activeRideError)); return }
       const { data: completedRideData, error: completedRideError } = activeRide ? { data: null, error: null } as any : await supabase.from('rides').select('*').eq('passenger_id', effectiveId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1).maybeSingle()
@@ -276,9 +279,17 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const real = await reverseOSM(p); setPickup(real); setRideError('')
     }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 10000 })
   }
+  // FIX ONLY: Block request until ID number + ID document + selfie are all present
   async function requestRide() {
     if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }
     if (!pickup.trim() || !dropoff.trim()) { setRideError('Choose a pickup and destination from the location suggestions.'); return }
+    if (!hasRequiredDocs) {
+      if (!hasSelfie) setRideError('⚠️ Take a selfie first to start requesting.')
+      else if (!hasIdNumber) setRideError('⚠️ Enter your SA ID number / Passport number first to start requesting.')
+      else if (!hasIdDoc) setRideError('⚠️ Capture / upload your SA ID / Passport document first to start requesting.')
+      else setRideError('⚠️ Complete ID verification: Selfie + ID number + ID document required to request.')
+      setShowSafetyModal(true); return
+    }
     const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
     const { data: passengerProfile } = await supabase.from('profiles').select('verification_status,is_verified,is_banned').eq('id', effectiveId).single()
     if (passengerProfile?.is_banned) { setRideError('Your account is banned - contact support on 064 101 8991'); return }
@@ -290,7 +301,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
     await createRide(isVerifiedRider)
   }
-  // FIXED 100% - NO fare_quotes, NO total_fare, SIMPLE rides INSERT - ALWAYS searching for launch
   async function createRide(isVerifiedRider?: boolean) {
     setLoading(true); setRideError('')
     try {
@@ -315,7 +325,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setDistance(quote.distanceKm); setDuration(quote.durationMin); setPrice(quote.fare); setRoute(geometry2)
       const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
       console.log('Creating ride with fare:', quote.fare, 'dist:', quote.distanceKm)
-      // FIXED 100% FOR LAUNCH: Always searching - Paystack handled later via Edge Function
       const { data, error } = await supabase.from('rides').insert({
         passenger_id: effectiveId, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup,
         dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff,
@@ -325,28 +334,26 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       } as any).select().single()
       if (error) { console.error('RIDE INSERT FAILED:', JSON.stringify(error, null, 2)); throw error }
       console.log('Ride created:', data.id); setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = data.status
-      // TODO: Enable Paystack later - for now keep searching so driver sees ride
       if (paymentMethod === 'paystack') {
         console.log('Paystack selected - ride is searching, will handle payment after driver accepts (v2)')
       }
     } catch (error) { console.error('createRide error:', error); setRideError(errMsg(error)) } finally { setLoading(false) }
   }
+  // FIX ONLY: Must enter ID number AND upload ID document - both required
   async function verifyAndRequestRide(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setVerificationError('')
-    if (!safetyProfile.avatar_url) { setVerificationError('Take a selfie before continuing.'); return }
+    if (!safetyProfile.avatar_url && !safetyProfile.selfie_url) { setVerificationError('Take a selfie before continuing.'); return }
     const trimmedIdNumber = safetyIdNumber.trim(); const idDocumentUrl = safetyProfile.id_document_url
-    if (safetyIdMethod === 'id_photo' && !idDocumentUrl) { setVerificationError('Take a photo of your SA ID or passport before continuing.'); return }
-    if (safetyIdMethod === 'id_number') {
-      if (!trimmedIdNumber) { setVerificationError('Enter your ID number or passport number.'); return }
-      if (/^\d{13}$/.test(trimmedIdNumber) && !isValidSAID(trimmedIdNumber)) { setVerificationError('Enter a valid 13-digit South African ID number.'); return }
-    }
+    if (!trimmedIdNumber) { setVerificationError('Enter your SA ID number or passport number - required.'); return }
+    if (/^\d{13}$/.test(trimmedIdNumber) && !isValidSAID(trimmedIdNumber)) { setVerificationError('Enter a valid 13-digit South African ID number.'); return }
+    if (!idDocumentUrl) { setVerificationError('Capture / upload your SA ID or Passport document photo - required. Both ID number + ID document needed.'); return }
     setLoading(true)
     try {
-      const { error } = await supabase.rpc('verify_passenger_safety', { p_method: safetyIdMethod, p_id_number: safetyIdMethod === 'id_number' ? trimmedIdNumber : null, p_id_document_url: safetyIdMethod === 'id_photo' ? idDocumentUrl : null })
+      const { error } = await supabase.rpc('verify_passenger_safety', { p_method: 'id_both', p_id_number: trimmedIdNumber, p_id_document_url: idDocumentUrl })
       if (error) throw error
-      setSafetyProfile(current => ({ ...current, id_number: safetyIdMethod === 'id_number' ? trimmedIdNumber : null, id_document_url: safetyIdMethod === 'id_photo' ? idDocumentUrl : null, id_verified: false, is_verified: false }))
+      setSafetyProfile(current => ({ ...current, id_number: trimmedIdNumber, id_document_url: idDocumentUrl, id_verified: false, is_verified: false }))
       setVerificationStatus('pending_verification'); setVerificationLoaded(true); setShowSafetyModal(false)
-      setRideError('✅ Selfie + ID submitted! You can still ride now (Go, up to R150, daytime). We will WhatsApp you when Verified Badge is ready.')
+      setRideError('✅ Selfie + ID number + ID document submitted! You can now request rides (Go, up to R150, daytime). We will WhatsApp you when Verified Badge is ready.')
     } catch (error) { setVerificationError('Could not verify your safety details: ' + errMsg(error)) } finally { setLoading(false) }
   }
   async function cancelRide() {
@@ -407,7 +414,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
     {uploadToast && <div role="alert" style={{ position: 'fixed', left: 16, right: 16, bottom: 24, zIndex: 100002, margin: '0 auto', maxWidth: 480, padding: '12px 16px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>Verification photo upload failed: {uploadToast}</div>}
     {!isVerified && verificationStatus === 'pending_verification' && <div role="status" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: BLUE_LIGHT, color: BLUE_DARK, border: '1px solid #B2CCFF', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>⏳ Verification pending — You can still ride now (Go, R150 max, daytime).</div>}
-    {!isVerified && verificationStatus !== 'pending_verification' && !ride && !completedRide && !completedReceipt && <div onClick={() => setShowSafetyModal(true)} role="button" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: BLUE, color: 'white', fontSize: 13, fontWeight: 800, textAlign: 'center', cursor: 'pointer' }}>🔓 Get Verified Badge — Selfie + SA ID → Unlock Night + XL + No Limit</div>}
+    {!isVerified && verificationStatus !== 'pending_verification' && !ride && !completedRide && !completedReceipt && <div onClick={() => setShowSafetyModal(true)} role="button" style={{ position: 'absolute', top: 68, left: 12, right: 12, zIndex: 80, padding: '11px 14px', borderRadius: 12, background: BLUE, color: 'white', fontSize: 13, fontWeight: 800, textAlign: 'center', cursor: 'pointer' }}>🔓 ID Required to Request — Selfie + ID Number + ID Document → Tap to Verify</div>}
     {showSafetyModal && !isVerified && <PassengerSafetyModal dark={isDark} avatarUrl={safetyProfile.selfie_url || safetyProfile.avatar_url} idDocumentUrl={safetyProfile.id_document_url} idNumber={safetyIdNumber} idMethod={safetyIdMethod} paymentMethod={paymentMethod} loading={loading} uploading={verificationUploadType !== null} error={verificationError} onIdNumberChange={setSafetyIdNumber} onIdMethodChange={setSafetyIdMethod} onPaymentMethodChange={setPaymentMethod} onOpenCamera={type => setCameraDocument(type === 'passenger_selfie' ? PASSENGER_SAFETY_CAPTURES[0] : PASSENGER_SAFETY_CAPTURES[1])} onSubmit={event => { void verifyAndRequestRide(event) }} onClose={() => setShowSafetyModal(false)} />}
     {cameraDocument && <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 100002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'rgba(0,0,0,.88)' }}>
       <section style={{ width: '100%', maxWidth: 480, padding: 16, borderRadius: 18, background: bg, color: text }}>
@@ -477,13 +484,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: '10px 0 calc(10px + env(safe-area-inset-bottom))', background: bg, borderTop: '1px solid ' + border }}>
               <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '52px', padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
               <button onClick={() => { void requestRide() }} disabled={loading || !verificationLoaded} style={{ flex: 1.5, minHeight: '52px', padding: '14px', borderRadius: '14px', border: 'none', background: loading || !verificationLoaded ? '#555' : BLUE, color: 'white', fontWeight: 'bold', opacity: loading || !verificationLoaded ? 0.6 : 1 }}>
-                {loading ? 'Finding…' : !verificationLoaded ? 'Checking safety…' : !isVerified ? 'Request Ride • Get Verified' : 'Request Ride ✓ Verified'}
+                {loading ? 'Finding…' : !verificationLoaded ? 'Checking safety…' : !hasRequiredDocs ? 'Request Ride • ID Required' : !isVerified ? 'Request Ride • Get Verified' : 'Request Ride ✓ Verified'}
               </button>
             </div>
             {showEstimate && distance !== null && price !== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km {isVerified ? '✅' : '• Unverified max R150'}</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
-        {/* FIXED 100% - DRIVER INFO + CHAT + STATUS */}
         {ride && <div style={{ padding: 16 }}>
           <h3 style={{margin:'0 0 6px'}}>{ride.status === 'searching' ? '🔍 Finding driver nearby...' : ride.status === 'accepted' || ride.status === 'driver_assigned' ? '🚗 Driver coming to you' : ride.status === 'arrived' ? '📍 Driver arrived!' : ride.status === 'picked_up' || ride.status === 'in_progress' || ride.status === 'en_route' || ride.status === 'on_trip' || ride.status === 'driving_to_destination' ? '🛣️ On trip to destination' : `Ride ${ride.status}`}</h3>
           <p style={{margin:'0 0 8px', color: muted, fontSize:14}}>R {ride.fare} • {ride.payment_method === 'paystack' ? 'Card' : 'Cash'} • {ride.distance_km?.toFixed(1)} km • {ride.ride_category}</p>

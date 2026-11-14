@@ -7,6 +7,8 @@ const BLUE_DARK = '#0052CC'
 const SUPPORT_PHONE = '064 101 8991'
 const SUPPORT_TEL = '0641018991'
 const SUPPORT_WHATSAPP = 'https://wa.me/27641018991'
+const TOTAL_EXPECTED = 15
+const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_license'])
 
 export default function DriverProfile({ onBack }: { onBack?: () => void }) {
   const [driver, setDriver] = useState({
@@ -22,7 +24,11 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
     earnings: 0,
     trips: 0,
     docsApproved: 0,
-    docsTotal: 0,
+    docsTotal: TOTAL_EXPECTED,
+    docsUploaded: 0,
+    identityUploaded: 0,
+    verificationStatus: 'not_started',
+    isVerified: false,
     loading: true
   })
   const [showTrips, setShowTrips] = useState(false)
@@ -41,11 +47,10 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('full_name, avatar_url, phone_number, phone, rating, created_at')
+        .select('full_name, avatar_url, phone_number, phone, rating, created_at, verification_status, is_verified')
         .eq('id', user.id)
         .single()
 
-      // FIXED: Table is driver_profiles, not drivers
       let driverData: any = null
       try {
         const { data } = await supabase.from('driver_profiles').select('*').eq('user_id', user.id).maybeSingle()
@@ -74,7 +79,6 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
           acceptance = Math.round((acceptedCount / rides.length) * 100)
           const driverCancelled = rides.filter(r => r.status === 'cancelled' && (r as any).cancelled_by === 'driver').length
           cancellation = Math.round((driverCancelled / rides.length) * 100 * 10) / 10
-          // FIXED: No driver_earnings column - use fare * share
           earnings = rides.reduce((sum, r: any) => {
             if (r.status !== 'completed' && r.status !== 'rated') return sum
             return sum + Number(r.fare ? r.fare * driverShare : 0)
@@ -84,20 +88,24 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
         }
       } catch {}
 
+      // FIX: docsTotal always 15, docsUploaded separate from approved
       let docsApproved = 0
-      let docsTotal = 0
+      let docsUploaded = 0
+      let identityUploaded = 0
       try {
-        const { data: docs } = await supabase.from('driver_documents').select('doc_type,document_type,status').eq('driver_id', user.id)
-        const approvedSet = new Set<string>()
-        const totalSet = new Set<string>()
+        const { data: docs } = await supabase.from('driver_documents').select('doc_type,document_type,status,file_url,document_url').eq('driver_id', user.id)
+        const latest = new Map<string, any>()
         for (const d of (docs || [])) {
           const key = normalizeKey(String((d as any).doc_type || (d as any).document_type || ''))
           if (!key) continue
-          totalSet.add(key)
-          if (String((d as any).status || '').toLowerCase() === 'approved') approvedSet.add(key)
+          if (!latest.has(key)) latest.set(key, d)
         }
-        docsApproved = approvedSet.size
-        docsTotal = totalSet.size
+        for (const [key, d] of latest) {
+          const hasFile = Boolean((d as any).file_url || (d as any).document_url)
+          if (hasFile) docsUploaded++
+          if (hasFile && IDENTITY_TYPES.has(key)) identityUploaded++
+          if (String((d as any).status || '').toLowerCase() === 'approved') docsApproved++
+        }
       } catch {}
 
       const rawPhone = profile?.phone_number || profile?.phone || (user as any).phone || ''
@@ -115,7 +123,11 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
         earnings,
         trips: tripsCount,
         docsApproved,
-        docsTotal,
+        docsTotal: TOTAL_EXPECTED,
+        docsUploaded,
+        identityUploaded,
+        verificationStatus: (profile as any)?.verification_status || 'not_started',
+        isVerified: (profile as any)?.is_verified === true,
         loading: false
       }))
     }
@@ -189,12 +201,16 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
   const isPhone = /^\+?\d[\d\s-]{6,}$/.test(driver.phone)
   const hasAvatar = !!driver.avatar
   const initial = (driver.name?.[0] || driver.email?.[0] || 'D').toUpperCase()
+  // 2-PHASE: Identity done but not fully approved = in app, Go Online blocked
+  const isIdentityPhase = driver.verificationStatus.toLowerCase() === 'identity_complete' || (driver.identityUploaded === 4 && !driver.isVerified && driver.docsUploaded < TOTAL_EXPECTED)
+  const remaining = TOTAL_EXPECTED - driver.docsUploaded
+  const canGoOnline = driver.isVerified && driver.docsApproved === TOTAL_EXPECTED
 
   const menu = [
     { icon: '💳', label: 'Earnings', sub: `R ${driver.earnings.toFixed(2)} • ${driver.trips} trips`, action: () => alert(`Earnings: R${driver.earnings.toFixed(2)}\nTrips: ${driver.trips}\nYou keep 80% of every fare.`) },
     { icon: '🚕', label: 'My Trips', sub: `${driver.trips} completed trips`, action: () => setShowTrips(v => !v) },
     { icon: '💰', label: 'Wallet / Payouts', sub: `Balance: R ${driver.earnings.toFixed(2)}`, action: () => alert(`Wallet: R${driver.earnings.toFixed(2)} available.\nPayouts via EFT - WhatsApp ${SUPPORT_PHONE} to request payout.`) },
-    { icon: '📄', label: 'Documents', sub: `${driver.docsApproved}/${driver.docsTotal || '—'} Approved ${driver.docsTotal > 0 && driver.docsApproved === driver.docsTotal ? '✓' : ''}`, action: () => window.location.href = '/driver/onboarding' },
+    { icon: '📄', label: 'Documents', sub: `${driver.docsUploaded}/${driver.docsTotal} Uploaded • ${driver.docsApproved} Approved ${canGoOnline ? '✓' : ''}`, action: () => window.location.href = '/driver/onboarding' },
     { icon: '🚗', label: 'Vehicles', action: () => window.location.href = '/driver/onboarding' },
     { icon: '🛡️', label: 'Safety', action: () => alert('Safety Centre:\n• Share trip with family\n• Emergency: 10111\n• BuddyRide Support: ' + SUPPORT_PHONE) },
     { icon: '⚙️', label: 'Settings', action: () => alert('Settings:\n• Notifications: ON\n• Online status in Driver Home\n• Change photo above') },
@@ -213,6 +229,22 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
         <span style={{ fontWeight: 800 }}>BuddyRide Driver</span>
         <button onClick={onBack} style={{ background: '#F2F4F7', border: 'none', color: '#344054', fontSize: 18, width: 36, height: 36, borderRadius: '50%', cursor: 'pointer' }}>✕</button>
       </div>
+      {/* 2-PHASE: Energy banner - inside app but Go Online blocked */}
+      {isIdentityPhase && (
+        <div onClick={() => window.location.href = '/driver/onboarding'} style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 12, background: BLUE_LIGHT, border: '1px solid #B2CCFF', cursor: 'pointer' }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: BLUE_DARK }}>🎉 Identity Done! {driver.docsUploaded}/{TOTAL_EXPECTED} docs • {remaining} left to Go Online</div>
+          <div style={{ height: 8, background: '#E5E9EF', borderRadius: 99, overflow: 'hidden', marginTop: 8 }}>
+            <div style={{ width: `${(driver.docsUploaded/TOTAL_EXPECTED)*100}%`, height: '100%', background: BLUE, borderRadius: 99 }} />
+          </div>
+          <div style={{ fontSize: 12, color: BLUE_DARK, marginTop: 6, fontWeight: 700 }}>Tap to finish remaining docs → Go Online unlocks</div>
+        </div>
+      )}
+      {!canGoOnline && !isIdentityPhase && driver.docsUploaded > 0 && driver.docsUploaded < TOTAL_EXPECTED && (
+        <div onClick={() => window.location.href = '/driver/onboarding'} style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 12, background: '#FFF7ED', border: '1px solid #FDBA74', cursor: 'pointer' }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: '#C2410C' }}>⏳ {driver.docsUploaded}/{TOTAL_EXPECTED} docs • {remaining} left to Go Online</div>
+          <div style={{ fontSize: 12, color: '#667085', marginTop: 4 }}>Tap to finish → Admin approval → Go Online</div>
+        </div>
+      )}
       <div style={{ padding: '20px 16px', display: 'flex', gap: 12, alignItems: 'center', background: '#fff' }}>
         {hasAvatar ? (
           <img src={driver.avatar} alt="Driver" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${BLUE}` }} />
