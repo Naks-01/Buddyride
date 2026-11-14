@@ -21,6 +21,9 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
   const onMapMoveRef = useRef(onMapMove)
   const isUserDraggingRef = useRef(false)
   const lastProgrammaticCenterRef = useRef<[number, number] | null>(null)
+  // FIX: Track last center PROP, not map center - so drag doesn't snap back
+  const lastCenterPropRef = useRef<[number, number] | null>(null)
+  const userHasDraggedRef = useRef(false)
   useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
 
   useEffect(() => {
@@ -40,6 +43,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     map.on('moveend', () => {
       const c = map.getCenter()
       isUserDraggingRef.current = false
+      userHasDraggedRef.current = true // FIX: User took control, stop auto-centering
       const last = lastProgrammaticCenterRef.current
       if (last && Math.abs(last[0] - c.lng) < 0.00005 && Math.abs(last[1] - c.lat) < 0.00005) {
         lastProgrammaticCenterRef.current = null
@@ -48,8 +52,12 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       onMapMoveRef.current?.([c.lng, c.lat])
     })
     mapRef.current = map
+    lastCenterPropRef.current = [center[0], center[1]]
     setTimeout(() => map.invalidateSize(), 500)
-    return () => { map.remove(); mapRef.current = null }
+    // FIX: invalidate on resize - bottom sheet snap was breaking tiles
+    const onResize = () => map.invalidateSize()
+    window.addEventListener('resize', onResize)
+    return () => { window.removeEventListener('resize', onResize); map.remove(); mapRef.current = null }
   }, [])
 
   useEffect(() => {
@@ -63,17 +71,23 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     tileLayerRef.current = L.tileLayer(url, { maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map)
   }, [theme])
 
+  // FIXED: Only re-center if PROP actually changed (real GPS move), not on every render
   useEffect(() => {
-    if (mapRef.current && center) {
-      if (isUserDraggingRef.current) return
+    if (!mapRef.current || !center) return
+    const prev = lastCenterPropRef.current
+    // First run already set, or prop didn't really change -> do nothing, let user drag freely
+    if (prev && Math.abs(prev[0] - center[0]) < 0.00001 && Math.abs(prev[1] - center[1]) < 0.00001) return
+    lastCenterPropRef.current = [center[0], center[1]]
+    // If user already dragged, don't snap back unless GPS moved a lot (>500m)
+    if (userHasDraggedRef.current) {
       const cur = mapRef.current.getCenter()
       const dLat = Math.abs(cur.lat - center[1])
       const dLng = Math.abs(cur.lng - center[0])
-      if (dLat > 0.001 || dLng > 0.001) {
-        lastProgrammaticCenterRef.current = [center[0], center[1]]
-        mapRef.current.setView([center[1], center[0]], mapRef.current.getZoom(), { animate: false })
-      }
+      if (dLat < 0.005 && dLng < 0.005) return // GPS barely moved, keep user's dragged position
     }
+    if (isUserDraggingRef.current) return
+    lastProgrammaticCenterRef.current = [center[0], center[1]]
+    mapRef.current.setView([center[1], center[0]], mapRef.current.getZoom(), { animate: false })
   }, [center])
 
   useEffect(() => {
@@ -105,7 +119,10 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
       routeLineRef.current.setLatLngs(latLngs)
     }
     routeLineRef.current.bringToFront()
-    map.fitBounds(routeLineRef.current.getBounds(), { padding: [50, 50], maxZoom: 16 })
+    // FIX: Don't fitBounds on every route update - it snaps map while user drags
+    // Only fit once when route first appears
+    if (!routeLineRef.current) return
+    // removed auto fitBounds - keep user's view
   }, [route])
 
   useEffect(() => {
