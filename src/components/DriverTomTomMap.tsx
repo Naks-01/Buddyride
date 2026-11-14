@@ -19,7 +19,21 @@ export function DriverTomTomMap({ center, driverLocation, zoom = 14 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markerRef = useRef<any>(null)
   const userHasInteractedRef = useRef(false)
-  const [zoomLevel, setZoomLevel] = useState(14)
+  const [myPos, setMyPos] = useState<[number, number] | null>(null)
+
+  // FIX: Get GPS inside the map itself - no need for parent to pass it
+  useEffect(() => {
+    if (!navigator.geolocation) return
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => setMyPos([pos.coords.longitude, pos.coords.latitude]),
+      (err) => console.log('GPS blocked:', err.message),
+      { enableHighAccuracy: true, maximumAge: 5000 }
+    )
+    return () => navigator.geolocation.clearWatch(watchId)
+  }, [])
+
+  // Use driverLocation if parent gives it, else my own GPS, else center
+  const activeLocation = driverLocation || myPos || center
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -34,48 +48,68 @@ export function DriverTomTomMap({ center, driverLocation, zoom = 14 }: Props) {
       doubleClickZoom: true,
       touchZoomRotate: true,
     })
-    map.on('zoom', () => setZoomLevel(Math.round(map.getZoom() * 10) / 10))
-    map.on('dragstart', () => { userHasInteractedRef.current = true })
-    map.on('zoomstart', () => { userHasInteractedRef.current = true })
     mapRef.current = map
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
   useEffect(() => {
     if (!mapRef.current) return
-    if (zoom === 17) {
+    if (zoom === 17 && activeLocation) {
       userHasInteractedRef.current = false
-      if (driverLocation) {
-        mapRef.current.setCenter([driverLocation[0], driverLocation[1]])
-        mapRef.current.setZoom(17)
-      }
+      mapRef.current.setCenter([activeLocation[0], activeLocation[1]])
+      mapRef.current.setZoom(17)
     }
   }, [zoom])
 
   useEffect(() => {
-    if (!mapRef.current || !driverLocation) return
+    if (!mapRef.current || !activeLocation) return
     if (!markerRef.current) {
       const el = document.createElement('div')
       el.innerHTML = '🚗'
       el.style.fontSize = '32px'
-      markerRef.current = new tt.Marker({ element: el }).setLngLat([driverLocation[0], driverLocation[1]]).addTo(mapRef.current)
+      el.style.filter = 'drop-shadow(0 4px 6px rgba(0,0,0,0.5))'
+      // Blue dot behind car so you can see it even on light map
+      el.style.background = '#0066FF'
+      el.style.borderRadius = '50%'
+      el.style.width = '48px'
+      el.style.height = '48px'
+      el.style.display = 'flex'
+      el.style.alignItems = 'center'
+      el.style.justifyContent = 'center'
+      el.style.border = '3px solid white'
+      markerRef.current = new tt.Marker({ element: el }).setLngLat([activeLocation[0], activeLocation[1]]).addTo(mapRef.current)
     } else {
-      markerRef.current.setLngLat([driverLocation[0], driverLocation[1]])
+      markerRef.current.setLngLat([activeLocation[0], activeLocation[1]])
     }
     if (!userHasInteractedRef.current) {
-      mapRef.current.setCenter([driverLocation[0], driverLocation[1]])
+      mapRef.current.setCenter([activeLocation[0], activeLocation[1]])
     }
-  }, [driverLocation])
+  }, [activeLocation])
+
+  const zoomIn = () => {
+    if (!mapRef.current) return
+    userHasInteractedRef.current = true
+    mapRef.current.setZoom(Math.min(mapRef.current.getZoom() + 1, 19))
+  }
+  const zoomOut = () => {
+    if (!mapRef.current) return
+    userHasInteractedRef.current = true
+    mapRef.current.setZoom(Math.max(mapRef.current.getZoom() - 1, 3))
+  }
+  const centerMe = () => {
+    if (!mapRef.current || !activeLocation) return
+    userHasInteractedRef.current = false
+    mapRef.current.setCenter([activeLocation[0], activeLocation[1]])
+    mapRef.current.setZoom(16)
+  }
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#e9eef5' }} />
-      
-      {/* FIX: Zoom buttons moved to BOTTOM-LEFT, above GO OFFLINE sheet - NOT on top header */}
-      <div style={{ position: 'absolute', bottom: '110px', left: '12px', zIndex: 40, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = true; mapRef.current?.zoomIn(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold' }}>+</button>
-        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = true; mapRef.current?.zoomOut(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold' }}>−</button>
-        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = false; if(driverLocation){ mapRef.current?.setCenter([driverLocation[0], driverLocation[1]]); mapRef.current?.setZoom(16);} }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '18px' }}>🎯</button>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <div style={{ position: 'absolute', bottom: '110px', right: '12px', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <button onClick={zoomIn} style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#0066FF', color: 'white', border: 'none', fontSize: '26px', fontWeight: '900', boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }}>+</button>
+        <button onClick={zoomOut} style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#0066FF', color: 'white', border: 'none', fontSize: '26px', fontWeight: '900', boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }}>−</button>
+        <button onClick={centerMe} style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'white', color: 'black', border: '1px solid #ddd', fontSize: '20px', boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }}>🎯</button>
       </div>
     </div>
   )

@@ -4,7 +4,6 @@ import { REQUIRED_DOCS, normalizeDocType, hasRealDocument } from '../lib/driverD
 
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
-const BLUE_DARK = '#0052CC'
 
 type DashboardAccess = 'checking' | 'pending' | 'approved'
 
@@ -28,7 +27,6 @@ export function DriverDashboardGuard({
   const [totalDocs, setTotalDocs] = useState(0)
   const [checking, setChecking] = useState(false)
   const onboardingSentRef = useRef(false)
-  // FIX: Use ref for in-flight check - state value is stale in realtime callback and drops updates
   const checkingRef = useRef(false)
   const rerunRef = useRef(false)
 
@@ -90,16 +88,26 @@ export function DriverDashboardGuard({
       setProfileRejectionReason(profileData.verification_rejection_reason || null)
 
       const profileApproved = profileData.is_verified === true && ['approved','verified'].includes(String(profileData.verification_status || '').toLowerCase())
+      
+      // FIX 1: APPROVED -> show dashboard + GO ONLINE
       if (profileApproved && completeApproved) {
         setAccess('approved')
         return
       }
 
+      // FIX 2: REJECTED or PENDING -> show Waiting page INSTANTLY
       if ((String(profileData.verification_status || '').toLowerCase() === 'rejected' && rejected.length === 0) || rejected.length > 0 || ['pending','pending_verification'].includes(String(profileData.verification_status || '').toLowerCase()) ) {
         setAccess('pending')
         return
       }
 
+      // FIX 3: Docs uploaded but profile not approved yet -> MUST show pending, not onboarding loop
+      if (docs.length > 0) {
+        setAccess('pending')
+        return
+      }
+
+      // FIX 4: No docs at all -> go to onboarding
       if (!profileApproved || !completeApproved) {
         if (!onboardingSentRef.current) {
           onboardingSentRef.current = true
@@ -116,13 +124,18 @@ export function DriverDashboardGuard({
 
   useEffect(() => {
     void check()
+    // FIX: Poll every 5s until approved - fixes "few minutes" delay
+    const interval = setInterval(() => {
+      if (access !== 'approved') void check()
+    }, 5000)
+
     const ch = supabase.channel(`guard-${profile.id}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${profile.id}` }, () => check())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${profile.id}` }, () => check())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_documents', filter: `driver_id=eq.${profile.id}` }, () => check())
       .subscribe()
-    return () => { supabase.removeChannel(ch) }
+    return () => { clearInterval(interval); supabase.removeChannel(ch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile.id])
+  }, [profile.id, access])
 
   if (error) return <main role="alert" style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F6F7F9', color: '#b42318', fontFamily: 'Inter, sans-serif' }}>
     <div style={{ maxWidth: 460, padding: 24, borderRadius: 16, background: '#fff', boxShadow: '0 5px 18px rgba(20,33,50,.06)' }}>
