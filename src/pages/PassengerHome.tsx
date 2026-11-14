@@ -167,7 +167,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     })
     async function loadActiveRide() {
       const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
-      const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('passenger_id', effectiveId).in('status', ['searching', 'driver_assigned', 'accepted', 'arrived', 'picked_up', 'en_route', 'in_progress', 'on_trip', 'driving_to_destination', 'awaiting_payment'] as any).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      // FIX ONLY: Auto-cancel stale awaiting_payment > 10 mins so app never opens with old R28 ride
+      try {
+        await supabase.from('rides').update({ status: 'cancelled', cancel_reason: 'Auto-cancelled stale awaiting_payment on open', cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any)
+          .eq('passenger_id', effectiveId).eq('status', 'awaiting_payment').lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
+      } catch {}
+      // FIX ONLY: Removed awaiting_payment from active statuses - it should NOT block Where are you going?
+      const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('passenger_id', effectiveId).in('status', ['searching', 'driver_assigned', 'accepted', 'arrived', 'picked_up', 'en_route', 'in_progress', 'on_trip', 'driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (activeRideError) { if (active) setRideError('Could not restore your active ride: ' + errMsg(activeRideError)); return }
       const { data: completedRideData, error: completedRideError } = activeRide ? { data: null, error: null } as any : await supabase.from('rides').select('*').eq('passenger_id', effectiveId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (completedRideError) { if (active) setRideError('Could not restore your pending rating: ' + errMsg(completedRideError)); return }
