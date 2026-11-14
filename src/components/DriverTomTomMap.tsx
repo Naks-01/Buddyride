@@ -71,10 +71,7 @@ export function DriverTomTomMap({ center, driverLocation, zoom = 14 }: Props) {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#e9eef5', touchAction: 'none' }} />
-      <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = true; mapRef.current?.zoomIn(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold' }}>+</button>
-        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = true; mapRef.current?.zoomOut(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold' }}>−</button>
-      </div>
+      {/* ZOOM BUTTONS REMOVED - they were covering header / day-night button. Use pinch to zoom. */}
     </div>
   )
 }
