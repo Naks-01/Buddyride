@@ -37,7 +37,6 @@ export function DriverTomTomMap({ center, driverLocation, zoom = 14 }: Props) {
     map.on('zoom', () => setZoomLevel(Math.round(map.getZoom() * 10) / 10))
     map.on('dragstart', () => { userHasInteractedRef.current = true })
     map.on('zoomstart', () => { userHasInteractedRef.current = true })
-    map.on('touchstart', () => { userHasInteractedRef.current = true })
     mapRef.current = map
     return () => { map.remove(); mapRef.current = null }
   }, [])
@@ -70,8 +69,14 @@ export function DriverTomTomMap({ center, driverLocation, zoom = 14 }: Props) {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#e9eef5', touchAction: 'none' }} />
-      {/* ZOOM BUTTONS REMOVED - they were covering header / day-night button. Use pinch to zoom. */}
+      <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#e9eef5' }} />
+      
+      {/* FIX: Zoom buttons moved to BOTTOM-LEFT, above GO OFFLINE sheet - NOT on top header */}
+      <div style={{ position: 'absolute', bottom: '110px', left: '12px', zIndex: 40, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = true; mapRef.current?.zoomIn(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold' }}>+</button>
+        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = true; mapRef.current?.zoomOut(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold' }}>−</button>
+        <button onClick={(e) => { e.stopPropagation(); userHasInteractedRef.current = false; if(driverLocation){ mapRef.current?.setCenter([driverLocation[0], driverLocation[1]]); mapRef.current?.setZoom(16);} }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '18px' }}>🎯</button>
+      </div>
     </div>
   )
 }
