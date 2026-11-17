@@ -131,15 +131,15 @@ export function formatSAPhone(phone: string): string {
 export async function sendSmsOtp(phone: string): Promise<void> {
   const cleanPhone = formatSAPhone(phone)
   if (!/^\+27[0-9]{9}$/.test(cleanPhone)) throw new Error('Enter a valid South African mobile number.')
-  const { error } = await supabase.functions.invoke('send-sms-otp', { body: { phone: cleanPhone } })
+  const { error } = await supabase.functions.invoke('send-sms-otp', { body: { action: 'send', phone: cleanPhone } })
   if (error) throw new Error('SMS send failed: ' + (error.message || 'Please try again.'))
 }
 
 export async function verifySmsOtp(phone: string, code: string): Promise<boolean> {
   const cleanPhone = formatSAPhone(phone)
   if (!/^\+27[0-9]{9}$/.test(cleanPhone) || !/^\d{6}$/.test(code.trim())) return false
-  const { data, error } = await supabase.functions.invoke('verify-sms-otp', {
-    body: { phone: cleanPhone, code: code.trim() },
+  const { data, error } = await supabase.functions.invoke('send-sms-otp', {
+    body: { action: 'verify', phone: cleanPhone, code: code.trim() },
   })
   if (error) throw new Error('OTP verification failed: ' + (error.message || 'Please try again.'))
   return data?.verified === true
