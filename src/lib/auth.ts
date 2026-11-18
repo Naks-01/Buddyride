@@ -16,8 +16,6 @@ export async function ensureProfile(userId: string, email: string | null, rolePa
   const normalizedEmail = email?.toLowerCase().trim() || null
   const existing = await getProfile(userId)
   if (existing) {
-    // The database is the authority for roles. Never grant or revoke admin/driver
-    // privileges from client-side email checks during login.
     localStorage.removeItem('buddyride_pending_role')
     return existing
   }
@@ -29,7 +27,6 @@ export async function ensureProfile(userId: string, email: string | null, rolePa
   
   let selectedRole: Role
   if (roleParam === 'driver' || roleParam === 'passenger') {
-    // NEW: explicit role param wins - this is what fixes passenger -> driver bug
     selectedRole = roleParam
   } else if (pendingRole === 'driver' || pendingRole === 'passenger') {
     selectedRole = pendingRole
@@ -136,10 +133,11 @@ export async function sendSmsOtp(phone: string): Promise<void> {
   if ((data as any)?.error) throw new Error((data as any).error)
 }
 
+// ✅ FIXED - was calling send-sms-otp, now calls verify-sms-otp
 export async function verifySmsOtp(phone: string, code: string): Promise<boolean> {
   const cleanPhone = formatSAPhone(phone)
   if (!/^\+27[0-9]{9}$/.test(cleanPhone) || !/^\d{6}$/.test(code.trim())) return false
-  const { data, error } = await supabase.functions.invoke('send-sms-otp', { body: { phone: cleanPhone, action: 'verify', code: code.trim() } })
+  const { data, error } = await supabase.functions.invoke('verify-sms-otp', { body: { phone: cleanPhone, code: code.trim() } })
   if (error) throw new Error(error.message)
   if ((data as any)?.error) throw new Error((data as any).error)
   return (data as any)?.verified === true
