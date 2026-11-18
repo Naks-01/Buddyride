@@ -53,29 +53,36 @@ async function searchPlaces(query: string, setter: any, setShow: any) {
   if (TOMTOM_KEY) {
     try {
       const res = await fetch(`https://api.tomtom.com/search/2/poiSearch/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8`)
-      const data = await res.json()
-      if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return }
+      if (res.ok) {
+        const data = await res.json()
+        if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return }
+      }
     } catch {}
     try {
       const res = await fetch(`https://api.tomtom.com/search/2/search/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8&idxSet=POI,Addr`)
-      const data = await res.json()
-      if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return }
+      if (res.ok) {
+        const data = await res.json()
+        if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return }
+      }
     } catch {}
   }
   try {
     const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query + ', Limpopo') + '&countrycodes=za&limit=8')
+    if (!res.ok) throw new Error('OSM search failed')
     const osmData = await res.json(); const places = osmData.map((o: any) => ({ text: o.display_name.split(',')[0], place_name: o.display_name, center: [parseFloat(o.lon), parseFloat(o.lat)] as [number, number] }))
     if (places.length > 0) { setter(places); setShow(true); return }
   } catch {}
   setter([]); setShow(false)
 }
 async function geocodeAddress(text: string): Promise<[number, number] | null> {
-  if (TOMTOM_KEY) { try { const res = await fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(text)}.json?key=${TOMTOM_KEY}&countrySet=ZA&limit=1&idxSet=POI,Addr`); const data = await res.json(); if (data.results?.[0]) return [data.results[0].position.lon, data.results[0].position.lat] } catch {} }
+  if (TOMTOM_KEY) { try { const res = await fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(text)}.json?key=${TOMTOM_KEY}&countrySet=ZA&limit=1&idxSet=POI,Addr`); if (res.ok) { const data = await res.json(); if (data.results?.[0]) return [data.results[0].position.lon, data.results[0].position.lat] } } catch {} }
   try { const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(text) + '&countrycodes=za&limit=1'); const data = await res.json(); if (data?.[0]) return [parseFloat(data[0].lon), parseFloat(data[0].lat)] } catch {}
   return null
 }
 export function PassengerHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
+  // FIX BUG 1: separate map center, not tied to pickupCoords
+  const [mapCenter, setMapCenter] = useState<[number, number]>(POLOKWANE_CENTER)
   const [pickup, setPickup] = useState(''); const [dropoff, setDropoff] = useState('')
   const [pickupCoords, setPickupCoords] = useState<[number, number] | null>(null); const [dropoffCoords, setDropoffCoords] = useState<[number, number] | null>(null)
   const [pickupSuggestions, setPickupSuggestions] = useState<any[]>([]); const [dropoffSuggestions, setDropoffSuggestions] = useState<any[]>([])
@@ -167,7 +174,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           const iconById = Object.fromEntries(CATEGORIES.map(category => [category.id, category.icon])); const activeCategories = categoryResult.data.map(category => ({ id: category.id, name: category.label, icon: iconById[category.id] || '🚗' }))
           setCategories(activeCategories); setSelectedCat(current => activeCategories.some(category => category.id === current) ? current : activeCategories[0].id)
         }
-      } catch { setCategories(CATEGORIES) } finally { if (active) { setPricingReady(true); setRideError('') } }
+      } catch { setCategories(CATEGORIES) } finally { if (active) { setPricingReady(true) } }
     }
     void loadFareCategories(); return () => { active = false }
   }, [])
@@ -184,10 +191,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }, [])
   useEffect(() => {
     let active = true
-    navigator.geolocation.getCurrentPosition(async pos => {
-      if (!active) return; const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setPickupCoords(p)
-      try { const real = await reverseTomTom(p); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') }
-    })
+    // FIX BUG 3: geolocation error handler + fallback
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(async pos => {
+        if (!active) return; const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setMapCenter(p); setPickupCoords(p)
+        try { const real = await reverseTomTom(p); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') }
+      }, () => {
+        if (!active) return
+        setLocation(POLOKWANE_CENTER); setMapCenter(POLOKWANE_CENTER); setPickupCoords(POLOKWANE_CENTER); setPickup('Polokwane Central')
+      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 })
+    }
     async function loadActiveRide() {
       const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
       try {
@@ -249,20 +262,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
   function onPickupChange(val: string) { setFareQuote(null); setPickup(val); setPickupCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 300) }
   function onDropoffChange(val: string) { setFareQuote(null); setDropoff(val); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
-  function selectPickupSuggestion(item: any) { setFareQuote(null); setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowPickupSug(false); setPinTarget('dropoff') }
-  function selectDropoffSuggestion(item: any) { setFareQuote(null); setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowDropoffSug(false); setSheetSnap(90) }
+  function selectPickupSuggestion(item: any) { setFareQuote(null); setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowPickupSug(false); setPinTarget('dropoff') }
+  function selectDropoffSuggestion(item: any) { setFareQuote(null); setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowDropoffSug(false); setSheetSnap(90) }
   function onMapMove(coords: [number, number]) {
-    setFareQuote(null); setIsMapMoving(true); setShowEstimate(false); setDistance(null); setPrice(null); setRoute(undefined)
+    // FIX BUG 5: don't spam reverse geocode, don't clear route on every pixel
+    setIsMapMoving(true)
     if (pinTarget === 'pickup') {
       setPickupCoords(coords); setShowPickupSug(false)
       if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current)
       const requestId = ++pickupAddressRequest.current
-      mapAddressTimeout.current = setTimeout(async () => { const address = await reverseTomTom(coords); if (requestId === pickupAddressRequest.current) { setPickup(address); setIsMapMoving(false) } }, 250) as any
+      mapAddressTimeout.current = setTimeout(async () => { try { const address = await reverseTomTom(coords); if (requestId === pickupAddressRequest.current) { setPickup(address); setIsMapMoving(false) } } catch { setIsMapMoving(false) } }, 600) as any
     } else {
       setDropoffCoords(coords); setShowDropoffSug(false)
       if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current)
       const requestId = ++dropoffAddressRequest.current
-      mapAddressTimeout.current = setTimeout(async () => { const address = await reverseTomTom(coords); if (requestId === dropoffAddressRequest.current) { setDropoff(address); setIsMapMoving(false) } }, 250) as any
+      mapAddressTimeout.current = setTimeout(async () => { try { const address = await reverseTomTom(coords); if (requestId === dropoffAddressRequest.current) { setDropoff(address); setIsMapMoving(false) } } catch { setIsMapMoving(false) } }, 600) as any
     }
   }
   async function ensureCoords() {
@@ -270,6 +284,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (!pCoords && pickup.trim()) { pCoords = await geocodeAddress(pickup); if (pCoords) setPickupCoords(pCoords) }
     if (!dCoords && dropoff.trim()) { dCoords = await geocodeAddress(dropoff); if (dCoords) setDropoffCoords(dCoords) }
     if (!pCoords && /my location/i.test(pickup)) { pCoords = location; setPickupCoords(pCoords) }
+    if (!pCoords) { pCoords = location; setPickupCoords(pCoords) }
     return { pCoords, dCoords }
   }
   async function calculateEstimate() {
@@ -291,8 +306,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   async function useMyLocation() {
     navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-      setFareQuote(null); setLocation(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup')
-      const real = await reverseTomTom(p); setPickup(real); setRideError('')
+      setFareQuote(null); setLocation(p); setMapCenter(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup')
+      try { const real = await reverseTomTom(p); setPickup(real); setRideError('') } catch { setPickup('My Location - Polokwane') }
     }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 10000 })
   }
   async function requestRide() {
@@ -494,7 +509,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     </div>)}
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
       <Suspense fallback={<div aria-label="Loading map" style={{ width: '100%', height: '100%', background: bg2 }} />}>
-        <PassengerTomTomMap center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onMapMove} />
+        <PassengerTomTomMap center={mapCenter} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onMapMove} />
       </Suspense>
       {!ride && !completedRide && !completedReceipt && <>
         <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: `translate(-50%, -100%) translateY(${isMapMoving ? -8 : 0})`, fontSize: '34px', lineHeight: 1, pointerEvents: 'none', transition: 'transform 0.15s' }}>{pinTarget === 'pickup' ? '📍' : '🏁'}</div>
