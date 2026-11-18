@@ -131,16 +131,16 @@ export function formatSAPhone(phone: string): string {
 export async function sendSmsOtp(phone: string): Promise<void> {
   const cleanPhone = formatSAPhone(phone)
   if (!/^\+27[0-9]{9}$/.test(cleanPhone)) throw new Error('Enter a valid South African mobile number.')
-  const { data, error } = await supabase.rpc('send_sms_otp', { phone_input: cleanPhone })
-  if (error) throw new Error('SMS send failed: ' + error.message)
-  console.log('OTP CODE (use this):', (data as any)?.code)
+  const { data, error } = await supabase.functions.invoke('send-sms-otp', { body: { phone: cleanPhone } })
+  if (error) throw new Error(error.message)
+  if ((data as any)?.error) throw new Error((data as any).error)
 }
 
 export async function verifySmsOtp(phone: string, code: string): Promise<boolean> {
   const cleanPhone = formatSAPhone(phone)
   if (!/^\+27[0-9]{9}$/.test(cleanPhone) || !/^\d{6}$/.test(code.trim())) return false
-  if (code.trim() === '123456') return true
-  const { data, error } = await supabase.rpc('verify_sms_otp', { phone_input: cleanPhone, code_input: code.trim() })
-  if (error) throw new Error('OTP verification failed: ' + error.message)
+  const { data, error } = await supabase.functions.invoke('send-sms-otp', { body: { phone: cleanPhone, action: 'verify', code: code.trim() } })
+  if (error) throw new Error(error.message)
+  if ((data as any)?.error) throw new Error((data as any).error)
   return (data as any)?.verified === true
 }
