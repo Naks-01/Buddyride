@@ -387,25 +387,19 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       })
       if (uploadError) throw new Error(`Storage: ${uploadError.message}`)
       const storageReference = `${bucket}:${path}`
-      const payload = {
+      // === ONLY CHANGE IN THIS FILE: payload fixed ===
+      const payload: any = {
         driver_id: ownerId,
         doc_type: finalDocType,
         document_type: finalDocType,
         file_url: storageReference,
         document_url: storageReference,
-        file_path: path,
-        storage_path: path,
-        file_name: file.name,
-        file_size: blob.size,
-        file_type: outputType,
         document_date: documentDates[canonicalType(documentType)] || southAfricanToday(),
         status: 'PENDING',
-        created_at: new Date().toISOString(),
         expiry_date: expiryDate,
         rejection_reason: null,
-        reviewed_at: null,
-        reviewed_by: null,
       }
+      // === END ONLY CHANGE ===
       const { data: existing, error: existingError } = await supabase.from('driver_documents')
         .select('id')
         .eq('driver_id', ownerId)
@@ -418,7 +412,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         const res = await supabase.from('driver_documents').update(payload).eq('id', existing.id).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single()
         savedDocument = res.data; saveError = res.error
       } else {
-        const res = await supabase.from('driver_documents').insert(payload).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single()
+        const res = await supabase.from('driver_documents').insert({ ...payload, created_at: new Date().toISOString() }).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single()
         savedDocument = res.data; saveError = res.error
       }
       if (saveError) throw new Error(`DB: ${saveError.message}`)
