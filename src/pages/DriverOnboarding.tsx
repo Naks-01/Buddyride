@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import { createDriverDocumentSignedUrl, EXPIRING_DRIVER_DOCUMENT_TYPES, REQUIRED_DOCS } from '../lib/driverDocuments'
+import imageCompression from 'browser-image-compression'
 
 type StoredDocument = Pick<DriverDocument,
   'id' | 'doc_type' | 'document_type' | 'document_url' | 'document_date' | 'file_url' | 'status' | 'rejection_reason' | 'created_at' | 'expiry_date' | 'prdp_number' | 'document_hash'
@@ -41,22 +42,21 @@ function isValidSAID(id: string) {
 }
 
 async function compressSafely(file: File): Promise<File> {
-  if (file.size < 2 * 1024 * 1024) return file
-  if (!file.type.startsWith('image/') && !/\.(jpe?g|png|webp)$/i.test(file.name)) return file
+  if (file.type === 'application/pdf') return file
+  if (!file.type.startsWith('image/') && !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)) return file
+  if (file.size < 1024 * 1024) return file
   try {
-    if (typeof createImageBitmap === 'undefined') return file
-    const bitmap = await createImageBitmap(file, { resizeWidth: 1280, resizeQuality: 'medium' } as any)
-    const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-    const ctx = canvas.getContext('2d')
-    if (!ctx) { bitmap.close?.(); return file }
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    bitmap.close?.()
-    const blob: Blob | null = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.68))
-    if (!blob || blob.size >= file.size) return file
-    return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: Date.now() })
+    const compressed = await imageCompression(file, {
+      maxSizeMB: 0.8,
+      maxWidthOrHeight: 1280,
+      useWebWorker: true,
+      fileType: 'image/jpeg',
+      initialQuality: 0.65,
+    })
+    return new File([compressed], file.name.replace(/\.\w+$/, '.jpg'), {
+      type: 'image/jpeg',
+      lastModified: Date.now(),
+    })
   } catch {
     return file
   }
@@ -112,7 +112,6 @@ function latestDocuments(documents: StoredDocument[]) {
   return [...latest.values()]
 }
 
-// FIXED: Check file_url OR document_url - old rows may only have document_url
 function isCardComplete(card: typeof DOCUMENT_CARDS[number], documents: StoredDocument[]) {
   const want = canonicalType(card.type)
   const document = documents.find(item => {
@@ -314,7 +313,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       return Boolean(doc?.file_url || (doc as any)?.document_url) && (!card.expiryRequired || Boolean(doc?.expiry_date))
     })
     if (loadedIdentityComplete) setPhase('remaining')
-    // FIX ONLY THIS FILE: If already identity_complete, open inside on reload - don't loop back to Plan
     if (status === 'identity_complete' && loadedIdentityComplete) {
       setShowPlan(false)
       setPhase('remaining')
@@ -340,12 +338,10 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         extFromName === 'png' ? 'image/png' :
         extFromName === 'webp' ? 'image/webp' : 'image/jpeg'
       )
-      if (['heic','heif'].includes(extFromName) || guessedType === 'image/heic' || guessedType === 'image/heif') {
-        throw new Error('iPhone HEIC not supported. Please open the photo and take a screenshot, then upload the screenshot.')
-      }
       if (file.size <= 0) throw new Error('File is empty. Try again or take a screenshot.')
-      if (file.size > MAX_UPLOAD_SIZE) {
-        throw new Error(`File too large ${(file.size/1024/1024).toFixed(1)}MB > 20MB. Take a screenshot of the document (Power + Volume Down) and upload the screenshot.`)
+      const processedFile = await compressSafely(file)
+      if (processedFile.size > MAX_UPLOAD_SIZE) {
+        throw new Error(`File too large ${(processedFile.size/1024/1024).toFixed(1)}MB > 20MB.`)
       }
       const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
       const expiryDate = expiryDates[canonicalType(documentType)] || expiryDates[documentType] || null
@@ -355,12 +351,10 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) {
         throw new Error('This document has expired.')
       }
-      const processedFile = await compressSafely(file)
       const isPdf = guessedType === 'application/pdf'
       const blob: Blob | File = processedFile
       const outputType = isPdf ? 'application/pdf' : (processedFile.type || guessedType)
       const extension = isPdf ? 'pdf' : (/^[a-z0-9]{1,8}$/.test(extFromName) && !isPdf ? (processedFile.type === 'image/jpeg' ? 'jpg' : extFromName) : 'jpg')
-      if (blob.size > MAX_UPLOAD_SIZE) throw new Error('Processed file still too large.')
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in')
       const ownerId = user.id
@@ -418,7 +412,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(path)
         await supabase.from('profiles').update({ avatar_url: publicData.publicUrl }).eq('id', ownerId)
       }
-      // FIXED: Auto-advance only if expiry also present for licence
       if (finalDocType && IDENTITY_TYPES.has(finalDocType)) {
         setTimeout(() => {
           setDocuments(cur => {
@@ -453,7 +446,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     await uploadFile(cardType, bucket, selectedFiles[0], documentType)
   }
 
-  // FIXED: Update by doc_type OR document_type - old rows use either column
   async function updateDocumentDate(documentType: string, field: 'document_date' | 'expiry_date', value: string) {
     const cType = canonicalType(documentType)
     if (field === 'document_date') setDocumentDates(current => ({ ...current, [cType]: value, [documentType]: value }))
@@ -483,7 +475,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       } as any).eq('id', ownerId)
       if (error) throw error
       setVerificationStatus('identity_complete')
-      // FIX ONLY THIS FILE: Open inside even if parent onDashboard doesn't switch
       setShowPlan(false)
       setPhase('remaining')
       onDashboard()
@@ -496,7 +487,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     if (/^\d{13}$/.test(trimmedId) && !isValidSAID(trimmedId)) { setError('Enter a valid 13-digit South African ID number.'); return }
     if (!licenceNumber.trim()) { setError('Enter your driver licence number - required.'); return }
     if (!isComplete(documents) || rejectedTypes.size > 0 || !bankDetailsComplete || submitting) return
-    // FIXED: Parenthesis - was (A && B || C) which JS reads as (A&&B)||C
     const hasBadExpiry = REQUIRED_DOCS.some(document => {
       if (!EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type)) return false
       const exp = expiryDates[canonicalType(document.type)] || expiryDates[document.type] || ''
@@ -554,7 +544,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const allDocsApproved = approvedCount === REQUIRED_DOCS.length
   const isFullyApproved = (verificationStatus === 'approved' || verificationStatus === 'verified') && allDocsApproved
 
-  // FIX ONLY THIS FILE: Pending screen only blocks if ALL docs are uploaded. If only Identity is done, stay inside to finish rest.
   if (hasSubmitted && rejectedTypes.size === 0 && !isFullyApproved && isComplete(documents) && verificationStatus !== 'identity_complete') {
     return <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F8F9FA', fontFamily: 'Inter, sans-serif', color: '#182230' }}>
       <section style={{ ...cardStyle, width: 'min(100%, 480px)', padding: '42px 28px', textAlign: 'center' }}>
@@ -598,7 +587,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
 
   const visibleCards = phase === 'identity' ? IDENTITY_CARDS : REMAINING_CARDS
   const phaseTitle = phase === 'identity' ? 'Step 1 - Your Identity' : 'Step 2 - Finish to Go Online'
-  const phaseSubtitle = phase === 'identity' ? 'Upload 4 docs + 2 numbers, then App opens' : `You are inside! ${remainingCompletedCount}/${REMAINING_CARDS.length} remaining - finish to unlock Go Online`
 
   return <main style={{ minHeight: '100dvh', background: '#F8F9FA', padding: '28px 18px 48px', color: '#182230', fontFamily: 'Inter, sans-serif' }}>
     <div style={{ width: 'min(100%, 760px)', margin: '0 auto' }}>
