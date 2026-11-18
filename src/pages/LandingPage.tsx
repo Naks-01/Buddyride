@@ -29,7 +29,6 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
 
   const driverKeeps = 100 - commission
 
-  // FIXED: Every button must function - always set role + always call login, with fallback
   const handleDriverClick = () => {
     try { localStorage.setItem('buddyride_pending_role', 'driver') } catch {}
     if (onDriverLogin) { onDriverLogin(); return }
@@ -40,9 +39,7 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
     onLogin()
   }
 
-  // FIXED: Legal links were <a href="/terms"> which 404s in SPA. Use real navigation that works.
   const goToLegal = (path: string) => {
-    // If your App.tsx handles /terms via routing, this works. Otherwise opens the page.
     window.location.href = path
   }
 
@@ -162,6 +159,12 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
         <div style={{ borderTop: "1px solid #1e293b", marginTop: 24, paddingTop: 16, textAlign: "center", fontSize: 12, color: "#64748b" }}>
           © {new Date().getFullYear()} BuddyRide Pty Ltd. All rights reserved. Payments secured by Paystack.
         </div>
+      </div>
+
+      <div style={{ background: "#0a0a0a", padding: "14px 16px", textAlign: "center" }}>
+        <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: "#9CA3AF", letterSpacing: "0.02em" }}>
+          BuddyRide was developed and registered by Mokgalaka Nakampe Trevor. It is 100% Black-owned.
+        </p>
       </div>
     </div>
   )
