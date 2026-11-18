@@ -100,7 +100,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const pickupDebounce = useRef<any>(null); const dropoffDebounce = useRef<any>(null); const pickupAddressRequest = useRef(0); const dropoffAddressRequest = useRef(0); const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null); const cancelledRideTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const uploadToastTimer = useRef<number | null>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null); const prevStatusRef = useRef<string>('')
   const isDark = theme === 'dark'; const bg = isDark ? '#121212' : '#ffffff'; const bg2 = isDark ? '#1e1e1e' : '#F2F4F7'; const text = isDark ? 'white' : 'black'; const muted = isDark ? '#aaa' : '#667085'; const border = isDark ? '#333' : '#E4E7EC'
-  // FINAL FIX: Selfie = ONLY selfie_url (live camera). avatar_url is profile photo, NOT verification. No bypass.
   const hasIdNumber = !!(safetyProfile.id_number || safetyIdNumber.trim())
   const hasIdDoc = !!safetyProfile.id_document_url
   const hasSelfie = !!safetyProfile.selfie_url
@@ -330,9 +329,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       const { data: { user } } = await supabase.auth.getUser()
       const effectiveId = user?.id || profile.id
       if (!user) throw new Error('Your session has expired. Please log in again.')
-
-      // Reuse the exact server quote shown to the passenger. If it no longer
-      // matches the route/category or has expired, request a fresh quote.
       let quote = fareQuote
       const quoteMatches = quote && quote.category === selectedCat
         && quote.pickup?.[0] === pCoords[0] && quote.pickup?.[1] === pCoords[1]
@@ -439,14 +435,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     setVerificationUploadType(document.type); setVerificationError(''); let uploadedPath: string | null = null; let uploadedBucket = ''
     try {
       const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error('Not logged in - please log in again'); const ownerId = user.id
-      const bucket = document.type === 'passenger_selfie' ? 'passenger-photos' : 'passenger-ids'; uploadedBucket = bucket
+      const bucket = document.type === 'passenger_selfie' ? 'safety-selfies' : 'passenger-ids'; uploadedBucket = bucket
       let blobToUpload: Blob = photo; try { blobToUpload = await compress(photo) } catch { blobToUpload = photo }
       const path = `${ownerId}/${document.type}-${safeUUID()}.jpg`; uploadedPath = path
       const { error: uploadError } = await supabase.storage.from(bucket).upload(path, blobToUpload, { contentType: 'image/jpeg', upsert: true })
       if (uploadError) throw new Error(`Storage: ${uploadError.message}`)
       const storageRef = `${bucket}:${path}`; const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path); const publicUrl = urlData.publicUrl
       const savedValue = publicUrl && publicUrl.startsWith('https://') ? publicUrl : storageRef; const idSavedValue = document.type === 'passenger_id' ? storageRef : savedValue
-      // FIXED: Selfie goes ONLY to selfie_url. NEVER to avatar_url.
       const profileField = document.type === 'passenger_selfie' ? { selfie_url: savedValue } : { id_document_url: idSavedValue }
       const { error: saveError } = await supabase.from('profiles').update(profileField).eq('id', ownerId)
       if (saveError) { await supabase.storage.from(bucket).remove([path]).catch(()=>{}); throw new Error(`DB: ${saveError.message}`) }
