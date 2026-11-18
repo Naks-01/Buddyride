@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { OsmMapView } from '../components/OsmMapView'
+import { PassengerTomTomMap } from '../components/PassengerTomTomMap'
 import { supabase } from '../lib/supabase'
 
 const BLUE = '#0066FF'
@@ -248,7 +248,7 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
         <span style={{ padding: '6px 12px', borderRadius: 20, background: BLUE, color: 'white', fontSize: 12, fontWeight: 700 }}>Live Ride Monitoring</span>
       </div>
       <div style={{ height: '420px', overflow: 'hidden', borderRadius: '10px', background: '#000' }}>
-        <OsmMapView center={[-23.9045, 29.4689]} availableCars={locations} theme="dark" />
+        <PassengerTomTomMap center={[-23.9045, 29.4689]} availableCars={locations} theme="dark" />
       </div>
       <p style={{ fontSize: '12px', color: subText }}>Showing {locations.length} online driver location(s). Auto-refreshes every 5s.</p>
     </section>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-type OsmMapViewProps = {
+type PassengerTomTomMapProps = {
   center: [number, number]
   route?: any
   driverLocation?: [number, number]
@@ -11,7 +11,7 @@ type OsmMapViewProps = {
   onMapMove?: (center: [number, number]) => void
 }
 
-export function OsmMapView({ center, route, driverLocation, availableCars, theme = 'light', onMapMove }: OsmMapViewProps) {
+export function PassengerTomTomMap({ center, route, driverLocation, availableCars, theme = 'light', onMapMove }: PassengerTomTomMapProps) {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const routeLineRef = useRef<L.Polyline | null>(null)
@@ -61,15 +61,17 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     return () => { window.removeEventListener('resize', onResize); map.remove(); mapRef.current = null }
   }, [])
 
+  // --- TOMTOM TILES - SAME KEY AS DRIVER ---
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
+    const KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
     const isDark = theme === 'dark'
     const url = isDark
-      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-      : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-    tileLayerRef.current = L.tileLayer(url, { maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map)
+      ? `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${KEY}`
+      : `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${KEY}`
+    tileLayerRef.current = L.tileLayer(url, { maxZoom: 19, attribution: '&copy; TomTom' }).addTo(map)
   }, [theme])
 
   useEffect(() => {
@@ -158,7 +160,6 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#f8f9fa', zIndex: 0, touchAction: 'none' }} />
-      {/* VISIBLE ZOOM BUTTONS - TOP RIGHT, ABOVE SHEET */}
       <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '6px' }}>
         <button onClick={(e) => { e.stopPropagation(); mapRef.current?.zoomIn(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer' }}>+</button>
         <button onClick={(e) => { e.stopPropagation(); mapRef.current?.zoomOut(); }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', border: '1px solid #ddd', boxShadow: '0 4px 12px rgba(0,0,0,0.25)', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer' }}>−</button>
@@ -168,3 +169,7 @@ export function OsmMapView({ center, route, driverLocation, availableCars, theme
     </div>
   )
 }
+
+// Keep old name working so you can push without breaking other files
+export const OsmMapView = PassengerTomTomMap
+export default PassengerTomTomMap

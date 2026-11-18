@@ -3,7 +3,7 @@ import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomShee
 import { PassengerNavigationMenu } from '../components/PassengerNavigationMenu'
 import { PassengerSafetyModal } from '../components/PassengerSafetyModal'
 import { RideChat } from '../components/RideChat'
-import { reverseOSM } from '../lib/osm'
+import { reverseTomTom } from '../lib/tomtom'
 import { useDriverLiveLocation } from '../lib/useDriverLiveLocation'
 import { createRealtimeChannel } from '../lib/realtime'
 import { updateRide } from '../lib/rideUpdates'
@@ -13,7 +13,7 @@ const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
 const BLUE_LIGHT = '#E6F0FF'
 
-const OsmMapView = lazy(() => import('../components/OsmMapView').then(module => ({ default: module.OsmMapView })))
+const PassengerTomTomMap = lazy(() => import('../components/PassengerTomTomMap').then(module => ({ default: module.PassengerTomTomMap })))
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const TOMTOM_KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
 
@@ -186,7 +186,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     let active = true
     navigator.geolocation.getCurrentPosition(async pos => {
       if (!active) return; const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setPickupCoords(p)
-      try { const real = await reverseOSM(p); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') }
+      try { const real = await reverseTomTom(p); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') }
     })
     async function loadActiveRide() {
       const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
@@ -257,12 +257,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setPickupCoords(coords); setShowPickupSug(false)
       if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current)
       const requestId = ++pickupAddressRequest.current
-      mapAddressTimeout.current = setTimeout(async () => { const address = await reverseOSM(coords); if (requestId === pickupAddressRequest.current) { setPickup(address); setIsMapMoving(false) } }, 250) as any
+      mapAddressTimeout.current = setTimeout(async () => { const address = await reverseTomTom(coords); if (requestId === pickupAddressRequest.current) { setPickup(address); setIsMapMoving(false) } }, 250) as any
     } else {
       setDropoffCoords(coords); setShowDropoffSug(false)
       if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current)
       const requestId = ++dropoffAddressRequest.current
-      mapAddressTimeout.current = setTimeout(async () => { const address = await reverseOSM(coords); if (requestId === dropoffAddressRequest.current) { setDropoff(address); setIsMapMoving(false) } }, 250) as any
+      mapAddressTimeout.current = setTimeout(async () => { const address = await reverseTomTom(coords); if (requestId === dropoffAddressRequest.current) { setDropoff(address); setIsMapMoving(false) } }, 250) as any
     }
   }
   async function ensureCoords() {
@@ -292,7 +292,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
       setFareQuote(null); setLocation(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup')
-      const real = await reverseOSM(p); setPickup(real); setRideError('')
+      const real = await reverseTomTom(p); setPickup(real); setRideError('')
     }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 10000 })
   }
   async function requestRide() {
@@ -494,7 +494,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     </div>)}
     <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
       <Suspense fallback={<div aria-label="Loading map" style={{ width: '100%', height: '100%', background: bg2 }} />}>
-        <OsmMapView center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onMapMove} />
+        <PassengerTomTomMap center={pickupCoords || location} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onMapMove} />
       </Suspense>
       {!ride && !completedRide && !completedReceipt && <>
         <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: `translate(-50%, -100%) translateY(${isMapMoving ? -8 : 0})`, fontSize: '34px', lineHeight: 1, pointerEvents: 'none', transition: 'transform 0.15s' }}>{pinTarget === 'pickup' ? '📍' : '🏁'}</div>
