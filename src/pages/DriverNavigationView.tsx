@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as tt from '@tomtom-international/web-sdk-maps'
 import '@tomtom-international/web-sdk-maps/dist/maps.css'
-import { getOSMRoute as getRoute } from '../lib/osm'
+import { getTomTomRoute as getRoute } from '../lib/tomtom'
 import { createRealtimeChannel } from '../lib/realtime'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
 
