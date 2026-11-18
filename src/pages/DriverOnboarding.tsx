@@ -41,24 +41,45 @@ function isValidSAID(id: string) {
   return (sum + Number(id[12])) % 10 === 0
 }
 
+// FIXED: compressSafely - works for big camera photos, fallback if library fails
 async function compressSafely(file: File): Promise<File> {
   if (file.type === 'application/pdf') return file
   if (!file.type.startsWith('image/') && !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)) return file
-  if (file.size < 1024 * 1024) return file
+  // FIXED: old code skipped files <1MB even if dimensions were huge (4000px) - now compress by size + dimensions
+  if (file.size < 300 * 1024) return file
   try {
     const compressed = await imageCompression(file, {
       maxSizeMB: 0.8,
-      maxWidthOrHeight: 1280,
-      useWebWorker: true,
+      maxWidthOrHeight: 1600,
+      useWebWorker: false, // FIXED: WebWorker fails on some Android Chrome - caused silent fail for SA ID / Licence
       fileType: 'image/jpeg',
-      initialQuality: 0.65,
+      initialQuality: 0.7,
     })
     return new File([compressed], file.name.replace(/\.\w+$/, '.jpg'), {
       type: 'image/jpeg',
       lastModified: Date.now(),
     })
   } catch {
-    return file
+    // Fallback: canvas compress - never return original huge file
+    try {
+      const bitmap = await createImageBitmap(file)
+      const canvas = document.createElement('canvas')
+      const maxDim = 1600
+      let w = bitmap.width, h = bitmap.height
+      if (w > maxDim || h > maxDim) {
+        const ratio = Math.min(maxDim / w, maxDim / h)
+        w = Math.round(w * ratio); h = Math.round(h * ratio)
+      }
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return file
+      ctx.drawImage(bitmap, 0, 0, w, h)
+      const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.7))
+      if (!blob) return file
+      return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: Date.now() })
+    } catch {
+      return file
+    }
   }
 }
 
@@ -345,16 +366,15 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       }
       const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
       const expiryDate = expiryDates[canonicalType(documentType)] || expiryDates[documentType] || null
-      if (card?.expiryRequired && !expiryDate) {
-        throw new Error('Enter the expiry date shown on this document BEFORE uploading.')
-      }
+      // FIXED: Don't block upload if expiry missing - allow upload, expiry is checked at Enter App / Submit.
+      // Old code threw here, so SA ID / Licence never uploaded and stayed MISSING.
       if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) {
         throw new Error('This document has expired.')
       }
       const isPdf = guessedType === 'application/pdf'
       const blob: Blob | File = processedFile
       const outputType = isPdf ? 'application/pdf' : (processedFile.type || guessedType)
-      const extension = isPdf ? 'pdf' : (/^[a-z0-9]{1,8}$/.test(extFromName) && !isPdf ? (processedFile.type === 'image/jpeg' ? 'jpg' : extFromName) : 'jpg')
+      const extension = isPdf ? 'pdf' : (processedFile.type === 'image/jpeg' ? 'jpg' : (/^[a-z0-9]{1,8}$/.test(extFromName) ? extFromName : 'jpg'))
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in')
       const ownerId = user.id

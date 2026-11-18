@@ -163,7 +163,7 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
 
       <div style={{ background: "#0a0a0a", padding: "14px 16px", textAlign: "center" }}>
         <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: "#9CA3AF", letterSpacing: "0.02em" }}>
-          BuddyRide was developed and registered by Mokgalaka Nakampe Trevor. It is 100% Black-owned.
+          BuddyRide (Pty) Ltd was developed and registered by Mokgalaka Nakampe Trevor. It is 100% Black-owned.
         </p>
       </div>
     </div>
