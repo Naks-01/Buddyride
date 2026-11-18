@@ -400,12 +400,14 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         rejection_reason: null,
       }
       // === END ONLY CHANGE ===
-      const { data: existing, error: existingError } = await supabase.from('driver_documents')
-        .select('id')
+      const { data: existingRows, error: existingError } = await supabase.from('driver_documents')
+        .select('id, created_at')
         .eq('driver_id', ownerId)
         .or(`doc_type.eq.${finalDocType},document_type.eq.${finalDocType}`)
-        .maybeSingle()
+        .order('created_at', { ascending: false })
+        .limit(1)
       if (existingError) throw new Error(`Could not check existing document: ${existingError.message}`)
+      const existing = existingRows?.[0] || null
       let savedDocument: any = null
       let saveError: any = null
       if (existing) {
