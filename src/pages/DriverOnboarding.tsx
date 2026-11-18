@@ -314,6 +314,11 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       return Boolean(doc?.file_url || (doc as any)?.document_url) && (!card.expiryRequired || Boolean(doc?.expiry_date))
     })
     if (loadedIdentityComplete) setPhase('remaining')
+    // FIX ONLY THIS FILE: If already identity_complete, open inside on reload - don't loop back to Plan
+    if (status === 'identity_complete' && loadedIdentityComplete) {
+      setShowPlan(false)
+      setPhase('remaining')
+    }
     const documentsByType = new Map<string, StoredDocument>(loadedDocuments.map(document => [canonicalType(document.doc_type || document.document_type), document] as const))
     const allApproved = REQUIRED_DOCS.every(requirement => { const document = documentsByType.get(canonicalType(requirement.type)); if (!document || String(document.status || '').toUpperCase() !== 'APPROVED' || !(document.file_url || (document as any).document_url)) return false; if (requirement.expiryRequired && (!document.expiry_date || document.expiry_date < southAfricanToday())) return false; return true })
     if ((status === 'approved' || status === 'verified') && profileResult.data.is_verified && allApproved) {
@@ -478,6 +483,9 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       } as any).eq('id', ownerId)
       if (error) throw error
       setVerificationStatus('identity_complete')
+      // FIX ONLY THIS FILE: Open inside even if parent onDashboard doesn't switch
+      setShowPlan(false)
+      setPhase('remaining')
       onDashboard()
     } catch (e: any) { setError('Could not enter app: ' + (e.message || String(e))) } finally { setSubmitting(false) }
   }
@@ -546,7 +554,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const allDocsApproved = approvedCount === REQUIRED_DOCS.length
   const isFullyApproved = (verificationStatus === 'approved' || verificationStatus === 'verified') && allDocsApproved
 
-  if (hasSubmitted && rejectedTypes.size === 0 && !isFullyApproved) {
+  // FIX ONLY THIS FILE: Pending screen only blocks if ALL docs are uploaded. If only Identity is done, stay inside to finish rest.
+  if (hasSubmitted && rejectedTypes.size === 0 && !isFullyApproved && isComplete(documents) && verificationStatus !== 'identity_complete') {
     return <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F8F9FA', fontFamily: 'Inter, sans-serif', color: '#182230' }}>
       <section style={{ ...cardStyle, width: 'min(100%, 480px)', padding: '42px 28px', textAlign: 'center' }}>
         <div style={{ margin: '0 auto 20px', width: 76, height: 76, borderRadius: 38, display: 'grid', placeItems: 'center', color: '#C2410C', background: '#FFF7ED', border: '2px solid #FDBA74' }}>⏳</div>
