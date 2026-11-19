@@ -53,7 +53,7 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     const KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
     console.log('[DriverMap] TomTom key exists?', !!KEY)
     if (!KEY || KEY === 'undefined') {
-      tileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { minZoom: 2, maxZoom: 22, attribution: '&copy; OSM' }).addTo(map)
+      console.error('[DriverMap] VITE_TOMTOM_API_KEY missing - TomTom only, no fallback')
       return
     }
     const isDark = theme === 'dark'
@@ -62,8 +62,7 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       : `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${KEY}`
     tileLayerRef.current = L.tileLayer(url, { minZoom: 2, maxZoom: 22, maxNativeZoom: 19, attribution: '&copy; TomTom' })
       .on('tileerror', () => {
-        if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
-        tileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { minZoom: 2, maxZoom: 22 }).addTo(map)
+        console.error('[DriverMap] TomTom tile error - check key / quota')
       })
       .addTo(map)
   }, [theme])

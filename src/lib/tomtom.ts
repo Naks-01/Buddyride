@@ -1,4 +1,4 @@
-// src/lib/tomtom.ts - PASSENGER - TomTom ONLY, no OSM
+// src/lib/tomtom.ts - PASSENGER - TomTom ONLY
 const KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
 
 function isKeyOk() {
