@@ -7,7 +7,6 @@ const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
 const BLUE_LIGHT = '#E6F0FF'
 
-// FIXED: same canonical everywhere
 function canonicalKey(raw: string | null | undefined) {
   let k = (raw || '').toLowerCase().trim().replace(/-/g, '_').replace(/\s+/g, '_')
   k = k.replaceAll('licence', 'license')
@@ -66,7 +65,6 @@ function isValidSAID(id: string) {
   return (sum + Number(id[12])) % 10 === 0
 }
 
-// FIXED: use same browser-image-compression as onboarding, with fallback
 async function compressSafely(file: File): Promise<File> {
   if (file.type === 'application/pdf') return file
   try {
@@ -88,10 +86,16 @@ async function signedUrlFor(ref: string): Promise<string | null> {
   if (ref.startsWith('http')) return ref
   const [bucket, ...rest] = ref.split(':')
   const path = rest.join(':')
-  if (!bucket || !path) return null
+  if (!bucket || !path) {
+    const { data } = await supabase.storage.from('driver-documents').createSignedUrl(ref, 3600)
+    if (data?.signedUrl) return data.signedUrl
+    const { data: pub } = supabase.storage.from('driver-documents').getPublicUrl(ref)
+    return pub?.publicUrl || null
+  }
   const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 3600)
-  if (error) return null
-  return data.signedUrl
+  if (!error && data?.signedUrl) return data.signedUrl
+  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path)
+  return pub?.publicUrl || null
 }
 
 export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack: () => void }) {
@@ -131,7 +135,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       const previews: Record<string, string> = {}
       await Promise.all(deduped.map(async (d) => {
         const key = canonicalKey(d.doc_type || d.document_type)
-        const ref = d.file_url || d.document_url
+        const ref = d.file_url || d.document_url || d.file_path || d.storage_path
         if (key && ref) {
           const url = await signedUrlFor(String(ref))
           if (url) previews[key] = url
@@ -147,6 +151,18 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
   useEffect(() => { void load() }, [driverId])
 
+  // FIXED ONLY HERE: save expiry immediately when driver types it, not only at upload
+  async function saveExpiry(key: DocKey, value: string) {
+    const cKey = canonicalKey(key)
+    setExpiryDates(prev => ({ ...prev, [cKey]: value }))
+    if (!value) return
+    const { data: { user } } = await supabase.auth.getUser()
+    const ownerId = user?.id || driverId
+    if (!ownerId) return
+    await supabase.from('driver_documents').update({ expiry_date: value }).eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`)
+    setDocs(prev => prev.map(d => canonicalKey(d.doc_type || d.document_type) === cKey ? { ...d, expiry_date: value } : d))
+  }
+
   async function upload(key: DocKey, file: File) {
     setUploading(key)
     setMsg('')
@@ -159,13 +175,9 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       if (['heic','heif'].includes(extFromName)) throw new Error('iPhone HEIC not supported. Screenshot the document or pick JPG.')
       const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       if (file.size <= 0 || file.size > 20 * 1024 * 1024) throw new Error('File must be greater than 0 bytes and smaller than 20 MB.')
-
-      // FIXED: Do NOT block upload if expiry missing - allow upload, expiry checked at Submit
-      // Old code threw here, so drivers_license + license_disc never uploaded
       if (EXPIRING_DOCS.has(cKey) && expiryDates[cKey] && expiryDates[cKey] < southAfricanToday()) {
         throw new Error('This document has expired. Upload a current document.')
       }
-
       const isImage = guessedType.startsWith('image/')
       let blob: Blob | File = file
       if (isImage) {
@@ -173,21 +185,17 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       }
       if (blob.size > 20 * 1024 * 1024) throw new Error('Processed file must be smaller than 20 MB.')
       const outputType = isImage ? 'image/jpeg' : guessedType
-
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in - please log in again')
       const ownerId = user.id
       const path = `${ownerId}/${meta.folder}/${cKey}_${safeUUID()}.${isImage ? 'jpg' : (extFromName === 'pdf' ? 'pdf' : 'jpg')}`
       uploadedPath = path
-
       const { error: upErr } = await supabase.storage.from(meta.bucket).upload(path, blob, {
         contentType: outputType,
         upsert: true,
       })
       if (upErr) throw upErr
-
       const storageRef = `${meta.bucket}:${path}`
-
       const payload: any = {
         driver_id: ownerId,
         doc_type: cKey,
@@ -200,7 +208,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         status: 'PENDING',
         expiry_date: EXPIRING_DOCS.has(cKey) ? (expiryDates[cKey] || null) : null,
       }
-
       const { data: existingList } = await supabase.from('driver_documents').select('id').eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`).limit(1)
       const existing = existingList?.[0]
       let dbErr: any = null
@@ -212,13 +219,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         dbErr = res.error
       }
       if (dbErr) throw dbErr
-
       const { data: allForType } = await supabase.from('driver_documents').select('id,created_at').eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`).order('created_at', { ascending: false })
       if (allForType && allForType.length > 1) {
         const idsToDelete = allForType.slice(1).map((r: any) => r.id)
         await supabase.from('driver_documents').delete().in('id', idsToDelete)
       }
-
       if (cKey === 'profile_photo') {
         const { data: publicData } = supabase.storage.from(meta.bucket).getPublicUrl(path)
         const { error: profErr } = await supabase.from('profiles').update({ avatar_url: publicData.publicUrl }).eq('id', ownerId)
@@ -246,7 +251,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       if (!trimmedId) throw new Error('Enter your SA ID number / Passport number - required.')
       if (/^\d{13}$/.test(trimmedId) && !isValidSAID(trimmedId)) throw new Error('Enter a valid 13-digit SA ID number.')
       if (!licenceNumber.trim()) throw new Error('Enter your driver licence number - required.')
-      // FIXED: Check expiry at Submit, not at Upload
       for (const t of DOC_TYPES) {
         if (EXPIRING_DOCS.has(canonicalKey(t.key))) {
           const exp = expiryDates[canonicalKey(t.key)]
@@ -333,7 +337,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
                 {isExpiring && (
                   <label style={{ display: 'grid', gap: 4, fontSize: 12, color: '#344054', fontWeight: 700 }}>
                     Expiry Date (as printed on document) - REQUIRED AT SUBMIT
-                    <input type="date" value={expiryDates[canonicalKey(t.key)] || ''} onChange={e => setExpiryDates(prev => ({ ...prev, [canonicalKey(t.key)]: e.target.value }))} style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9 }} />
+                    <input type="date" value={expiryDates[canonicalKey(t.key)] || ''} onChange={e => void saveExpiry(t.key, e.target.value)} style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9 }} />
                   </label>
                 )}
                 {preview && (

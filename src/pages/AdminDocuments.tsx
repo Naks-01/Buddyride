@@ -83,14 +83,9 @@ function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'document_url' 
   const filePath = getDocumentUrl(doc)
   if (!filePath) return false
   const lower = filePath.toLowerCase()
-  // Your video shows file_url = https://.../storage/v1/object/public/driver-documents/...
-  // That's REAL, even if isFakeFile() wrongly flags it
-  if (lower.includes('supabase') || lower.includes('/storage/') || lower.includes('driver-documents') || lower.includes('vehicle-documents')) {
-    return true
-  }
+  if (lower.includes('supabase') || lower.includes('/storage/') || lower.includes('driver-documents') || lower.includes('vehicle-documents')) return true
   if (lower.includes('no real file') || lower === 'test' || lower === 'fake') return false
   if (isFakeFile(filePath)) {
-    // if it has image extension, it's real despite isFakeFile
     if (/\.(jpg|jpeg|png|webp|pdf)$/i.test(filePath)) return true
     return false
   }
@@ -143,13 +138,35 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       setError('No document uploaded yet')
       return
     }
-    const newWindow = window.open('about:blank', '_blank')
+    // FIXED PREVIEW ONLY: handle all 3 DB formats, don't rely on lib helper
+    // 1) Full https:// supabase URL -> open directly
+    if (/^https?:\/\//i.test(docUrl)) {
+      window.open(docUrl, '_blank')
+      return
+    }
+    // 2) bucket:path  e.g. driver-documents:22bf.../sa_id/...
+    // 3) plain path   e.g. 22bf.../sa_id/...
+    let bucket = 'driver-documents'
+    let path = docUrl
+    if (docUrl.includes(':')) {
+      const [b, ...rest] = docUrl.split(':')
+      if (b && rest.join(':')) { bucket = b; path = rest.join(':') }
+    }
+    // If path looks like profile photo, use that bucket
+    if (path.includes('profile_photo') && bucket === 'driver-documents') bucket = 'profile-photos'
     try {
+      const { data, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 3600)
+      if (!signedErr && data?.signedUrl) {
+        window.open(data.signedUrl, '_blank')
+        return
+      }
+      // Fallback: try other buckets + public URL
+      const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path)
+      if (pub?.publicUrl) { window.open(pub.publicUrl, '_blank'); return }
+      // Last try: lib helper for legacy format
       const signedUrl = await createDriverDocumentSignedUrl(docUrl)
-      if (newWindow) newWindow.location.href = signedUrl
-      else window.location.href = signedUrl
+      window.open(signedUrl, '_blank')
     } catch (viewError: unknown) {
-      newWindow?.close()
       setError(`Could not open document: ${errMsg(viewError)}`)
     }
   }
