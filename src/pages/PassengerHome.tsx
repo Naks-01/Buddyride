@@ -19,6 +19,18 @@ const TOMTOM_KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
 
 function errMsg(e: any) { return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e)) }
 function safeUUID() { if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID(); return `${Date.now()}-${Math.random().toString(36).slice(2)}` }
+// FIX: Header name - "MR NAKAMPE T" -> "Nakampe T." - capitalize first letter only, first name + initial
+function formatDisplayName(fullName?: string | null) {
+  if (!fullName?.trim()) return 'Passenger'
+  const parts = fullName.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+  if (parts.length === 1) return cap(parts[0])
+  return `${cap(parts[0])} ${cap(parts[1])[0]}.`
+}
+function firstName(fullName?: string | null) {
+  if (!fullName?.trim()) return ''
+  return fullName.trim().toLowerCase().split(/\s+/)[0].charAt(0).toUpperCase() + fullName.trim().toLowerCase().split(/\s+/)[0].slice(1)
+}
 async function compress(file: File | Blob): Promise<Blob> {
   try {
     if (typeof createImageBitmap === 'undefined') return file
@@ -471,7 +483,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     closeVerificationCamera(); await uploadPassengerVerification(verificationDocument, photo)
   }
   function playSound(type: 'accept' | 'arrived' | 'start' | 'complete' | 'cancel' = 'accept') {
-    const sounds: any = { accept: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', arrived: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-2-269292.mp3', start: 'https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3', complete: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', cancel: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3' }
+    const sounds: any = { accept: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', arrived: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-2-269292.mp3', start: 'https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3', complete: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', cancel: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3' }
     try { const audio = new Audio(sounds[type]); audio.volume = 1.0; audio.play().catch(() => {}) } catch {}; if ('vibrate' in navigator) { if (type === 'arrived') navigator.vibrate([200, 100, 200, 100, 400]); else if (type === 'cancel') navigator.vibrate([500, 200, 500]); else navigator.vibrate(300) }
   }
   return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
@@ -490,10 +502,17 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         </div>
       </section>
     </div>}
-    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: bg, color: text, borderBottom: '1px solid ' + border }}>
+    {/* FIX: Header - clean name, no ALL CAPS, no emoji, SOS not clipped */}
+    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: bg, color: text, borderBottom: '1px solid ' + border, minHeight: 56, overflow: 'hidden' }}>
       <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} verificationStatus={verificationStatus} verificationRejectionReason={verificationRejectionReason} onReuploadVerification={() => { setVerificationError(''); setShowSafetyModal(true) }} />
-      <strong>BuddyRide<br />{profile.full_name || 'Passenger'} {isVerified ? '✅' : ''}</strong>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}><button type="button" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 12px', borderRadius: 18, background: '#dc2626', color: 'white', border: 0, fontWeight: 900 }}>SOS</button><button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: '1px solid ' + border }}>{isDark ? '☀️' : '🌙'}</button></div>
+      <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 1 }}>
+        <strong style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.2px', lineHeight: 1.1 }}>BuddyRide</strong>
+        <span style={{ fontSize: 12, fontWeight: 600, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatDisplayName(profile.full_name)}</span>
+          {isVerified ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#22c55e', flexShrink: 0 }}><i style={{ width: 6, height: 6, background: '#22c55e', borderRadius: '50%', display: 'inline-block' }} />Verified</span> : null}
+        </span>
+      </div>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}><button type="button" className="sos-btn" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 14px', borderRadius: 20, background: '#dc2626', color: 'white', border: 0, fontWeight: 900, fontSize: 13 }}>SOS</button><button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: '1px solid ' + border, display: 'grid', placeItems: 'center', padding: 0 }}>{isDark ? '☀️' : '🌙'}</button></div>
     </header>
     {cancelledNotification && (<div style={{ position: 'fixed', top: '70px', left: '12px', right: '12px', zIndex: 99999, background: '#ff3b30', borderRadius: '16px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
       <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>❌</div>
@@ -513,7 +532,11 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60 }}>
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
         {!ride && !completedRide && !completedReceipt && (<>
-          <h2 style={{ margin: '0 0 12px' }}>Where are you going? {profile.full_name ? 'Hi ' + profile.full_name.split(' ')[0] : ''} {isVerified ? '✅ Verified' : '⚠️ Get Verified'}</h2>
+          {/* FIX: Sheet title - 2 clean lines, no emoji checkbox, no ALL CAPS */}
+          <div style={{ display: 'grid', gap: 4, margin: '0 0 12px' }}>
+            <h2 style={{ margin: 0 }}>Where are you going?</h2>
+            <span style={{ fontSize: 13, color: muted, fontWeight: 500 }}>Hi {firstName(profile.full_name)} • {isVerified ? <span style={{ color: '#22c55e', fontWeight: 700 }}>● Verified</span> : <span style={{ color: '#f59e0b', fontWeight: 700 }}>Get Verified</span>}</span>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" onClick={() => setPinTarget('pickup')} style={{ flex: 1, padding: '9px', borderRadius: 999, border: pinTarget === 'pickup' ? `2px solid ${BLUE}` : '1px solid ' + border, background: pinTarget === 'pickup' ? BLUE_LIGHT : bg2, color: text, fontWeight: 800, fontSize: 12 }}>📍 Set Pickup with Pin</button>
@@ -546,11 +569,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             {rideError && <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 13, background: '#fee', padding: 8, borderRadius: 8 }}>{rideError}</p>}
             <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: '10px 0 calc(10px + env(safe-area-inset-bottom))', background: bg, borderTop: '1px solid ' + border }}>
               <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '52px', padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
+              {/* FIX: Request button - clean text, no "✓ Verified" crammed inside */}
               <button onClick={() => { void requestRide() }} disabled={loading || !verificationLoaded} style={{ flex: 1.5, minHeight: '52px', padding: '14px', borderRadius: '14px', border: 'none', background: loading || !verificationLoaded ? '#555' : BLUE, color: 'white', fontWeight: 'bold', opacity: loading || !verificationLoaded ? 0.6 : 1 }}>
-                {loading ? 'Finding…' : !verificationLoaded ? 'Checking safety…' : !hasRequiredDocs ? 'Request Ride • ID Required' : !isVerified ? 'Request Ride • Get Verified' : 'Request Ride ✓ Verified'}
+                {loading ? 'Finding…' : !verificationLoaded ? 'Checking safety…' : !hasRequiredDocs ? 'Request Ride • ID Required' : !isVerified ? 'Request Ride • Get Verified' : 'Request Ride'}
               </button>
             </div>
-            {showEstimate && distance !== null && price !== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km {isVerified ? '✅ Verified' : '• Awaiting verification'}</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
+            {showEstimate && distance !== null && price !== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '12px', background: bg2 }}><span>{distance.toFixed(1)} km {isVerified ? '• Verified' : '• Awaiting verification'}</span><span style={{ fontWeight: 'bold' }}>R {price.toFixed(0)}</span></div>)}
           </div>
         </>)}
         {ride && <div style={{ padding: 16 }}>
