@@ -20,7 +20,6 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   const driverMarkerRef = useRef<L.Marker | null>(null)
   const tileLayerRef = useRef<L.TileLayer | null>(null)
   const followRef = useRef(followDriver)
-
   useEffect(() => { followRef.current = followDriver }, [followDriver])
 
   useEffect(() => {
@@ -39,8 +38,12 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       maxBoundsViscosity: 0,
     } as any).setView([center[1], center[0]], 16)
     mapRef.current = map
-    setTimeout(() => map.invalidateSize(), 300)
-    return () => { map.remove(); mapRef.current = null }
+    const t1 = setTimeout(() => map.invalidateSize(), 100)
+    const t2 = setTimeout(() => map.invalidateSize(), 600)
+    const t3 = setTimeout(() => map.invalidateSize(), 1500)
+    const onResize = () => map.invalidateSize()
+    window.addEventListener('resize', onResize)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); window.removeEventListener('resize', onResize); map.remove(); mapRef.current = null }
   }, [])
 
   useEffect(() => {
@@ -48,11 +51,21 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     if (!map) return
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
     const KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
+    console.log('[DriverMap] TomTom key exists?', !!KEY)
+    if (!KEY || KEY === 'undefined') {
+      tileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { minZoom: 2, maxZoom: 22, attribution: '&copy; OSM' }).addTo(map)
+      return
+    }
     const isDark = theme === 'dark'
     const url = isDark
       ? `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${KEY}`
       : `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${KEY}`
-    tileLayerRef.current = L.tileLayer(url, { minZoom: 2, maxZoom: 22, maxNativeZoom: 19, attribution: '&copy; TomTom' }).addTo(map)
+    tileLayerRef.current = L.tileLayer(url, { minZoom: 2, maxZoom: 22, maxNativeZoom: 19, attribution: '&copy; TomTom' })
+      .on('tileerror', () => {
+        if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
+        tileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { minZoom: 2, maxZoom: 22 }).addTo(map)
+      })
+      .addTo(map)
   }, [theme])
 
   useEffect(() => {
@@ -79,10 +92,14 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       return
     }
     let latLngs: [number, number][] = []
-    const geometry = route.type === 'Feature' ? route.geometry : route
-    const coords = geometry?.coordinates || route.coordinates || route || []
-    if (Array.isArray(coords) && coords.length && Array.isArray(coords[0])) {
-      latLngs = coords.map((c: any) => [c[1], c[0]] as [number, number])
+    if (Array.isArray(route) && route.length > 0 && route[0]?.latitude !== undefined) {
+      latLngs = route.map((p: any) => [p.latitude, p.longitude] as [number, number])
+    } else if (Array.isArray(route) && route.length > 0 && Array.isArray(route[0])) {
+      latLngs = route.map((c: any) => [c[1], c[0]] as [number, number])
+    } else {
+      const geometry = route.type === 'Feature' ? route.geometry : route
+      const coords = geometry?.coordinates || route.coordinates || []
+      if (Array.isArray(coords)) latLngs = coords.filter((c: any) => Array.isArray(c)).map((c: any) => [c[1], c[0]] as [number, number])
     }
     if (latLngs.length < 2) return
     if (!routeLineRef.current) {
@@ -90,7 +107,8 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     } else {
       routeLineRef.current.setLatLngs(latLngs)
     }
+    routeLineRef.current.bringToFront()
   }, [route])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#e5e7eb' }} />
+  return <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '500px', background: '#e5e7eb', zIndex: 0 }} />
 }
