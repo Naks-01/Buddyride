@@ -3,7 +3,6 @@ import { PassengerTomTomMap } from '../components/PassengerTomTomMap'
 import { supabase } from '../lib/supabase'
 
 const BLUE = '#0066FF'
-const BLUE_DARK = '#0052CC'
 const ORANGE = '#FF6B00'
 
 type DriverLocation = { driver_id: string, lat: number, lng: number }
@@ -76,7 +75,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
           .eq('verification_status', 'identity_complete')
           .order('created_at', { ascending: true }),
       ])
-      // FIXED: driver_status may not exist - fall back to driver_locations
       let locs: DriverLocation[] = []
       const { data: statusLocs, error: statusErr } = await supabase.from('driver_status').select('driver_id,lat,lng').eq('is_online', true)
       if (!statusErr && statusLocs) {
@@ -133,7 +131,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
         p_rejection_reason: approve ? null : 'Rejected by BuddyRide admin. Please replace the rejected documents.',
       })
       if (approvalError) throw approvalError
-      // FIXED: Do NOT force is_online=false after approval - driver must be able to Go Online
       setMsg(approve ? 'Driver approved. Driver can now GO ONLINE.' : 'Driver rejected.')
       await load()
     } catch (e: unknown) {
@@ -174,7 +171,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
 
   const card = { background: bgCard, borderRadius: '16px', padding: '16px', border: `1px solid ${border}`, boxShadow: '0 5px 18px rgba(0,0,0,0.3)' }
 
-  // FIXED: Filters now actually filter the lists below
   const showDrivers = filter === 'all' || filter === 'drivers' || filter === 'with-phone'
   const showPassengers = filter === 'all' || filter === 'passengers' || filter === 'with-phone'
   const filteredDrivers = filter === 'with-phone' ? pendingDrivers.filter(d => Boolean((d.phone_number || '').trim())) : pendingDrivers
@@ -197,6 +193,10 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
       </div>
     </div>
   )
+
+  // FIXED: TomTom wants [lng, lat] and PassengerTomTomMap expects id not driver_id
+  const mapCars = locations.map(l => ({ id: l.driver_id, lat: l.lat, lng: l.lng }))
+  const POLOKWANE_CENTER: [number, number] = [29.4689, -23.9045] // [lng, lat] - TomTom format
 
   return <main style={{ minHeight: '100vh', background: bg, color: text, padding: '16px' }}>
     <button onClick={onBack} style={{ marginBottom: '12px', background: bg2, color: text, border: `1px solid ${border}`, padding: '8px 14px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}>← Admin home</button>
@@ -244,13 +244,14 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
     </section>
 
     <section style={{ ...card, marginTop: '14px' }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ padding: '6px 12px', borderRadius: 20, background: BLUE, color: 'white', fontSize: 12, fontWeight: 700 }}>Live Ride Monitoring</span>
+        <span style={{ padding: '6px 12px', borderRadius: 20, background: bg2, color: subText, fontSize: 12, border: `1px solid ${border}` }}>{locations.length} online • Polokwane center</span>
       </div>
-      <div style={{ height: '420px', overflow: 'hidden', borderRadius: '10px', background: '#000' }}>
-        <PassengerTomTomMap center={[-23.9045, 29.4689]} availableCars={locations} theme="dark" />
+      <div style={{ height: '420px', overflow: 'hidden', borderRadius: '10px', background: '#000', border: `1px solid ${border}` }}>
+        <PassengerTomTomMap center={POLOKWANE_CENTER} availableCars={mapCars} theme="dark" />
       </div>
-      <p style={{ fontSize: '12px', color: subText }}>Showing {locations.length} online driver location(s). Auto-refreshes every 5s.</p>
+      <p style={{ fontSize: '12px', color: subText }}>Showing {locations.length} online driver location(s). Auto-refreshes every 5s. Center: Polokwane [-23.9045, 29.4689]</p>
     </section>
 
     <section style={{ ...card, marginTop: '14px' }}>
