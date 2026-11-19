@@ -171,7 +171,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
           .eq('verification_status', 'pending_verification')
           .order('created_at', { ascending: true })
           .limit(50),
-        // FIXED: Limit to 50 - was loading ALL approved passengers + 2 signed URLs each
         supabase.from('profiles')
           .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason')
           .eq('role', 'passenger')
@@ -184,10 +183,14 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       const profileById = new Map((driverProfilesResult.data || []).map((p: any) => [p.id, p]))
       if (!driverResult.error) {
         const requiredTypes = new Set(REQUIRED_DOCS.map(document => document.type))
+        // FIXED ONLY HERE: keep SA ID + License even if REQUIRED_DOCS type mismatch
         const loadedDocuments = (driverResult.data || []).filter(document => {
-          const docType = document.document_type || document.doc_type
-          return !/police|holding|selfie with id/i.test(docType)
-            && requiredTypes.has(normalizeDriverDocType(docType))
+          const raw = (document.document_type || document.doc_type || '').toLowerCase()
+          const norm = normalizeDriverDocType(document.document_type || document.doc_type || '').toLowerCase()
+          if (/police|holding|selfie with id/i.test(raw)) return false
+          if (['sa_id','said','sa-id','drivers_license','license','drivers-license','sa_id_document','south_african_id'].includes(raw)) return true
+          if (['sa_id','said','sa-id','drivers_license','license','drivers-license','sa_id_document','south_african_id'].includes(norm)) return true
+          return requiredTypes.has(normalizeDriverDocType(document.document_type || document.doc_type || ''))
         })
         setPendingDriverDocumentCount(loadedDocuments.filter(document =>
           safeStatus(document.status) === 'pending',
@@ -215,7 +218,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
           return { ...passenger, id_photo_preview_url: idPreview, selfie_preview_url: selfiePreview }
         }))
       if (!pendingPassengerResult.error) {
-        // FIXED: Filter out rows with no selfie AND no ID - they are not ready for safety review
         const ready = (pendingPassengerResult.data || []).filter((p: any) => Boolean((p.selfie_url || '').trim() || (p.id_document_url || '').trim() || (p.id_number || '').trim()))
         setPendingPassengerProfiles(await loadPassengerProfiles(ready))
       }
@@ -306,7 +308,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
         p_passenger_id: passengerId,
       })
       if (approvalError) {
-        // Fallback: direct update if RPC missing
         const { error: fb } = await supabase.from('profiles').update({ verification_status: 'verified', is_verified: true, id_verified: true } as any).eq('id', passengerId).eq('role', 'passenger')
         if (fb) throw approvalError
       }
@@ -376,7 +377,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
   }
 
   const groupedDriverDocuments = groupDriversById(driverDocs)
-  // FIXED: Include drivers from docs even if profile row missing - was hiding them
   const allDriverIds = new Set<string>([...driverProfiles.map(p => p.id), ...Object.keys(groupedDriverDocuments)])
   const driversById = [...allDriverIds].reduce<Record<string, StoredDocument[]>>((drivers, id) => {
     drivers[id] = groupedDriverDocuments[id] || []
@@ -396,7 +396,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
   const pendingPassengers = pendingPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
   const approvedPassengers = approvedPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
   const normalizedDriverSearch = search.trim().toLocaleLowerCase()
-  // FIXED: Search now includes phone + driver ID - label promised it
   const matchesDriver = (
     docs: StoredDocument[],
     fallbackProfile?: Pick<Profile, 'id' | 'email' | 'full_name' | 'phone'>,
