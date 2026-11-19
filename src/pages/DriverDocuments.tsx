@@ -1,7 +1,6 @@
 "use client"
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import imageCompression from 'browser-image-compression'
 
 const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
@@ -65,21 +64,7 @@ function isValidSAID(id: string) {
   return (sum + Number(id[12])) % 10 === 0
 }
 
-async function compressSafely(file: File): Promise<File> {
-  if (file.type === 'application/pdf') return file
-  try {
-    const compressed = await imageCompression(file, {
-      maxSizeMB: 0.8,
-      maxWidthOrHeight: 1600,
-      useWebWorker: false,
-      fileType: 'image/jpeg',
-      initialQuality: 0.7,
-    })
-    return new File([compressed], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: Date.now() })
-  } catch {
-    return file
-  }
-}
+// REMOVED compressSafely - was crashing on 7-8MB files
 
 async function signedUrlFor(ref: string): Promise<string | null> {
   if (!ref) return null
@@ -110,7 +95,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
   const [driverIdNumber, setDriverIdNumber] = useState('')
   const [licenceNumber, setLicenceNumber] = useState('')
 
-  // FIXED: save ID numbers immediately so they never disappear on reload
   async function saveIdNumbers(idNum: string, licNum: string) {
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || driverId
@@ -158,7 +142,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     }
     const avatar = (profileRes.data as any)?.avatar_url
     if (typeof avatar === 'string' && avatar.startsWith('http')) setProfileUrl(avatar)
-    // FIXED: only set from DB if user hasn't typed yet - prevents overwriting typing
     setDriverIdNumber(prev => prev || (profileRes.data as any)?.id_number || '')
     setLicenceNumber(prev => prev || (profileRes.data as any)?.licence_number || (profileRes.data as any)?.driver_licence_number || '')
   }
@@ -192,16 +175,15 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         throw new Error('This document has expired. Upload a current document.')
       }
       const isImage = guessedType.startsWith('image/')
+      // NO COMPRESSION - upload original file direct
       let blob: Blob | File = file
-      if (isImage) blob = await compressSafely(file)
       if (blob.size > 20 * 1024 * 1024) throw new Error('Processed file must be smaller than 20 MB.')
-      const outputType = isImage ? 'image/jpeg' : guessedType
+      const outputType = isImage ? (file.type || 'image/jpeg') : guessedType
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in - please log in again')
       const ownerId = user.id
-      // FIXED: also save ID numbers before upload so they don't get lost on reload after upload
       await saveIdNumbers(driverIdNumber, licenceNumber)
-      const path = `${ownerId}/${meta.folder}/${cKey}_${safeUUID()}.${isImage ? 'jpg' : (extFromName === 'pdf' ? 'pdf' : 'jpg')}`
+      const path = `${ownerId}/${meta.folder}/${cKey}_${safeUUID()}.${isImage ? (extFromName === 'png' ? 'png' : extFromName === 'webp' ? 'webp' : 'jpg') : (extFromName === 'pdf' ? 'pdf' : 'jpg')}`
       uploadedPath = path
       const { error: upErr } = await supabase.storage.from(meta.bucket).upload(path, blob, {
         contentType: outputType,

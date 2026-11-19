@@ -11,7 +11,6 @@ import {
 } from 'lucide-react'
 import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import { createDriverDocumentSignedUrl, EXPIRING_DRIVER_DOCUMENT_TYPES, REQUIRED_DOCS, normalizeDocType as canonicalType } from '../lib/driverDocuments'
-import imageCompression from 'browser-image-compression'
 
 type StoredDocument = Pick<DriverDocument,
   'id' | 'doc_type' | 'document_type' | 'document_url' | 'document_date' | 'file_url' | 'status' | 'rejection_reason' | 'created_at' | 'expiry_date' | 'prdp_number' | 'document_hash'
@@ -41,42 +40,7 @@ function isValidSAID(id: string) {
   return (sum + Number(id[12])) % 10 === 0
 }
 
-async function compressSafely(file: File): Promise<File> {
-  if (file.type === 'application/pdf') return file
-  try {
-    const compressed = await imageCompression(file, {
-      maxSizeMB: 0.8,
-      maxWidthOrHeight: 1600,
-      useWebWorker: false,
-      fileType: 'image/jpeg',
-      initialQuality: 0.7,
-    })
-    return new File([compressed], file.name.replace(/\.\w+$/, '.jpg'), {
-      type: 'image/jpeg',
-      lastModified: Date.now(),
-    })
-  } catch {
-    try {
-      const bitmap = await createImageBitmap(file)
-      const canvas = document.createElement('canvas')
-      const maxDim = 1600
-      let w = bitmap.width, h = bitmap.height
-      if (w > maxDim || h > maxDim) {
-        const ratio = Math.min(maxDim / w, maxDim / h)
-        w = Math.round(w * ratio); h = Math.round(h * ratio)
-      }
-      canvas.width = w; canvas.height = h
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return file
-      ctx.drawImage(bitmap, 0, 0, w, h)
-      const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.7))
-      if (!blob) return file
-      return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: Date.now() })
-    } catch {
-      return file
-    }
-  }
-}
+// REMOVED compressSafely - was crashing on 7-8MB files on mobile Chrome
 
 const DOCUMENT_CARDS = REQUIRED_DOCS.map(document => ({
   ...document,
@@ -211,7 +175,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const [phase, setPhase] = useState<'identity' | 'remaining'>('identity')
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  // FIXED: persist ID + expiry to localStorage instantly so Chrome reload after file-picker does not wipe them
   useEffect(() => {
     try {
       if (driverIdNumber) localStorage.setItem('br_id_number', driverIdNumber)
@@ -264,13 +227,11 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const status = profileResult.data?.verification_status || 'not_started'
     setDocuments(documentsWithPreviews); setVerificationStatus(status)
     setDocumentDates(Object.fromEntries(loadedDocuments.filter(document => document.document_date).map(document => [canonicalType(document.doc_type), document.document_date!.slice(0, 10)])))
-    // FIXED: merge DB expiry + localStorage expiry (localStorage wins if DB empty) so expiry survives reload before upload
     let localExpiry: Record<string,string> = {}
     try { localExpiry = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}') } catch {}
     const dbExpiry = Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), document.expiry_date!.slice(0, 10)]))
     setExpiryDates(prev => ({ ...localExpiry, ...dbExpiry, ...prev }))
     setBankDetails({ bank_name: profileResult.data.bank_name || '', bank_account_holder: profileResult.data.bank_account_holder || '', bank_account_number: profileResult.data.bank_account_number || '', bank_branch_code: profileResult.data.bank_branch_code || '' })
-    // FIXED: never overwrite typed values with empty DB - localStorage + DB fallback
     let localId = ''; let localLic = ''
     try { localId = localStorage.getItem('br_id_number') || ''; localLic = localStorage.getItem('br_licence_number') || '' } catch {}
     const dbId = (profileResult.data as any).id_number || ''
@@ -292,22 +253,22 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setUploading(cardType); setError('')
     let uploadedPath: string | null = null
     try {
-      const extFromName = file.name.split('.').pop()?.toLowerCase() || ''
-      const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
-      if (file.size <= 0) throw new Error('File is empty. Try again or take a screenshot.')
-      const processedFile = await compressSafely(file)
+      // NO COMPRESSION - upload original file direct
+      const processedFile = file
+      if (processedFile.size <= 0) throw new Error('File is empty. Try again or take a screenshot.')
       if (processedFile.size > MAX_UPLOAD_SIZE) throw new Error(`File too large ${(processedFile.size/1024/1024).toFixed(1)}MB > 20MB.`)
       const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
       const expiryDate = expiryDates[canonicalType(documentType)] || expiryDates[documentType] || null
       if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) throw new Error('This document has expired.')
+      const extFromName = file.name.split('.').pop()?.toLowerCase() || ''
+      const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       const isPdf = guessedType === 'application/pdf'
       const blob: Blob | File = processedFile
-      const outputType = isPdf ? 'application/pdf' : (processedFile.type || guessedType)
-      const extension = isPdf ? 'pdf' : 'jpg'
+      const outputType = isPdf ? 'application/pdf' : (processedFile.type || guessedType || 'image/jpeg')
+      const extension = isPdf ? 'pdf' : (extFromName === 'png' ? 'png' : extFromName === 'webp' ? 'webp' : 'jpg')
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in')
       const ownerId = user.id
-      // FIXED: save ID numbers BEFORE upload so reload during upload does not wipe them
       await saveIdNumbersNow(driverIdNumber, licenceNumber)
       const finalDocType = canonicalType(documentType)
       const path = `${ownerId}/${finalDocType}/${safeUUID()}.${extension}`
@@ -345,7 +306,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const cType = canonicalType(documentType)
     if (field === 'document_date') setDocumentDates(current => ({ ...current, [cType]: value, [documentType]: value }))
     else setExpiryDates(current => ({ ...current, [cType]: value, [documentType]: value }))
-    // FIXED: always persist expiry to localStorage even if doc not uploaded yet
     try { const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}'); cur[cType] = value; localStorage.setItem('br_expiry_dates', JSON.stringify(cur)) } catch {}
     if (!documents.some(d => canonicalType(d.doc_type) === cType)) return
     const { data: { user } } = await supabase.auth.getUser()
