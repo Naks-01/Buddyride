@@ -211,6 +211,31 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const [phase, setPhase] = useState<'identity' | 'remaining'>('identity')
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({})
 
+  // FIXED: persist ID + expiry to localStorage instantly so Chrome reload after file-picker does not wipe them
+  useEffect(() => {
+    try {
+      if (driverIdNumber) localStorage.setItem('br_id_number', driverIdNumber)
+      if (licenceNumber) localStorage.setItem('br_licence_number', licenceNumber)
+      localStorage.setItem('br_expiry_dates', JSON.stringify(expiryDates))
+    } catch {}
+  }, [driverIdNumber, licenceNumber, expiryDates])
+
+  async function saveIdNumbersNow(idVal: string, licVal: string) {
+    const { data: { user } } = await supabase.auth.getUser()
+    const ownerId = user?.id || profile.id
+    if (!ownerId) return
+    if (!idVal.trim() && !licVal.trim()) return
+    try {
+      localStorage.setItem('br_id_number', idVal)
+      localStorage.setItem('br_licence_number', licVal)
+    } catch {}
+    await supabase.from('profiles').update({
+      id_number: idVal.trim() || null,
+      licence_number: licVal.trim() || null,
+      driver_licence_number: licVal.trim() || null,
+    } as any).eq('id', ownerId)
+  }
+
   const rejectedTypes = useMemo(() => new Set(documents.filter(document => ONBOARDING_DOCUMENT_TYPES.has(canonicalType(document.doc_type))).filter(document => (document.status || '').toUpperCase() === 'REJECTED').map(document => canonicalType(document.doc_type))), [documents])
   const completedCards = DOCUMENT_CARDS.filter(card => isCardComplete(card, documents)).length
   const identityCompletedCount = IDENTITY_CARDS.filter(card => isCardComplete(card, documents)).length
@@ -239,10 +264,19 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const status = profileResult.data?.verification_status || 'not_started'
     setDocuments(documentsWithPreviews); setVerificationStatus(status)
     setDocumentDates(Object.fromEntries(loadedDocuments.filter(document => document.document_date).map(document => [canonicalType(document.doc_type), document.document_date!.slice(0, 10)])))
-    setExpiryDates(Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), document.expiry_date!.slice(0, 10)])))
+    // FIXED: merge DB expiry + localStorage expiry (localStorage wins if DB empty) so expiry survives reload before upload
+    let localExpiry: Record<string,string> = {}
+    try { localExpiry = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}') } catch {}
+    const dbExpiry = Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), document.expiry_date!.slice(0, 10)]))
+    setExpiryDates(prev => ({ ...localExpiry, ...dbExpiry, ...prev }))
     setBankDetails({ bank_name: profileResult.data.bank_name || '', bank_account_holder: profileResult.data.bank_account_holder || '', bank_account_number: profileResult.data.bank_account_number || '', bank_branch_code: profileResult.data.bank_branch_code || '' })
-    setDriverIdNumber((profileResult.data as any).id_number || '')
-    setLicenceNumber((profileResult.data as any).licence_number || (profileResult.data as any).driver_licence_number || '')
+    // FIXED: never overwrite typed values with empty DB - localStorage + DB fallback
+    let localId = ''; let localLic = ''
+    try { localId = localStorage.getItem('br_id_number') || ''; localLic = localStorage.getItem('br_licence_number') || '' } catch {}
+    const dbId = (profileResult.data as any).id_number || ''
+    const dbLic = (profileResult.data as any).licence_number || (profileResult.data as any).driver_licence_number || ''
+    setDriverIdNumber(prev => prev || localId || dbId || '')
+    setLicenceNumber(prev => prev || localLic || dbLic || '')
     setLoading(false)
     const loadedIdentityComplete = IDENTITY_CARDS.every(card => { const doc = loadedDocuments.find(d => canonicalType(d.doc_type) === canonicalType(card.type)); return Boolean(doc?.file_url || (doc as any)?.document_url) && (!card.expiryRequired || Boolean(doc?.expiry_date)) })
     if (loadedIdentityComplete) setPhase('remaining')
@@ -273,6 +307,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in')
       const ownerId = user.id
+      // FIXED: save ID numbers BEFORE upload so reload during upload does not wipe them
+      await saveIdNumbersNow(driverIdNumber, licenceNumber)
       const finalDocType = canonicalType(documentType)
       const path = `${ownerId}/${finalDocType}/${safeUUID()}.${extension}`
       uploadedPath = path
@@ -309,6 +345,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const cType = canonicalType(documentType)
     if (field === 'document_date') setDocumentDates(current => ({ ...current, [cType]: value, [documentType]: value }))
     else setExpiryDates(current => ({ ...current, [cType]: value, [documentType]: value }))
+    // FIXED: always persist expiry to localStorage even if doc not uploaded yet
+    try { const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}'); cur[cType] = value; localStorage.setItem('br_expiry_dates', JSON.stringify(cur)) } catch {}
     if (!documents.some(d => canonicalType(d.doc_type) === cType)) return
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || profile.id
@@ -410,8 +448,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         <h2 style={{ margin: '0 0 12px', fontSize: 20 }}>ID & Licence Numbers</h2>
         <p style={{ margin: '0 0 12px', fontSize: 13, color: '#667085' }}>Enter numbers exactly as on your documents. Both required to enter app.</p>
         <div style={{ display: 'grid', gap: 10 }}>
-          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 700 }}>SA ID Number / Passport Number *<input type="text" value={driverIdNumber} onChange={e => setDriverIdNumber(e.target.value.trim())} placeholder="e.g. 9001015009087" inputMode="numeric" style={{ minHeight: 42, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }} /></label>
-          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 700 }}>Driver Licence Number *<input type="text" value={licenceNumber} onChange={e => setLicenceNumber(e.target.value)} placeholder="As on licence card" style={{ minHeight: 42, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }} /></label>
+          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 700 }}>SA ID Number / Passport Number *<input type="text" value={driverIdNumber} onChange={e => setDriverIdNumber(e.target.value)} onBlur={() => void saveIdNumbersNow(driverIdNumber, licenceNumber)} placeholder="e.g. 9001015009087" inputMode="numeric" style={{ minHeight: 42, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }} /></label>
+          <label style={{ display: 'grid', gap: 5, fontSize: 13, fontWeight: 700 }}>Driver Licence Number *<input type="text" value={licenceNumber} onChange={e => setLicenceNumber(e.target.value)} onBlur={() => void saveIdNumbersNow(driverIdNumber, licenceNumber)} placeholder="As on licence card" style={{ minHeight: 42, padding: 8, border: '1px solid #d0d5dd', borderRadius: 9 }} /></label>
           {driverIdNumber && /^\d{13}$/.test(driverIdNumber.trim()) && !isValidSAID(driverIdNumber.trim()) && <p style={{ color: '#b42318', fontSize: 12 }}>Invalid SA ID - check digits.</p>}
         </div>
       </section>
