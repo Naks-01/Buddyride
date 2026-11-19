@@ -45,6 +45,10 @@ export function PassengerTomTomMap({
   const carMarkersRef = useRef<L.Marker[]>([])
   const isDraggingRef = useRef(false)
   const userHasDraggedRef = useRef(false)
+  const onMapMoveRef = useRef(onMapMove)
+  const lastDraggedCenterRef = useRef<[number, number] | null>(null)
+
+  useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
 
   // INIT MAP ONCE
   useEffect(() => {
@@ -64,11 +68,12 @@ export function PassengerTomTomMap({
     map.on('movestart', () => { isDraggingRef.current = true })
     map.on('moveend', () => {
       isDraggingRef.current = false
-      if (userHasDraggedRef.current && onMapMove) {
+      if (userHasDraggedRef.current && onMapMoveRef.current) {
         const c = map.getCenter()
-        onMapMove([c.lng, c.lat])
+        lastDraggedCenterRef.current = [c.lng, c.lat]
+        onMapMoveRef.current([c.lng, c.lat])
       }
-      userHasDraggedRef.current = false
+      // DO NOT reset userHasDraggedRef here - otherwise CENTER UPDATE snaps map back
     })
     map.on('dragstart', () => { userHasDraggedRef.current = true })
 
@@ -107,12 +112,24 @@ export function PassengerTomTomMap({
     setTimeout(() => map.invalidateSize(), 200)
   }, [theme])
 
-  // CENTER UPDATE - ONLY IF USER DID NOT DRAG
+  // CENTER UPDATE - DO NOT SNAP BACK AFTER USER DRAG
   useEffect(() => {
     if (!mapRef.current || isDraggingRef.current) return
+    // If user dragged, only move if parent gave us a NEW center (e.g. search / My Location button)
+    // If parent center is still the old one, stay where user dragged
+    if (lastDraggedCenterRef.current) {
+      const dragged = L.latLng(lastDraggedCenterRef.current[1], lastDraggedCenterRef.current[0])
+      const newCenter = L.latLng(center[1], center[0])
+      const distToDragged = dragged.distanceTo(newCenter)
+      // Parent did NOT change center - user is still at dragged spot, do nothing
+      if (distToDragged < 10) return
+      // Parent DID change center - allow move and clear dragged flag
+      lastDraggedCenterRef.current = null
+      userHasDraggedRef.current = false
+    }
     const current = mapRef.current.getCenter()
     const distance = current.distanceTo(L.latLng(center[1], center[0]))
-    if (distance > 10) { // only move if >10m diff
+    if (distance > 10) {
       mapRef.current.setView([center[1], center[0]], mapRef.current.getZoom(), { animate: true })
     }
   }, [center])
@@ -180,11 +197,10 @@ export function PassengerTomTomMap({
       <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button onClick={() => mapRef.current?.zoomIn()} style={{ width: 44, height: 44, borderRadius: 12, background: 'white', border: '1px solid #ddd', fontSize: 20, fontWeight: 900 }}>+</button>
         <button onClick={() => mapRef.current?.zoomOut()} style={{ width: 44, height: 44, borderRadius: 12, background: 'white', border: '1px solid #ddd', fontSize: 20, fontWeight: 900 }}>−</button>
-        <button onClick={() => { if(mapRef.current) { mapRef.current.setView([center[1], center[0]], 15, { animate: true }); userHasDraggedRef.current = false } }} style={{ width: 44, height: 44, borderRadius: 12, background: '#0066FF', color: 'white', border: 'none', fontSize: 18 }}>📍</button>
+        <button onClick={() => { if(mapRef.current) { lastDraggedCenterRef.current = null; userHasDraggedRef.current = false; mapRef.current.setView([center[1], center[0]], 15, { animate: true }) } }} style={{ width: 44, height: 44, borderRadius: 12, background: '#0066FF', color: 'white', border: 'none', fontSize: 18 }}>📍</button>
       </div>
     </div>
   )
 }
 
-export const OsmMapView = PassengerTomTomMap
 export default PassengerTomTomMap
