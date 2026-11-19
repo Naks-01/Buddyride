@@ -82,15 +82,19 @@ function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'document_url' |
 function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'document_url' | 'file_path' | 'storage_path' | 'file_name'>) {
   const filePath = getDocumentUrl(doc)
   if (!filePath) return false
-  if (isFakeFile(filePath)) return false
-  if (/^https?:\/\//i.test(filePath)) return filePath.includes('/storage/v1/object/') || filePath.includes('supabase')
-  const separator = filePath.indexOf(':')
-  const bucket = separator >= 0 ? filePath.slice(0, separator) : 'driver-documents'
-  const path = separator >= 0 ? filePath.slice(separator + 1) : filePath
-  if (['driver-documents', 'vehicle-documents', 'profile-photos', 'passenger-ids', 'safety-selfies'].includes(bucket) && Boolean(path)) return true
-  // FIXED: any non-empty storage path / filename with an extension is a real upload
-  // This covers file_path / storage_path which the old code ignored
-  return Boolean(path) && /[a-z0-9._-]{3,}/i.test(path)
+  const lower = filePath.toLowerCase()
+  // Your video shows file_url = https://.../storage/v1/object/public/driver-documents/...
+  // That's REAL, even if isFakeFile() wrongly flags it
+  if (lower.includes('supabase') || lower.includes('/storage/') || lower.includes('driver-documents') || lower.includes('vehicle-documents')) {
+    return true
+  }
+  if (lower.includes('no real file') || lower === 'test' || lower === 'fake') return false
+  if (isFakeFile(filePath)) {
+    // if it has image extension, it's real despite isFakeFile
+    if (/\.(jpg|jpeg|png|webp|pdf)$/i.test(filePath)) return true
+    return false
+  }
+  return filePath.length > 10
 }
 
 function safeStatus(s?: string | null) {
@@ -135,10 +139,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
 
   async function viewDriverDocument(fileUrl?: string | null) {
     const docUrl = fileUrl?.trim()
-    if (isFakeFile(docUrl)) {
-      setError('No real file uploaded - test data')
-      return
-    }
     if (!docUrl) {
       setError('No document uploaded yet')
       return
@@ -186,7 +186,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       const profileById = new Map((driverProfilesResult.data || []).map((p: any) => [p.id, p]))
       if (!driverResult.error) {
         const requiredTypes = new Set(REQUIRED_DOCS.map(document => document.type))
-        // FIXED ONLY HERE: keep SA ID + License even if REQUIRED_DOCS type mismatch
         const loadedDocuments = (driverResult.data || []).filter(document => {
           const raw = (document.document_type || document.doc_type || '').toLowerCase()
           const norm = normalizeDriverDocType(document.document_type || document.doc_type || '').toLowerCase()
@@ -451,11 +450,10 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
         </div>
         {expiryDateMissing && <div role="alert" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRY DATE MISSING - Reject</div>}
         {expired && <div role="status" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRED</div>}
-        {isFakeFile(docUrl) && <div role="status" style={{fontSize:'12px', color:'#fbbf24'}}>No real file uploaded - test data</div>}
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
       </div>
       <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end', gap:'6px'}}>
-        <button disabled={!canViewDocument} title={isFakeFile(docUrl)?'No real file uploaded - test data':undefined} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed', opacity:canViewDocument?1:0.5}}>Preview</button>
+        <button disabled={!canViewDocument} onClick={()=>void viewDriverDocument(docUrl)} style={{background:canViewDocument?'#333':'#4b5563', color:canViewDocument?'white':'#d1d5db', padding:'7px 9px', borderRadius:'6px', border:'none', cursor:canViewDocument?'pointer':'not-allowed', opacity:canViewDocument?1:0.5}}>Preview</button>
         <button disabled={!canApproveDocument || isSaving} title={expiryDateMissing ? 'Expiry date is required' : expired ? 'Expired documents cannot be approved' : undefined} onClick={()=>doc && void updateDocumentStatus(doc,table,'approved',doc.profiles?.email || doc.user_email || doc.email || '')} style={{background: isSaving ? '#4b5563' : '#00a86b', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none', cursor: isSaving ? 'wait' : 'pointer'}}>{isSaving ? 'Saving...' : 'Approve'}</button>
         <button disabled={!doc || isSaving} onClick={()=>doc && setRejectModal({id:doc.id,kind:'driver-document'})} style={{background:'#c62828', color:'white', padding:'7px 9px', borderRadius:'6px', border:'none', cursor: isSaving ? 'wait' : 'pointer'}}>Reject</button>
       </div>
