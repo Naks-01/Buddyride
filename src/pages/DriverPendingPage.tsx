@@ -1,3 +1,4 @@
+"use client"
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
@@ -26,21 +27,29 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
   const checkingRef = useRef(false)
   const needsRecheckRef = useRef(false)
 
+  // ===== FIXED: same canonical as Onboarding =====
   const normalizeKey = (raw: string) => {
-    const k = (raw || '').toLowerCase().trim()
-    if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id') return 'sa_id'
+    let k = (raw || '').toLowerCase().trim()
+    k = k.replace(/-/g, '_').replace(/\s+/g, '_')
+    k = k.replaceAll('licence', 'license') // FIX: licence -> license
+    if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id' || k === 'south_african_id_document') return 'sa_id'
+    if (k.includes('driver') && k.includes('license')) return 'drivers_license'
+    if (k === 'license' || k === 'driving_license') return 'drivers_license'
+    if (k === 'license_disc') return 'license_disc'
     return k
   }
 
   const prettyName = (key: string) => {
     if (key === 'sa_id') return 'SA ID'
+    if (key === 'drivers_license') return 'Drivers License'
+    if (key === 'license_disc') return 'License Disc'
     return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
 
+  // FIXED: all normalized to _license spelling
   const ALL_DOCS = ['profile_photo','selfie','sa_id','drivers_license','prdp','vehicle_registration','license_disc','vehicle_photo_1','vehicle_photo_2','vehicle_photo_3','vehicle_photo_4','vehicle_interior_photo_1','vehicle_interior_photo_2','huru_criminal_check','vehicle_inspection_report']
 
   async function checkStatus() {
-    // FIXED: Queue re-check instead of dropping it - was missing approval updates
     if (checkingRef.current) { needsRecheckRef.current = true; return }
     checkingRef.current = true
     setChecking(true)
@@ -66,7 +75,6 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
         const vStatus = (data as any).verification_status || 'pending_verification'
         setStatus(vStatus)
         setRejectionReason((data as any).verification_rejection_reason || null)
-        // FIXED: Track ID numbers - Enter App requires them, not just 4 photos
         const hasNumbers = Boolean(((data as any).id_number || '').toString().trim() && (((data as any).licence_number || (data as any).driver_licence_number || '').toString().trim()))
         setHasIdNumbers(hasNumbers)
         const isApproved = (data as any).is_verified === true || ['approved','verified'].includes(String(vStatus).toLowerCase())
@@ -85,8 +93,9 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
       const deduped = [...latest.values()]
       setTotalDocs(TOTAL_EXPECTED)
       setUploadedCount(deduped.filter(d => d.file_url || d.document_url).length)
+      // FIXED: use normalizeKey on both sides
       setIdentityCount(deduped.filter(d => IDENTITY_TYPES.has(normalizeKey(d.doc_type)) && (d.file_url || d.document_url)).length)
-      const missing = ALL_DOCS.filter(k => !latest.has(k))
+      const missing = ALL_DOCS.filter(k => !latest.has(normalizeKey(k)))
       setMissingDocs(missing.map(prettyName))
 
       const approvedList = deduped.filter(d => String(d.status||'').toUpperCase() === 'APPROVED')
@@ -95,12 +104,12 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
 
       setApprovedCount(approvedList.length)
       setRejectedDocs(rejectedList.map((d: any) => ({
-        name: prettyName(d.doc_type || d.document_type || 'Document'),
+        name: prettyName(normalizeKey(d.doc_type || d.document_type || 'Document')),
         reason: d.rejection_reason || 'Please re-upload a clearer photo.',
         status: d.status,
       })))
       setPendingDocs(pendingList.map((d: any) => ({
-        name: prettyName(d.doc_type || d.document_type || 'Document'),
+        name: prettyName(normalizeKey(d.doc_type || d.document_type || 'Document')),
         reason: 'Waiting for admin review',
         status: d.status,
       })))
@@ -133,7 +142,6 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
   }, [])
 
   const isRejected = status.toLowerCase() === 'rejected' || rejectedDocs.length > 0 || !!rejectionReason
-  // FIXED: Identity complete = 4 photos + ID numbers + not rejected. Rejected always wins.
   const isIdentityComplete = !isRejected && (status.toLowerCase() === 'identity_complete' || (identityCount === 4 && uploadedCount >= 4 && hasIdNumbers))
   const isIdentityPhotosOnly = !isRejected && identityCount === 4 && uploadedCount >= 4 && !hasIdNumbers
   const isFullPending = ['pending','pending_verification','submitted','under_review','in_review'].includes(status.toLowerCase())

@@ -1,9 +1,20 @@
+"use client"
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import imageCompression from 'browser-image-compression'
 
 const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
 const BLUE_LIGHT = '#E6F0FF'
+
+// FIXED: same canonical everywhere
+function canonicalKey(raw: string | null | undefined) {
+  let k = (raw || '').toLowerCase().trim().replace(/-/g, '_').replace(/\s+/g, '_')
+  k = k.replaceAll('licence', 'license')
+  if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'south_african_id_document') return 'sa_id'
+  if (k.includes('driver') && k.includes('license')) return 'drivers_license'
+  return k
+}
 
 const DOC_TYPES = [
   { key: 'profile_photo', label: 'Profile Photo', bucket: 'profile-photos', folder: 'profile_photo' },
@@ -55,26 +66,21 @@ function isValidSAID(id: string) {
   return (sum + Number(id[12])) % 10 === 0
 }
 
-function compressImage(file: File): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const objectUrl = URL.createObjectURL(file)
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      const max = 1280
-      let w = img.width, h = img.height
-      if (w > h) { if (w > max) { h *= max/w; w = max } }
-      else { if (h > max) { w *= max/h; h = max } }
-      canvas.width = w; canvas.height = h
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { URL.revokeObjectURL(objectUrl); reject(new Error('canvas')); return }
-      ctx.drawImage(img, 0, 0, w, h)
-      URL.revokeObjectURL(objectUrl)
-      canvas.toBlob(b => b ? resolve(b) : reject(new Error('compress')), 'image/jpeg', 0.75)
-    }
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Invalid image - try a JPEG/PNG screenshot')) }
-    img.src = objectUrl
-  })
+// FIXED: use same browser-image-compression as onboarding, with fallback
+async function compressSafely(file: File): Promise<File> {
+  if (file.type === 'application/pdf') return file
+  try {
+    const compressed = await imageCompression(file, {
+      maxSizeMB: 0.8,
+      maxWidthOrHeight: 1600,
+      useWebWorker: false,
+      fileType: 'image/jpeg',
+      initialQuality: 0.7,
+    })
+    return new File([compressed], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: Date.now() })
+  } catch {
+    return file
+  }
 }
 
 async function signedUrlFor(ref: string): Promise<string | null> {
@@ -111,20 +117,20 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     if (docsRes.data) {
       const latest = new Map<string, any>()
       for (const d of docsRes.data as any[]) {
-        const key = (d.doc_type || d.document_type || '').toLowerCase()
-        if (!latest.has(key)) latest.set(key, d)
+        const key = canonicalKey(d.doc_type || d.document_type || '')
+        if (!latest.has(key)) latest.set(key, { ...d, doc_type: key, document_type: key })
       }
       const deduped = [...latest.values()]
       setDocs(deduped)
       const exp: Record<string, string> = {}
       for (const d of deduped) {
-        const key = d.doc_type || d.document_type
+        const key = canonicalKey(d.doc_type || d.document_type)
         if (key && d.expiry_date && !exp[key]) exp[key] = String(d.expiry_date).slice(0, 10)
       }
       setExpiryDates(exp)
       const previews: Record<string, string> = {}
       await Promise.all(deduped.map(async (d) => {
-        const key = d.doc_type || d.document_type
+        const key = canonicalKey(d.doc_type || d.document_type)
         const ref = d.file_url || d.document_url
         if (key && ref) {
           const url = await signedUrlFor(String(ref))
@@ -147,20 +153,23 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     setIsError(false)
     let uploadedPath: string | null = null
     const meta = DOC_TYPES.find(d => d.key === key)!
+    const cKey = canonicalKey(key)
     try {
       const extFromName = file.name.split('.').pop()?.toLowerCase() || ''
       if (['heic','heif'].includes(extFromName)) throw new Error('iPhone HEIC not supported. Screenshot the document or pick JPG.')
       const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       if (file.size <= 0 || file.size > 20 * 1024 * 1024) throw new Error('File must be greater than 0 bytes and smaller than 20 MB.')
-      if (EXPIRING_DOCS.has(key) && !expiryDates[key]) throw new Error('Enter expiry date as printed on document for ' + meta.label)
-      if (EXPIRING_DOCS.has(key) && expiryDates[key] && expiryDates[key] < southAfricanToday()) {
+
+      // FIXED: Do NOT block upload if expiry missing - allow upload, expiry checked at Submit
+      // Old code threw here, so drivers_license + license_disc never uploaded
+      if (EXPIRING_DOCS.has(cKey) && expiryDates[cKey] && expiryDates[cKey] < southAfricanToday()) {
         throw new Error('This document has expired. Upload a current document.')
       }
 
       const isImage = guessedType.startsWith('image/')
       let blob: Blob | File = file
       if (isImage) {
-        try { blob = await compressImage(file) } catch { blob = file }
+        blob = await compressSafely(file)
       }
       if (blob.size > 20 * 1024 * 1024) throw new Error('Processed file must be smaller than 20 MB.')
       const outputType = isImage ? 'image/jpeg' : guessedType
@@ -168,12 +177,12 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in - please log in again')
       const ownerId = user.id
-      const path = `${ownerId}/${meta.folder}/${key}_${safeUUID()}.${isImage ? 'jpg' : (extFromName === 'pdf' ? 'pdf' : 'jpg')}`
+      const path = `${ownerId}/${meta.folder}/${cKey}_${safeUUID()}.${isImage ? 'jpg' : (extFromName === 'pdf' ? 'pdf' : 'jpg')}`
       uploadedPath = path
 
       const { error: upErr } = await supabase.storage.from(meta.bucket).upload(path, blob, {
         contentType: outputType,
-        upsert: false,
+        upsert: true,
       })
       if (upErr) throw upErr
 
@@ -181,18 +190,18 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
       const payload: any = {
         driver_id: ownerId,
-        doc_type: key,
-        document_type: key,
+        doc_type: cKey,
+        document_type: cKey,
         file_url: storageRef,
         document_url: storageRef,
         file_path: path,
         storage_path: path,
         file_name: file.name,
         status: 'PENDING',
-        expiry_date: EXPIRING_DOCS.has(key) ? expiryDates[key] : null,
+        expiry_date: EXPIRING_DOCS.has(cKey) ? (expiryDates[cKey] || null) : null,
       }
 
-      const { data: existingList } = await supabase.from('driver_documents').select('id').eq('driver_id', ownerId).or(`doc_type.eq.${key},document_type.eq.${key}`).limit(1)
+      const { data: existingList } = await supabase.from('driver_documents').select('id').eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`).limit(1)
       const existing = existingList?.[0]
       let dbErr: any = null
       if (existing) {
@@ -204,13 +213,13 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       }
       if (dbErr) throw dbErr
 
-      const { data: allForType } = await supabase.from('driver_documents').select('id,created_at').eq('driver_id', ownerId).or(`doc_type.eq.${key},document_type.eq.${key}`).order('created_at', { ascending: false })
+      const { data: allForType } = await supabase.from('driver_documents').select('id,created_at').eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`).order('created_at', { ascending: false })
       if (allForType && allForType.length > 1) {
         const idsToDelete = allForType.slice(1).map((r: any) => r.id)
         await supabase.from('driver_documents').delete().in('id', idsToDelete)
       }
 
-      if (key === 'profile_photo') {
+      if (cKey === 'profile_photo') {
         const { data: publicData } = supabase.storage.from(meta.bucket).getPublicUrl(path)
         const { error: profErr } = await supabase.from('profiles').update({ avatar_url: publicData.publicUrl }).eq('id', ownerId)
         if (profErr) throw profErr
@@ -237,6 +246,14 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       if (!trimmedId) throw new Error('Enter your SA ID number / Passport number - required.')
       if (/^\d{13}$/.test(trimmedId) && !isValidSAID(trimmedId)) throw new Error('Enter a valid 13-digit SA ID number.')
       if (!licenceNumber.trim()) throw new Error('Enter your driver licence number - required.')
+      // FIXED: Check expiry at Submit, not at Upload
+      for (const t of DOC_TYPES) {
+        if (EXPIRING_DOCS.has(canonicalKey(t.key))) {
+          const exp = expiryDates[canonicalKey(t.key)]
+          if (!exp) throw new Error(`Enter expiry date for ${t.label} before submitting.`)
+          if (exp < southAfricanToday()) throw new Error(`${t.label} is expired.`)
+        }
+      }
       const { data: { user } } = await supabase.auth.getUser()
       const ownerId = user?.id || driverId
       const { error: saveErr } = await supabase.from('profiles').update({ id_number: trimmedId, licence_number: licenceNumber.trim() } as any).eq('id', ownerId)
@@ -245,7 +262,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       if (error) {
         const msg = error.message.toLowerCase()
         if (msg.includes('argument') || msg.includes('function')) {
-          // FIXED: Retry with logged-in ownerId, not prop driverId
           const { error: retryError } = await supabase.rpc('submit_driver_documents_for_review', { p_driver_id: ownerId } as any)
           if (retryError) throw retryError
         } else throw error
@@ -260,12 +276,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     }
   }
 
-  const getDoc = (key: DocKey) => docs.find(d => (d.doc_type || d.document_type || '').toLowerCase() === key)
+  const getDoc = (key: DocKey) => docs.find(d => canonicalKey(d.doc_type || d.document_type || '') === canonicalKey(key))
   const getStatus = (key: DocKey) => {
     const latest = getDoc(key)
     return latest ? latest.status : 'Missing'
   }
-  // FIXED: Count document_url too - old rows may only have document_url, not file_url
   const uploadedCount = DOC_TYPES.filter(t => {
     const d = getDoc(t.key)
     return Boolean(d?.file_url || d?.document_url || d?.file_path || d?.storage_path)
@@ -302,10 +317,10 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
           {DOC_TYPES.map(t => {
             const status = getStatus(t.key)
             const isApproved = String(status).toLowerCase() === 'approved'
-            const isExpiring = EXPIRING_DOCS.has(t.key)
+            const isExpiring = EXPIRING_DOCS.has(canonicalKey(t.key))
             const doc = getDoc(t.key)
             const uploaded = Boolean(doc?.file_url || doc?.document_url)
-            const preview = previewUrls[t.key]
+            const preview = previewUrls[canonicalKey(t.key)]
             return (
               <div key={t.key} style={{ padding: 16, border: `1px solid ${isApproved ? '#B2CCFF' : '#EDF0F3'}`, borderRadius: 16, background: isApproved ? BLUE_LIGHT : '#fff', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: '0 5px 18px rgba(20,33,50,0.045)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
@@ -317,8 +332,8 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
                 </div>
                 {isExpiring && (
                   <label style={{ display: 'grid', gap: 4, fontSize: 12, color: '#344054', fontWeight: 700 }}>
-                    Expiry Date (as printed on document) - REQUIRED
-                    <input type="date" value={expiryDates[t.key] || ''} onChange={e => setExpiryDates(prev => ({ ...prev, [t.key]: e.target.value }))} style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9 }} />
+                    Expiry Date (as printed on document) - REQUIRED AT SUBMIT
+                    <input type="date" value={expiryDates[canonicalKey(t.key)] || ''} onChange={e => setExpiryDates(prev => ({ ...prev, [canonicalKey(t.key)]: e.target.value }))} style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9 }} />
                   </label>
                 )}
                 {preview && (
