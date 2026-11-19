@@ -40,20 +40,17 @@ function dropIcon() {
   })
 }
 
-// --- FIX: Parse ANY route format TomTom / GeoJSON / array ---
 function parseRouteToLatLngs(route: any): [number, number][] {
   if (!route) return []
   try {
-    // 1. Already an array: [[lng,lat],...] or [{lat,lng},...] or [{latitude,longitude}]
     if (Array.isArray(route)) {
       if (route.length === 0) return []
-      if (typeof route[0] === 'number') return [] // single point
+      if (typeof route[0] === 'number') return []
       if (Array.isArray(route[0])) return route.map((c: any) => [c[1], c[0]] as [number, number])
       if (route[0]?.latitude !== undefined) return route.map((p: any) => [p.latitude, p.longitude] as [number, number])
       if (route[0]?.lat !== undefined) return route.map((p: any) => [p.lat, p.lng ?? p.lon] as [number, number])
       return []
     }
-    // 2. TomTom raw: { routes: [{ legs: [{ points: [...] }] }] }
     if (route.routes?.[0]?.legs) {
       const pts: [number, number][] = []
       for (const leg of route.routes[0].legs) {
@@ -63,37 +60,32 @@ function parseRouteToLatLngs(route: any): [number, number][] {
       }
       if (pts.length >= 2) return pts
     }
-    // 3. TomTom summary with points directly: { points: [...] }
     if (Array.isArray(route.points)) {
       if (route.points[0]?.latitude !== undefined) return route.points.map((p: any) => [p.latitude, p.longitude] as [number, number])
       if (Array.isArray(route.points[0])) return route.points.map((c: any) => [c[1], c[0]] as [number, number])
     }
-    // 4. GeoJSON: Feature / FeatureCollection / LineString / geometry
     let coords: any = null
     if (route.type === 'FeatureCollection' && route.features?.[0]?.geometry?.coordinates) coords = route.features[0].geometry.coordinates
     else if (route.type === 'Feature' && route.geometry?.coordinates) coords = route.geometry.coordinates
     else if (route.geometry?.coordinates) coords = route.geometry.coordinates
     else if (route.coordinates) coords = route.coordinates
     else if (route.geojson?.coordinates) coords = route.geojson.coordinates
-
     if (Array.isArray(coords) && coords.length > 0) {
-      // LineString: [[lng,lat],...]
       if (typeof coords[0]?.[0] === 'number') return coords.map((c: any) => [c[1], c[0]] as [number, number])
-      // MultiLineString: [[[lng,lat],...]]
       if (Array.isArray(coords[0]?.[0])) return coords[0].map((c: any) => [c[1], c[0]] as [number, number])
     }
   } catch (e) { console.warn('[Polyline] parse failed', e) }
   return []
 }
 
-export function PassengerTomTomMap({ 
-  center, 
-  route, 
-  driverLocation, 
-  availableCars = [], 
-  theme = 'light', 
-  onMapMove 
-}: { 
+export function PassengerTomTomMap({
+  center,
+  route,
+  driverLocation,
+  availableCars = [],
+  theme = 'light',
+  onMapMove
+}: {
   center: [number, number]
   route?: any
   driverLocation?: [number, number]
@@ -105,6 +97,7 @@ export function PassengerTomTomMap({
   const containerRef = useRef<HTMLDivElement>(null)
   const tileLayerRef = useRef<L.TileLayer | null>(null)
   const routeLineRef = useRef<L.Polyline | null>(null)
+  const routeMarkersRef = useRef<L.Marker[]>([])
   const driverMarkerRef = useRef<L.Marker | null>(null)
   const carMarkersRef = useRef<L.Marker[]>([])
   const isDraggingRef = useRef(false)
@@ -114,10 +107,9 @@ export function PassengerTomTomMap({
 
   useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
 
-  // INIT MAP ONCE
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
-    
+
     const map = L.map(containerRef.current, {
       zoomControl: false,
       attributionControl: false,
@@ -125,9 +117,17 @@ export function PassengerTomTomMap({
       touchZoom: true,
       doubleClickZoom: true,
       scrollWheelZoom: true,
+      // @ts-ignore - Leaflet tap option for mobile
+      tap: true,
       minZoom: 3,
       maxZoom: 21,
     }).setView([center[1], center[0]], 15)
+
+    // FIX: force dragging on even if Leaflet disables it on touch
+    map.dragging.enable()
+    map.touchZoom.enable()
+    map.scrollWheelZoom.enable()
+    map.doubleClickZoom.enable()
 
     map.on('movestart', () => { isDraggingRef.current = true })
     map.on('moveend', () => {
@@ -141,41 +141,34 @@ export function PassengerTomTomMap({
     map.on('dragstart', () => { userHasDraggedRef.current = true })
 
     mapRef.current = map
-    // FIX screenshot bug - force Leaflet to measure real size
     setTimeout(() => map.invalidateSize(), 100)
     setTimeout(() => map.invalidateSize(), 500)
     setTimeout(() => map.invalidateSize(), 1200)
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
-  // TILE LAYER - TOMTOM ONLY
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
-
     if (!TOMTOM_KEY) {
       console.error('[BuddyRide] VITE_TOMTOM_API_KEY missing!')
       return
     }
-
     const style = theme === 'dark' ? 'night' : 'main'
     const url = `https://api.tomtom.com/map/1/tile/basic/${style}/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`
-    
     tileLayerRef.current = L.tileLayer(url, {
       minZoom: 3,
       maxZoom: 21,
       maxNativeZoom: 19,
       attribution: '© TomTom',
     }).addTo(map)
-
     tileLayerRef.current.on('tileerror', (e: any) => {
-      console.error('[BuddyRide] TomTom tile error - check key quota', e)
+      console.error('[BuddyRide] TomTom tile error', e)
     })
     setTimeout(() => map.invalidateSize(), 200)
   }, [theme])
 
-  // CENTER UPDATE - DO NOT SNAP BACK AFTER USER DRAG
   useEffect(() => {
     if (!mapRef.current || isDraggingRef.current) return
     if (lastDraggedCenterRef.current) {
@@ -192,34 +185,29 @@ export function PassengerTomTomMap({
     }
   }, [center])
 
-  // ROUTE LINE - FIXED
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     if (routeLineRef.current) { map.removeLayer(routeLineRef.current); routeLineRef.current = null }
+    routeMarkersRef.current.forEach(m => map.removeLayer(m))
+    routeMarkersRef.current = []
     if (!route) return
-
     const latLngs = parseRouteToLatLngs(route)
-    console.log('[Polyline] route points:', latLngs.length, 'raw:', route)
-
     if (latLngs.length >= 2) {
-      routeLineRef.current = L.polyline(latLngs, { 
-        color: '#0066FF', 
-        weight: 6, 
+      routeLineRef.current = L.polyline(latLngs, {
+        color: '#0066FF',
+        weight: 6,
         opacity: 0.95,
         lineCap: 'round',
         lineJoin: 'round'
       }).addTo(map)
-      // Pickup / Drop markers
-      L.marker(latLngs[0], { icon: pickupIcon() }).addTo(map)
-      L.marker(latLngs[latLngs.length - 1], { icon: dropIcon() }).addTo(map)
+      const p = L.marker(latLngs[0], { icon: pickupIcon() }).addTo(map)
+      const d = L.marker(latLngs[latLngs.length - 1], { icon: dropIcon() }).addTo(map)
+      routeMarkersRef.current = [p, d]
       map.fitBounds(routeLineRef.current.getBounds(), { padding: [60, 60] })
-    } else {
-      console.warn('[Polyline] No valid points - check tomtom.ts returns routes[0].legs[0].points')
     }
   }, [route])
 
-  // DRIVER LIVE LOCATION
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -228,7 +216,6 @@ export function PassengerTomTomMap({
     driverMarkerRef.current = L.marker([driverLocation[1], driverLocation[0]], { icon: driverIcon() }).addTo(map)
   }, [driverLocation])
 
-  // NEARBY CARS
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -246,10 +233,9 @@ export function PassengerTomTomMap({
   }, [availableCars])
 
   return (
-    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', minHeight: '100vh', background: '#E6F0FF' }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '100vh' }} />
-      
-      {/* FIX: Zoom buttons - + / - must be visible, not blank white squares. Added explicit color, grid centering, shadow, aria-labels */}
+    // FIXED: height 100% not 100vh - 100vh overflowed parent and broke Leaflet drag measurement
+    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#E6F0FF', overflow: 'hidden' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%', touchAction: 'none' }} />
       <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, lineHeight: 1, display: 'grid', placeItems: 'center', padding: 0, boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>+</button>
         <button aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, lineHeight: 1, display: 'grid', placeItems: 'center', padding: 0, boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>−</button>

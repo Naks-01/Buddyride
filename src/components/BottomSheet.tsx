@@ -94,6 +94,7 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark',
           ? `${fitToSnap ? 'height' : 'transform'} 400ms cubic-bezier(.32,.72,0,1)`
           : 'none',
         touchAction: 'pan-y',
+        pointerEvents: 'auto',
       }}
     >
       <style>{`
