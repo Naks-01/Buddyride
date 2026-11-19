@@ -66,17 +66,10 @@ async function searchPlaces(query: string, setter: any, setShow: any) {
       }
     } catch {}
   }
-  try {
-    const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query + ', Limpopo') + '&countrycodes=za&limit=8')
-    if (!res.ok) throw new Error('OSM search failed')
-    const osmData = await res.json(); const places = osmData.map((o: any) => ({ text: o.display_name.split(',')[0], place_name: o.display_name, center: [parseFloat(o.lon), parseFloat(o.lat)] as [number, number] }))
-    if (places.length > 0) { setter(places); setShow(true); return }
-  } catch {}
   setter([]); setShow(false)
 }
 async function geocodeAddress(text: string): Promise<[number, number] | null> {
   if (TOMTOM_KEY) { try { const res = await fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(text)}.json?key=${TOMTOM_KEY}&countrySet=ZA&limit=1&idxSet=POI,Addr`); if (res.ok) { const data = await res.json(); if (data.results?.[0]) return [data.results[0].position.lon, data.results[0].position.lat] } } catch {} }
-  try { const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(text) + '&countrycodes=za&limit=1'); const data = await res.json(); if (data?.[0]) return [parseFloat(data[0].lon), parseFloat(data[0].lat)] } catch {}
   return null
 }
 export function PassengerHome({ profile }: { profile: Profile }) {
@@ -526,7 +519,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               <button type="button" onClick={() => setPinTarget('pickup')} style={{ flex: 1, padding: '9px', borderRadius: 999, border: pinTarget === 'pickup' ? `2px solid ${BLUE}` : '1px solid ' + border, background: pinTarget === 'pickup' ? BLUE_LIGHT : bg2, color: text, fontWeight: 800, fontSize: 12 }}>📍 Set Pickup with Pin</button>
               <button type="button" onClick={() => setPinTarget('dropoff')} style={{ flex: 1, padding: '9px', borderRadius: 999, border: pinTarget === 'dropoff' ? `2px solid #ef4444` : '1px solid ' + border, background: pinTarget === 'dropoff' ? (isDark ? '#7f1d1d' : '#fee2e2') : bg2, color: text, fontWeight: 800, fontSize: 12 }}>🏁 Set Dropoff with Pin</button>
             </div>
-            <p style={{ margin: 0, fontSize: 12, color: muted }}>Tip: Powered by TomTom + OSM. Type townships — TomTom finds them.</p>
+            <p style={{ margin: 0, fontSize: 12, color: muted }}>Tip: Powered by TomTom. Type townships — TomTom finds them.</p>
             <div style={{ position: 'relative' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input value={pickup} onFocus={() => setPinTarget('pickup')} onChange={e => onPickupChange(e.target.value)} placeholder="Pickup - My Location" style={{ flex: 1, height: 44, minHeight: 44, marginTop: 0, padding: '14px', borderRadius: '14px', border: pinTarget === 'pickup' ? `2px solid ${BLUE}` : '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box' }} />
