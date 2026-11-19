@@ -83,8 +83,9 @@ function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'document_url' 
   const filePath = getDocumentUrl(doc)
   if (!filePath) return false
   const lower = filePath.toLowerCase()
+  // LAUNCH: block fake/test data FIRST - before any other check
+  if (lower.includes('temp.fix') || lower.includes('temp_fix') || lower.includes('no real file') || lower === 'test' || lower === 'fake') return false
   if (lower.includes('supabase') || lower.includes('/storage/') || lower.includes('driver-documents') || lower.includes('vehicle-documents')) return true
-  if (lower.includes('no real file') || lower === 'test' || lower === 'fake') return false
   if (isFakeFile(filePath)) {
     if (/\.(jpg|jpeg|png|webp|pdf)$/i.test(filePath)) return true
     return false
@@ -138,21 +139,21 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       setError('No document uploaded yet')
       return
     }
-    // FIXED PREVIEW ONLY: handle all 3 DB formats, don't rely on lib helper
-    // 1) Full https:// supabase URL -> open directly
+    // LAUNCH: never try to open fake files
+    if (docUrl.toLowerCase().includes('temp.fix') || docUrl.toLowerCase().includes('no real file')) {
+      setError('No real file uploaded - ask driver to re-upload this document.')
+      return
+    }
     if (/^https?:\/\//i.test(docUrl)) {
       window.open(docUrl, '_blank')
       return
     }
-    // 2) bucket:path  e.g. driver-documents:22bf.../sa_id/...
-    // 3) plain path   e.g. 22bf.../sa_id/...
     let bucket = 'driver-documents'
     let path = docUrl
     if (docUrl.includes(':')) {
       const [b, ...rest] = docUrl.split(':')
       if (b && rest.join(':')) { bucket = b; path = rest.join(':') }
     }
-    // If path looks like profile photo, use that bucket
     if (path.includes('profile_photo') && bucket === 'driver-documents') bucket = 'profile-photos'
     try {
       const { data, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 3600)
@@ -160,10 +161,8 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
         window.open(data.signedUrl, '_blank')
         return
       }
-      // Fallback: try other buckets + public URL
       const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path)
       if (pub?.publicUrl) { window.open(pub.publicUrl, '_blank'); return }
-      // Last try: lib helper for legacy format
       const signedUrl = await createDriverDocumentSignedUrl(docUrl)
       window.open(signedUrl, '_blank')
     } catch (viewError: unknown) {
@@ -181,22 +180,11 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       if (driverId) driverQuery = driverQuery.eq('driver_id', driverId)
       let driverProfilesQuery = supabase.from('profiles').select('id,email,full_name,phone,is_verified,verification_status').eq('role', 'driver').order('full_name')
       if (driverId) driverProfilesQuery = driverProfilesQuery.eq('id', driverId)
-
       const [driverResult, driverProfilesResult, pendingPassengerResult, approvedPassengerResult] = await Promise.all([
         driverQuery,
         driverProfilesQuery,
-        supabase.from('profiles')
-          .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason')
-          .eq('role', 'passenger')
-          .eq('verification_status', 'pending_verification')
-          .order('created_at', { ascending: true })
-          .limit(50),
-        supabase.from('profiles')
-          .select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason')
-          .eq('role', 'passenger')
-          .eq('verification_status', 'verified')
-          .order('created_at', { ascending: false })
-          .limit(50),
+        supabase.from('profiles').select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason').eq('role', 'passenger').eq('verification_status', 'pending_verification').order('created_at', { ascending: true }).limit(50),
+        supabase.from('profiles').select('id,email,full_name,phone,avatar_url,selfie_url,id_document_url,id_number,id_verification_method,verification_status,verification_rejection_reason').eq('role', 'passenger').eq('verification_status', 'verified').order('created_at', { ascending: false }).limit(50),
       ])
       let profileLoadError = ''
       if (!driverProfilesResult.error) setDriverProfiles(driverProfilesResult.data || [])
@@ -211,9 +199,7 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
           if (['sa_id','said','sa-id','drivers_license','license','drivers-license','sa_id_document','south_african_id'].includes(norm)) return true
           return requiredTypes.has(normalizeDriverDocType(document.document_type || document.doc_type || ''))
         })
-        setPendingDriverDocumentCount(loadedDocuments.filter(document =>
-          safeStatus(document.status) === 'pending',
-        ).length)
+        setPendingDriverDocumentCount(loadedDocuments.filter(document => safeStatus(document.status) === 'pending').length)
         const latestByType = new Map<string, typeof driverResult.data[number]>()
         for (const document of loadedDocuments) {
           const key = `${document.driver_id}:${normalizeDriverDocType(document.document_type || document.doc_type)}`
@@ -228,12 +214,8 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       const loadPassengerProfiles = async (profiles: PassengerSafetyReview[]) => Promise.all(profiles.map(async passenger => {
           let idPreview: string | null = null
           let selfiePreview: string | null = null
-          try {
-            if (passenger.id_document_url) idPreview = await createDriverDocumentSignedUrl(passenger.id_document_url)
-          } catch (e: any) { profileLoadError = [profileLoadError, `ID for ${passenger.email || passenger.id}: ${errMsg(e)}`].filter(Boolean).join(' · ') }
-          try {
-            if (passenger.selfie_url) selfiePreview = await createDriverDocumentSignedUrl(passenger.selfie_url)
-          } catch (e: any) { profileLoadError = [profileLoadError, `Selfie for ${passenger.email || passenger.id}: ${errMsg(e)}`].filter(Boolean).join(' · ') }
+          try { if (passenger.id_document_url) idPreview = await createDriverDocumentSignedUrl(passenger.id_document_url) } catch (e: any) { profileLoadError = [profileLoadError, `ID for ${passenger.email || passenger.id}: ${errMsg(e)}`].filter(Boolean).join(' · ') }
+          try { if (passenger.selfie_url) selfiePreview = await createDriverDocumentSignedUrl(passenger.selfie_url) } catch (e: any) { profileLoadError = [profileLoadError, `Selfie for ${passenger.email || passenger.id}: ${errMsg(e)}`].filter(Boolean).join(' · ') }
           return { ...passenger, id_photo_preview_url: idPreview, selfie_preview_url: selfiePreview }
         }))
       if (!pendingPassengerResult.error) {
@@ -243,47 +225,22 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       if (!approvedPassengerResult.error) {
         setApprovedPassengerProfiles(await loadPassengerProfiles(approvedPassengerResult.data || []))
       }
-      const loadErrors = [
-        driverResult.error,
-        driverProfilesResult.error,
-        pendingPassengerResult.error,
-        approvedPassengerResult.error,
-      ].filter(Boolean)
-      const loadErrorMessages = [
-        ...loadErrors.map(loadError => errMsg(loadError)),
-        profileLoadError,
-      ].filter(Boolean)
-      if (loadErrorMessages.length) {
-        setError(loadErrorMessages.join(' · '))
-      }
-    } finally {
-      setLoadingDocs(false)
-    }
+      const loadErrors = [driverResult.error, driverProfilesResult.error, pendingPassengerResult.error, approvedPassengerResult.error].filter(Boolean)
+      const loadErrorMessages = [...loadErrors.map(loadError => errMsg(loadError)), profileLoadError].filter(Boolean)
+      if (loadErrorMessages.length) setError(loadErrorMessages.join(' · '))
+    } finally { setLoadingDocs(false) }
   }
 
-  async function updateDocumentStatus(
-    doc:StoredDocument,
-    table:'driver_documents',
-    status:'approved'|'rejected',
-    driverEmail:string,
-    rejectionReason = '',
-  ): Promise<boolean> {
+  async function updateDocumentStatus(doc:StoredDocument, table:'driver_documents', status:'approved'|'rejected', driverEmail:string, rejectionReason = ''): Promise<boolean> {
     setLoadingId(doc.id)
     setError('')
     try {
       const documentStatus = status.toUpperCase()
       const reviewedAt = new Date().toISOString()
-      const changes: Record<string, string | null> = {
-        status: documentStatus,
-        rejection_reason: status === 'rejected' ? rejectionReason.trim() : null,
-        reviewed_at: reviewedAt,
-        reviewed_by: _profile.id,
-      }
+      const changes: Record<string, string | null> = { status: documentStatus, rejection_reason: status === 'rejected' ? rejectionReason.trim() : null, reviewed_at: reviewedAt, reviewed_by: _profile.id }
       const { error: updateError } = await supabase.from('driver_documents').update(changes as any).eq('id', doc.id)
       if (updateError) throw updateError
-      setDriverDocs(prev => prev.map(item =>
-        item.id === doc.id ? { ...item, status: documentStatus, rejection_reason: status === 'rejected' ? rejectionReason.trim() || null : null, reviewed_at: reviewedAt, reviewed_by: _profile.id } : item
-      ))
+      setDriverDocs(prev => prev.map(item => item.id === doc.id ? { ...item, status: documentStatus, rejection_reason: status === 'rejected' ? rejectionReason.trim() || null : null, reviewed_at: reviewedAt, reviewed_by: _profile.id } : item))
       await load()
       return true
     } catch (e:any) {
@@ -291,9 +248,7 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       alert(`${action} failed: ${errMsg(e)} - Check the ${table} UPDATE RLS policy for the authenticated admin role.`)
       console.error(e)
       return false
-    } finally {
-      setLoadingId(null)
-    }
+    } finally { setLoadingId(null) }
   }
 
   async function approveToDrive(driverIdParam: string) {
@@ -302,20 +257,10 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
     setLoadingId(loadingKey)
     setError('')
     try {
-      const { error: rpcError } = await supabase.rpc('admin_set_driver_verification', {
-        p_driver_id: driverIdParam,
-        p_approve: true,
-        p_rejection_reason: null,
-      })
-      if (rpcError) {
-        throw new Error(`Admin approval could not be completed securely: ${errMsg(rpcError)}. Apply the driver approval migration and try again.`)
-      }
+      const { error: rpcError } = await supabase.rpc('admin_set_driver_verification', { p_driver_id: driverIdParam, p_approve: true, p_rejection_reason: null })
+      if (rpcError) throw new Error(`Admin approval could not be completed securely: ${errMsg(rpcError)}. Apply the driver approval migration and try again.`)
       await load()
-    } catch (approvalError: unknown) {
-      setError('Could not approve driver: ' + errMsg(approvalError))
-    } finally {
-      setLoadingId(null)
-    }
+    } catch (approvalError: unknown) { setError('Could not approve driver: ' + errMsg(approvalError)) } finally { setLoadingId(null) }
   }
 
   async function approvePassengerSafety(passengerId: string) {
@@ -323,123 +268,59 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
     setLoadingId(`passenger-safety:${passengerId}`)
     setError('')
     try {
-      const { error: approvalError } = await supabase.rpc('approve_passenger_safety', {
-        p_passenger_id: passengerId,
-      })
+      const { error: approvalError } = await supabase.rpc('approve_passenger_safety', { p_passenger_id: passengerId })
       if (approvalError) {
         const { error: fb } = await supabase.from('profiles').update({ verification_status: 'verified', is_verified: true, id_verified: true } as any).eq('id', passengerId).eq('role', 'passenger')
         if (fb) throw approvalError
       }
       await load()
-    } catch (reviewError: unknown) {
-      setError(`Could not approve passenger safety verification: ${errMsg(reviewError)}`)
-    } finally {
-      setLoadingId(null)
-    }
+    } catch (reviewError: unknown) { setError(`Could not approve passenger safety verification: ${errMsg(reviewError)}`) } finally { setLoadingId(null) }
   }
 
   async function doReject(){
     if (!rejectModal) return
-    const reason = rejectionCategory
-      ? `${rejectionCategory}: ${rejectionReason.trim()}`
-      : rejectionReason.trim()
-    if (rejectionReason.trim().length < 10) {
-      setError('Please enter at least 10 characters explaining the rejection.')
-      return
-    }
+    const reason = rejectionCategory ? `${rejectionCategory}: ${rejectionReason.trim()}` : rejectionReason.trim()
+    if (rejectionReason.trim().length < 10) { setError('Please enter at least 10 characters explaining the rejection.'); return }
     let succeeded = false
     if (rejectModal.kind === 'passenger-safety') {
       setLoadingId(`passenger-safety:${rejectModal.id}`)
       setError('')
       try {
-        const { data, error: rejectionError } = await supabase.from('profiles')
-          .update({
-            id_verified: false,
-            is_verified: false,
-            verification_status: 'rejected',
-            verification_rejection_reason: reason,
-            verified_at: null,
-          })
-          .eq('id', rejectModal.id)
-          .eq('role', 'passenger')
-          .eq('verification_status', 'pending_verification')
-          .select('id')
-          .maybeSingle()
+        const { data, error: rejectionError } = await supabase.from('profiles').update({ id_verified: false, is_verified: false, verification_status: 'rejected', verification_rejection_reason: reason, verified_at: null }).eq('id', rejectModal.id).eq('role', 'passenger').eq('verification_status', 'pending_verification').select('id').maybeSingle()
         if (rejectionError) throw rejectionError
         if (!data) throw new Error('Pending passenger safety verification was not found.')
         await load()
         succeeded = true
-      } catch (reviewError: unknown) {
-        setError(`Could not reject passenger safety verification: ${errMsg(reviewError)}`)
-      } finally {
-        setLoadingId(null)
-      }
+      } catch (reviewError: unknown) { setError(`Could not reject passenger safety verification: ${errMsg(reviewError)}`) } finally { setLoadingId(null) }
     } else {
       const doc = driverDocs.find(item=>item.id===rejectModal.id)
-      if (!doc) {
-        setError('Could not reject document: it is no longer in the loaded document list. Refresh and try again.')
-        return
-      }
-      succeeded = await updateDocumentStatus(
-        doc,
-        'driver_documents',
-        'rejected',
-        doc.profiles?.email || doc.user_email || doc.email || '',
-        reason,
-      )
+      if (!doc) { setError('Could not reject document: it is no longer in the loaded document list. Refresh and try again.'); return }
+      succeeded = await updateDocumentStatus(doc, 'driver_documents', 'rejected', doc.profiles?.email || doc.user_email || doc.email || '', reason)
     }
-    if (succeeded) {
-      setRejectModal(null)
-      setRejectionReason('')
-      setRejectionCategory('')
-    }
+    if (succeeded) { setRejectModal(null); setRejectionReason(''); setRejectionCategory('') }
   }
 
   const groupedDriverDocuments = groupDriversById(driverDocs)
   const allDriverIds = new Set<string>([...driverProfiles.map(p => p.id), ...Object.keys(groupedDriverDocuments)])
-  const driversById = [...allDriverIds].reduce<Record<string, StoredDocument[]>>((drivers, id) => {
-    drivers[id] = groupedDriverDocuments[id] || []
-    return drivers
-  }, {})
+  const driversById = [...allDriverIds].reduce<Record<string, StoredDocument[]>>((drivers, id) => { drivers[id] = groupedDriverDocuments[id] || []; return drivers }, {})
   const driverProfileById = new Map(driverProfiles.map(driver => [driver.id, driver]))
   const matchesPassenger = (passenger: PassengerSafetyReview, query: string) => {
     const normalizedQuery = query.trim().toLocaleLowerCase()
-    return !normalizedQuery || [
-      passenger.full_name,
-      passenger.email,
-      passenger.phone,
-      passenger.id_number,
-      passenger.id,
-    ].some(value => value?.toLocaleLowerCase().includes(normalizedQuery))
+    return !normalizedQuery || [passenger.full_name, passenger.email, passenger.phone, passenger.id_number, passenger.id].some(value => value?.toLocaleLowerCase().includes(normalizedQuery))
   }
   const pendingPassengers = pendingPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
   const approvedPassengers = approvedPassengerProfiles.filter(passenger => matchesPassenger(passenger, search))
   const normalizedDriverSearch = search.trim().toLocaleLowerCase()
-  const matchesDriver = (
-    docs: StoredDocument[],
-    fallbackProfile?: Pick<Profile, 'id' | 'email' | 'full_name' | 'phone'>,
-  ) => {
+  const matchesDriver = (docs: StoredDocument[], fallbackProfile?: Pick<Profile, 'id' | 'email' | 'full_name' | 'phone'>) => {
     const profile = docs[0]?.profiles || fallbackProfile
     const driverId = docs[0]?.driver_id || docs[0]?.user_id || fallbackProfile?.id || ''
-    return !normalizedDriverSearch || [profile?.full_name, profile?.email, profile?.phone, driverId]
-      .some(value => value?.toLocaleLowerCase().includes(normalizedDriverSearch))
+    return !normalizedDriverSearch || [profile?.full_name, profile?.email, profile?.phone, driverId].some(value => value?.toLocaleLowerCase().includes(normalizedDriverSearch))
   }
   const isPendingDocument = (doc: StoredDocument) => safeStatus(doc.status) === 'pending'
-  const pendingDrivers = Object.entries(driversById).filter(([, docs]) =>
-    docs.some(isPendingDocument),
-  )
-  const visibleDrivers = Object.entries(driversById).filter(([driverIdKey, docs]) =>
-    (!showUnapprovedOnly || docs.some(isPendingDocument))
-      && matchesDriver(docs, driverProfileById.get(driverIdKey)),
-  )
+  const pendingDrivers = Object.entries(driversById).filter(([, docs]) => docs.some(isPendingDocument))
+  const visibleDrivers = Object.entries(driversById).filter(([driverIdKey, docs]) => (!showUnapprovedOnly || docs.some(isPendingDocument)) && matchesDriver(docs, driverProfileById.get(driverIdKey)))
 
-  function renderDocumentRow(
-    doc: StoredDocument | undefined,
-    id: string,
-    label: string,
-    table: 'driver_documents',
-    required: boolean
-  ) {
+  function renderDocumentRow(doc: StoredDocument | undefined, id: string, label: string, table: 'driver_documents', required: boolean) {
     const status = displayStatus(doc)
     const docUrl = getDocumentUrl(doc)
     const requirement = DRIVER_DOCUMENTS.find(item => item.id === id)
@@ -462,9 +343,7 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       <div style={{minWidth:0}}>
         <strong>{label}</strong>{!required && <span style={{fontSize:'11px', color:'#9ca3af'}}> (Optional)</span>}
         <span style={{display:'inline-block', marginTop:'4px', padding:'3px 8px', borderRadius:'999px', fontSize:'11px', fontWeight:700, color:badge.color, background:badge.background}}>{status}</span>
-        <div style={{fontSize:'12px', color:'#d1d5db', marginTop:4}}>
-          {requirement?.expiryRequired ? `Expires: ${doc?.expiry_date || '—'}` : 'No expiry - no date needed'}
-        </div>
+        <div style={{fontSize:'12px', color:'#d1d5db', marginTop:4}}>{requirement?.expiryRequired ? `Expires: ${doc?.expiry_date || '—'}` : 'No expiry - no date needed'}</div>
         {expiryDateMissing && <div role="alert" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRY DATE MISSING - Reject</div>}
         {expired && <div role="status" style={{fontSize:'12px', color:'#fca5a5', fontWeight:700}}>EXPIRED</div>}
         {doc?.rejection_reason && <div style={{fontSize:'12px', color:'#ff6b6b'}}>Reason: {doc.rejection_reason}</div>}
@@ -486,22 +365,16 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:12, marginTop:14 }}>
         <div>
           <strong style={{ display:'block', marginBottom:6 }}>Selfie</strong>
-          {passenger.selfie_preview_url
-            ? <a href={passenger.selfie_preview_url} target="_blank" rel="noreferrer"><img src={passenger.selfie_preview_url} alt={`${passenger.full_name || 'Passenger'} selfie`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
-            : <span style={{ color:'red' }}>FAIL - No selfie - ask user to re-upload</span>}
+          {passenger.selfie_preview_url ? <a href={passenger.selfie_preview_url} target="_blank" rel="noreferrer"><img src={passenger.selfie_preview_url} alt={`${passenger.full_name || 'Passenger'} selfie`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a> : <span style={{ color:'red' }}>FAIL - No selfie - ask user to re-upload</span>}
         </div>
         <div>
           <strong style={{ display:'block', marginBottom:6 }}>ID</strong>
-          {passenger.id_photo_preview_url
-            ? <a href={passenger.id_photo_preview_url} target="_blank" rel="noreferrer"><img src={passenger.id_photo_preview_url} alt={`${passenger.full_name || 'Passenger'} ID`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a>
-            : <span>ID Number: {passenger.id_number || 'Not provided'}</span>}
+          {passenger.id_photo_preview_url ? <a href={passenger.id_photo_preview_url} target="_blank" rel="noreferrer"><img src={passenger.id_photo_preview_url} alt={`${passenger.full_name || 'Passenger'} ID`} style={{ width:'100%', maxHeight:240, objectFit:'contain', background:'#09090b', borderRadius:8 }} /></a> : <span>ID Number: {passenger.id_number || 'Not provided'}</span>}
         </div>
       </div>
       <div style={{ marginTop:5 }}><strong>Method:</strong> {passenger.id_verification_method || 'Not recorded'}</div>
       {allowReview && <div style={{ display:'flex', gap:8, marginTop:14 }}>
-        <button type="button" disabled={isSaving} onClick={()=>void approvePassengerSafety(passenger.id)} style={{ flex:1, padding:11, border:0, borderRadius:8, background: isSaving ? '#4b5563' : '#15803d', color:'white', fontWeight:700 }}>
-          {isSaving ? 'Saving…' : 'Approve'}
-        </button>
+        <button type="button" disabled={isSaving} onClick={()=>void approvePassengerSafety(passenger.id)} style={{ flex:1, padding:11, border:0, borderRadius:8, background: isSaving ? '#4b5563' : '#15803d', color:'white', fontWeight:700 }}>{isSaving ? 'Saving…' : 'Approve'}</button>
         <button type="button" disabled={isSaving} onClick={()=>setRejectModal({id:passenger.id,kind:'passenger-safety'})} style={{ flex:1, padding:11, border:0, borderRadius:8, background:'#b91c1c', color:'white', fontWeight:700 }}>Reject</button>
       </div>}
     </section>
@@ -513,9 +386,7 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
     {driverId && <p style={{color:'#93c5fd', fontSize:13}}>Showing only driver: {driverId} - <button onClick={onBack} style={{background:'none', border:'none', color:'#93c5fd', textDecoration:'underline', cursor:'pointer'}}>Back to all drivers</button></p>}
     <label style={{ display:'block', margin:'12px 0 8px', color:'#d1d5db', fontSize:14 }}>
       Search drivers by name, email, phone, or user ID
-      <input value={search} onChange={event=>{
-        setSearch(event.target.value)
-      }} placeholder="e.g. MR NAKAMPE T" style={{ display:'block', width:'100%', boxSizing:'border-box', marginTop:6, padding:10, borderRadius:8, border:'1px solid #444', background:'#242428', color:'white' }} />
+      <input value={search} onChange={event=>{ setSearch(event.target.value) }} placeholder="e.g. MR NAKAMPE T" style={{ display:'block', width:'100%', boxSizing:'border-box', marginTop:6, padding:10, borderRadius:8, border:'1px solid #444', background:'#242428', color:'white' }} />
     </label>
     <div style={{ display:'flex', flexWrap:'wrap', gap:'8px', margin:'12px 0' }}>
       <button onClick={()=> setTab('driver')} style={{ flex:1, minWidth:140, padding:'12px', background: tab==='driver'?'#ff7a00':'#333', color:'white', borderRadius:'8px', border:'none', cursor:'pointer' }}>Drivers Pending ({pendingDrivers.length}; {pendingDriverDocumentCount} documents)</button>
@@ -524,7 +395,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
     </div>
     {error && <p role="alert" style={{color:'#ff6b6b'}}>{error}</p>}
     {loadingDocs && <p style={{ color:'#9ca3af' }}>Loading documents...</p>}
-
     {tab==='driver' ? (
       <div>
         <label style={{display:'flex', alignItems:'center', gap:'8px', margin:'8px 0 12px', color:'#d1d5db', fontSize:'14px'}}>
@@ -535,24 +405,12 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
           const driverProfile = docs[0]?.profiles || driverProfileById.get(driverIdKey)
           const fullName = driverProfile?.full_name || driverProfile?.email || 'Unknown Driver'
           const email = driverProfile?.email || docs.find(doc=>doc.user_email || doc.email)?.user_email || docs.find(doc=>doc.email)?.email
-          const verifiedCount = DRIVER_DOCUMENTS.filter(requirement =>
-            displayStatus(findDriverRequirementDocument(docs, requirement.id)) === 'VERIFIED',
-          ).length
+          const verifiedCount = DRIVER_DOCUMENTS.filter(requirement => displayStatus(findDriverRequirementDocument(docs, requirement.id)) === 'VERIFIED').length
           const pendingCount = docs.filter(isPendingDocument).length
-          const expiredRequirements = DRIVER_DOCUMENTS.filter(requirement => {
-            const doc = findDriverRequirementDocument(docs, requirement.id)
-            return Boolean(requirement.expiryRequired && isExpired(doc?.expiry_date))
-          })
-          const missingRequired = DRIVER_DOCUMENTS.filter(requirement =>
-            !hasRealDocument(findDriverRequirementDocument(docs, requirement.id)),
-          )
-          const missingDates = DRIVER_DOCUMENTS.filter(requirement => {
-            const doc = findDriverRequirementDocument(docs, requirement.id)
-            return Boolean(doc && requirement.expiryRequired && !doc.expiry_date)
-          })
-          const rejectedRequirements = DRIVER_DOCUMENTS.filter(requirement =>
-            safeStatus(findDriverRequirementDocument(docs, requirement.id)?.status) === 'rejected',
-          )
+          const expiredRequirements = DRIVER_DOCUMENTS.filter(requirement => { const doc = findDriverRequirementDocument(docs, requirement.id); return Boolean(requirement.expiryRequired && isExpired(doc?.expiry_date)) })
+          const missingRequired = DRIVER_DOCUMENTS.filter(requirement => !hasRealDocument(findDriverRequirementDocument(docs, requirement.id)))
+          const missingDates = DRIVER_DOCUMENTS.filter(requirement => { const doc = findDriverRequirementDocument(docs, requirement.id); return Boolean(doc && requirement.expiryRequired && !doc.expiry_date) })
+          const rejectedRequirements = DRIVER_DOCUMENTS.filter(requirement => safeStatus(findDriverRequirementDocument(docs, requirement.id)?.status) === 'rejected')
           const expiredCount = expiredRequirements.length
           const blockingReasons = [
             missingRequired.length ? `Missing: ${missingRequired.map(document => document.label).join(', ')}` : '',
@@ -575,30 +433,15 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
             <div role="progressbar" aria-label={`${email || fullName} document verification progress`} aria-valuemin={0} aria-valuemax={DRIVER_DOCUMENTS.length} aria-valuenow={verifiedCount} style={{height:'10px', background:'#333', borderRadius:'999px', overflow:'hidden', margin:'8px 0 12px'}}>
               <div style={{width:`${progressPercent}%`, height:'100%', background:progressColor, transition:'width 180ms ease'}} />
             </div>
-            {missingRequired.length > 0 && <div role="alert" style={{padding:10, margin:'8px 0', borderRadius:8, background:'#7f1d1d', color:'#fecaca', fontWeight:700}}>
-              MISSING: {missingRequired.map(document => document.label).join(', ')}
-            </div>}
+            {missingRequired.length > 0 && <div role="alert" style={{padding:10, margin:'8px 0', borderRadius:8, background:'#7f1d1d', color:'#fecaca', fontWeight:700}}>MISSING: {missingRequired.map(document => document.label).join(', ')}</div>}
             {(['Driver Identity', 'Vehicle Papers', 'Vehicle Exterior', 'Vehicle Interior', 'Safety'] as const).map(section => (
               <div key={section} style={{marginTop:12}}>
                 <h3 style={{margin:'0 0 4px', fontSize:15}}>{section}</h3>
-                {DRIVER_DOCUMENTS.filter(requirement => requirement.section === section).map(requirement =>
-                  renderDocumentRow(
-                    findDriverRequirementDocument(docs, requirement.id),
-                    requirement.id,
-                    requirement.label,
-                    'driver_documents',
-                    true,
-                  ),
-                )}
+                {DRIVER_DOCUMENTS.filter(requirement => requirement.section === section).map(requirement => renderDocumentRow(findDriverRequirementDocument(docs, requirement.id), requirement.id, requirement.label, 'driver_documents', true))}
               </div>
             ))}
             <div style={{borderTop:'1px solid #333', marginTop:'8px', paddingTop:'12px'}}>
-              <button
-                disabled={!canApproveToDrive || loadingId===`approval:${driverIdKey}` || isApproved}
-                onClick={()=>driverIdKey && void approveToDrive(driverIdKey)}
-                title={!canApproveToDrive ? blockingReasons.join(' · ') : undefined}
-                style={{width:'100%', padding:'14px', borderRadius:'9px', border:'none', color:'white', fontWeight:700, fontSize:'15px', background:canApproveToDrive?'#15803d':'#4b5563', cursor:canApproveToDrive && !isApproved?'pointer':'not-allowed'}}
-              >
+              <button disabled={!canApproveToDrive || loadingId===`approval:${driverIdKey}` || isApproved} onClick={()=>driverIdKey && void approveToDrive(driverIdKey)} title={!canApproveToDrive ? blockingReasons.join(' · ') : undefined} style={{width:'100%', padding:'14px', borderRadius:'9px', border:'none', color:'white', fontWeight:700, fontSize:'15px', background:canApproveToDrive?'#15803d':'#4b5563', cursor:canApproveToDrive && !isApproved?'pointer':'not-allowed'}}>
                 {driverIdKey && loadingId===`approval:${driverIdKey}` ? 'Approving…' : isApproved ? 'Approved to Drive' : 'Approve to Drive - Go Online'}
               </button>
               {!canApproveToDrive && <div style={{fontSize:'12px', color:'#fca5a5', marginTop:'6px'}}>{blockingReasons.join(' · ')}</div>}
@@ -619,7 +462,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
         {approvedPassengers.length===0 && !loadingDocs && <p style={{ color:'#9ca3af' }}>No approved passengers found.</p>}
       </div>
     )}
-
     {rejectModal && (
       <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }}>
         <div style={{ background:'#1e1e1e', padding:'20px', borderRadius:'12px', width:'90%', maxWidth:'380px', border:'1px solid #333' }}>
