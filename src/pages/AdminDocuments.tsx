@@ -75,11 +75,11 @@ function isExpired(expiryDate?: string | null) {
   return expiry < today
 }
 
-function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'document_url'>) {
-  return doc?.document_url?.trim() || doc?.file_url?.trim() || ''
+function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'document_url' | 'file_path' | 'storage_path' | 'file_name'>) {
+  return doc?.document_url?.trim() || doc?.file_url?.trim() || doc?.file_path?.trim() || doc?.storage_path?.trim() || doc?.file_name?.trim() || ''
 }
 
-function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'document_url'>) {
+function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'document_url' | 'file_path' | 'storage_path' | 'file_name'>) {
   const filePath = getDocumentUrl(doc)
   if (!filePath) return false
   if (isFakeFile(filePath)) return false
@@ -87,7 +87,10 @@ function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'document_url'>
   const separator = filePath.indexOf(':')
   const bucket = separator >= 0 ? filePath.slice(0, separator) : 'driver-documents'
   const path = separator >= 0 ? filePath.slice(separator + 1) : filePath
-  return ['driver-documents', 'vehicle-documents', 'profile-photos', 'passenger-ids', 'safety-selfies'].includes(bucket) && Boolean(path)
+  if (['driver-documents', 'vehicle-documents', 'profile-photos', 'passenger-ids', 'safety-selfies'].includes(bucket) && Boolean(path)) return true
+  // FIXED: any non-empty storage path / filename with an extension is a real upload
+  // This covers file_path / storage_path which the old code ignored
+  return Boolean(path) && /[a-z0-9._-]{3,}/i.test(path)
 }
 
 function safeStatus(s?: string | null) {
