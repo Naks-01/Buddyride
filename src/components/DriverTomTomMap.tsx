@@ -13,6 +13,50 @@ type Props = {
   theme?: 'dark' | 'light' | string
 }
 
+// FIX: Parse ALL route formats - TomTom raw + array + GeoJSON
+function parseRoute(route: any): [number, number][] {
+  if (!route) return []
+  try {
+    // 1. TomTom raw: { routes: [{ legs: [{ points: [...] }] }] }
+    if (route.routes?.[0]?.legs) {
+      const pts: [number, number][] = []
+      for (const leg of route.routes[0].legs) {
+        for (const p of leg.points || []) {
+          if (p.latitude !== undefined) pts.push([p.latitude, p.longitude])
+        }
+      }
+      if (pts.length >= 2) return pts
+    }
+    // 2. TomTom points directly: { points: [{latitude, longitude}] }
+    if (Array.isArray(route.points) && route.points[0]?.latitude !== undefined) {
+      return route.points.map((p: any) => [p.latitude, p.longitude] as [number, number])
+    }
+    // 3. Array of {latitude, longitude}
+    if (Array.isArray(route) && route.length > 0 && route[0]?.latitude !== undefined) {
+      return route.map((p: any) => [p.latitude, p.longitude] as [number, number])
+    }
+    // 4. Array of {lat, lng}
+    if (Array.isArray(route) && route.length > 0 && route[0]?.lat !== undefined) {
+      return route.map((p: any) => [p.lat, p.lng ?? p.lon] as [number, number])
+    }
+    // 5. Array of [lng, lat]
+    if (Array.isArray(route) && route.length > 0 && Array.isArray(route[0])) {
+      return route.map((c: any) => [c[1], c[0]] as [number, number])
+    }
+    // 6. GeoJSON Feature / FeatureCollection / LineString / MultiLineString
+    let coords: any = null
+    if (route.type === 'FeatureCollection' && route.features?.[0]?.geometry?.coordinates) coords = route.features[0].geometry.coordinates
+    else if (route.type === 'Feature' && route.geometry?.coordinates) coords = route.geometry.coordinates
+    else if (route.geometry?.coordinates) coords = route.geometry.coordinates
+    else if (route.coordinates) coords = route.coordinates
+    if (Array.isArray(coords) && coords.length > 0) {
+      if (typeof coords[0]?.[0] === 'number') return coords.map((c: any) => [c[1], c[0]] as [number, number])
+      if (Array.isArray(coords[0]?.[0])) return coords[0].map((c: any) => [c[1], c[0]] as [number, number])
+    }
+  } catch {}
+  return []
+}
+
 export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, theme = 'light' }: Props) {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -82,6 +126,7 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     }
   }, [driverLocation, bearing])
 
+  // POLYLINE - FIXED
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -90,24 +135,27 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       routeLineRef.current = null
       return
     }
-    let latLngs: [number, number][] = []
-    if (Array.isArray(route) && route.length > 0 && route[0]?.latitude !== undefined) {
-      latLngs = route.map((p: any) => [p.latitude, p.longitude] as [number, number])
-    } else if (Array.isArray(route) && route.length > 0 && Array.isArray(route[0])) {
-      latLngs = route.map((c: any) => [c[1], c[0]] as [number, number])
-    } else {
-      const geometry = route.type === 'Feature' ? route.geometry : route
-      const coords = geometry?.coordinates || route.coordinates || []
-      if (Array.isArray(coords)) latLngs = coords.filter((c: any) => Array.isArray(c)).map((c: any) => [c[1], c[0]] as [number, number])
+    const latLngs = parseRoute(route)
+    console.log('[Driver Polyline] points:', latLngs.length, 'route type:', Array.isArray(route) ? 'array' : route?.type || Object.keys(route || {}))
+    if (latLngs.length < 2) {
+      console.warn('[Driver Polyline] No valid points - check what DriverHome passes as route')
+      return
     }
-    if (latLngs.length < 2) return
     if (!routeLineRef.current) {
-      routeLineRef.current = L.polyline(latLngs, { color: '#0066FF', weight: 7 }).addTo(map)
+      routeLineRef.current = L.polyline(latLngs, { color: '#0066FF', weight: 7, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map)
     } else {
       routeLineRef.current.setLatLngs(latLngs)
     }
     routeLineRef.current.bringToFront()
+    // Only fit once when route first appears - don't fight followDriver
+    // If you want auto-zoom to route, uncomment:
+    // map.fitBounds(routeLineRef.current.getBounds(), { padding: [60, 60] })
   }, [route])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '500px', background: '#e5e7eb', zIndex: 0 }} />
+  // FIX: screenshot bug - container must have real height, not 100% of unknown parent
+  return (
+    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', minHeight: '100vh', background: '#e5e7eb', zIndex: 0 }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '100vh' }} />
+    </div>
+  )
 }
