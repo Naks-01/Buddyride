@@ -110,6 +110,19 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
   const [driverIdNumber, setDriverIdNumber] = useState('')
   const [licenceNumber, setLicenceNumber] = useState('')
 
+  // FIXED: save ID numbers immediately so they never disappear on reload
+  async function saveIdNumbers(idNum: string, licNum: string) {
+    const { data: { user } } = await supabase.auth.getUser()
+    const ownerId = user?.id || driverId
+    if (!ownerId) return
+    if (!idNum.trim() && !licNum.trim()) return
+    await supabase.from('profiles').update({
+      id_number: idNum.trim() || null,
+      licence_number: licNum.trim() || null,
+      driver_licence_number: licNum.trim() || null,
+    } as any).eq('id', ownerId)
+  }
+
   async function load() {
     const { data: { user } } = await supabase.auth.getUser()
     const effectiveId = user?.id || driverId
@@ -145,13 +158,13 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     }
     const avatar = (profileRes.data as any)?.avatar_url
     if (typeof avatar === 'string' && avatar.startsWith('http')) setProfileUrl(avatar)
-    setDriverIdNumber((profileRes.data as any)?.id_number || '')
-    setLicenceNumber((profileRes.data as any)?.licence_number || (profileRes.data as any)?.driver_licence_number || '')
+    // FIXED: only set from DB if user hasn't typed yet - prevents overwriting typing
+    setDriverIdNumber(prev => prev || (profileRes.data as any)?.id_number || '')
+    setLicenceNumber(prev => prev || (profileRes.data as any)?.licence_number || (profileRes.data as any)?.driver_licence_number || '')
   }
 
   useEffect(() => { void load() }, [driverId])
 
-  // FIXED ONLY HERE: save expiry immediately when driver types it, not only at upload
   async function saveExpiry(key: DocKey, value: string) {
     const cKey = canonicalKey(key)
     setExpiryDates(prev => ({ ...prev, [cKey]: value }))
@@ -180,14 +193,14 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       }
       const isImage = guessedType.startsWith('image/')
       let blob: Blob | File = file
-      if (isImage) {
-        blob = await compressSafely(file)
-      }
+      if (isImage) blob = await compressSafely(file)
       if (blob.size > 20 * 1024 * 1024) throw new Error('Processed file must be smaller than 20 MB.')
       const outputType = isImage ? 'image/jpeg' : guessedType
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in - please log in again')
       const ownerId = user.id
+      // FIXED: also save ID numbers before upload so they don't get lost on reload after upload
+      await saveIdNumbers(driverIdNumber, licenceNumber)
       const path = `${ownerId}/${meta.folder}/${cKey}_${safeUUID()}.${isImage ? 'jpg' : (extFromName === 'pdf' ? 'pdf' : 'jpg')}`
       uploadedPath = path
       const { error: upErr } = await supabase.storage.from(meta.bucket).upload(path, blob, {
@@ -310,10 +323,10 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
           <strong style={{ fontSize: 14 }}>ID & Licence Numbers - Required</strong>
           <p style={{ margin: 0, fontSize: 12, color: '#667085' }}>Enter numbers exactly as on documents. Must match SA ID + Licence photos below.</p>
           <label style={{ display: 'grid', gap: 4, fontSize: 12, fontWeight: 700 }}>SA ID Number / Passport Number *
-            <input value={driverIdNumber} onChange={e => setDriverIdNumber(e.target.value.trim())} placeholder="e.g. 9001015009087" inputMode="numeric" style={{ padding: '10px 8px', border: '1px solid #D0D5DD', borderRadius: 9 }} />
+            <input value={driverIdNumber} onChange={e => setDriverIdNumber(e.target.value)} onBlur={() => void saveIdNumbers(driverIdNumber, licenceNumber)} placeholder="e.g. 9001015009087" inputMode="numeric" style={{ padding: '10px 8px', border: '1px solid #D0D5DD', borderRadius: 9 }} />
           </label>
           <label style={{ display: 'grid', gap: 4, fontSize: 12, fontWeight: 700 }}>Driver Licence Number *
-            <input value={licenceNumber} onChange={e => setLicenceNumber(e.target.value)} placeholder="As on licence card" style={{ padding: '10px 8px', border: '1px solid #D0D5DD', borderRadius: 9 }} />
+            <input value={licenceNumber} onChange={e => setLicenceNumber(e.target.value)} onBlur={() => void saveIdNumbers(driverIdNumber, licenceNumber)} placeholder="As on licence card" style={{ padding: '10px 8px', border: '1px solid #D0D5DD', borderRadius: 9 }} />
           </label>
           {driverIdNumber && /^\d{13}$/.test(driverIdNumber.trim()) && !isValidSAID(driverIdNumber.trim()) && <p style={{ color: '#B42318', fontSize: 12, margin: 0 }}>Invalid SA ID - check digits.</p>}
         </div>
