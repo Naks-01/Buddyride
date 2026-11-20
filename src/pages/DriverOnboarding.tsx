@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import { createDriverDocumentSignedUrl, EXPIRING_DRIVER_DOCUMENT_TYPES, REQUIRED_DOCS, normalizeDocType as canonicalType } from '../lib/driverDocuments'
-import compressImageFile from '../lib/compressImageFile' // FIXED: Added - was imported but never used
+import compressImageFile from '../lib/compressImageFile'
 
 type StoredDocument = Pick<DriverDocument,
   'id' | 'doc_type' | 'document_type' | 'document_url' | 'document_date' | 'file_url' | 'status' | 'rejection_reason' | 'created_at' | 'expiry_date' | 'prdp_number' | 'document_hash'
@@ -44,6 +44,16 @@ function isValidSAID(id: string) {
 function getExpiryForType(expiryDates: Record<string, string>, documentType: string): string | null {
   const c = canonicalType(documentType)
   return expiryDates[c] || expiryDates[documentType] || expiryDates['drivers_license'] || expiryDates['drivers_licence'] || expiryDates['driver_license'] || expiryDates['driver_licence'] || expiryDates['drivers-license'] || null
+}
+
+// FIX 1: Read localStorage BEFORE first render, so mount doesn't wipe it
+function loadSavedExpiry(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem('br_expiry_dates')
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return typeof parsed === 'object' && parsed ? parsed : {}
+  } catch { return {} }
 }
 
 const DOCUMENT_CARDS = REQUIRED_DOCS.map(document => ({
@@ -169,9 +179,11 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const [licenceNumber, setLicenceNumber] = useState((profile as any).licence_number || (profile as any).driver_licence_number || '')
   const [bankDetails, setBankDetails] = useState({ bank_name: '', bank_account_holder: '', bank_account_number: '', bank_branch_code: '' })
   const [documentDates, setDocumentDates] = useState<Record<string, string>>({})
-  const [expiryDates, setExpiryDates] = useState<Record<string, string>>({})
+  // FIX 1: init from localStorage, not {}
+  const [expiryDates, setExpiryDates] = useState<Record<string, string>>(() => loadSavedExpiry())
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState<string | null>(null)
+  const [uploadStatus, setUploadStatus] = useState('') // FIX 3: separate progress from error
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [checking, setChecking] = useState(false)
@@ -179,11 +191,14 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const [phase, setPhase] = useState<'identity' | 'remaining'>('identity')
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({})
 
+  // FIX 2: NEVER overwrite localStorage with empty object on mount
   useEffect(() => {
     try {
       if (driverIdNumber) localStorage.setItem('br_id_number', driverIdNumber)
       if (licenceNumber) localStorage.setItem('br_licence_number', licenceNumber)
-      localStorage.setItem('br_expiry_dates', JSON.stringify(expiryDates))
+      if (Object.keys(expiryDates).length > 0) {
+        localStorage.setItem('br_expiry_dates', JSON.stringify(expiryDates))
+      }
     } catch {}
   }, [driverIdNumber, licenceNumber, expiryDates])
 
@@ -231,17 +246,20 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const status = profileResult.data?.verification_status || 'not_started'
     setDocuments(documentsWithPreviews); setVerificationStatus(status)
     setDocumentDates(Object.fromEntries(loadedDocuments.filter(document => document.document_date).map(document => [canonicalType(document.doc_type), document.document_date!.slice(0, 10)])))
+    // FIX: localStorage wins if DB has no expiry yet (MISSING doc). DB wins only if it has a value.
     let localExpiry: Record<string,string> = {}
     try { localExpiry = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}') } catch {}
     const dbExpiry = Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), document.expiry_date!.slice(0, 10)]))
-    const merged: Record<string,string> = { ...localExpiry, ...dbExpiry }
+    const merged: Record<string,string> = { ...dbExpiry, ...localExpiry }
+    // If DB has a real expiry, prefer DB. If local has it and DB doesn't, keep local.
+    for (const [k, v] of Object.entries(dbExpiry)) merged[k] = v
     const expanded: Record<string,string> = { ...merged }
     for (const [k,v] of Object.entries(merged)) {
       const c = canonicalType(k)
       expanded[c] = v; expanded[k] = v
       if (c.includes('licen')) { expanded['drivers_license']=v; expanded['drivers_licence']=v; expanded['driver_license']=v; expanded['driver_licence']=v }
     }
-    setExpiryDates(prev => ({ ...prev, ...expanded }))
+    setExpiryDates(prev => ({ ...expanded, ...prev, ...expanded }))
     setBankDetails({ bank_name: profileResult.data.bank_name || '', bank_account_holder: profileResult.data.bank_account_holder || '', bank_account_number: profileResult.data.bank_account_number || '', bank_branch_code: profileResult.data.bank_branch_code || '' })
     let localId = ''; let localLic = ''
     try { localId = localStorage.getItem('br_id_number') || ''; localLic = localStorage.getItem('br_licence_number') || '' } catch {}
@@ -261,13 +279,17 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   useEffect(() => { void loadDocuments() }, [profile.id])
 
   async function uploadFile(cardType: string, bucket: string, file: File, documentType = cardType): Promise<boolean> {
-    setUploading(cardType); setError('')
+    setUploading(cardType); setError(''); setUploadStatus('')
     let uploadedPath: string | null = null
     try {
-      // FIXED: Compress 7MB -> ~0.8MB before upload. This was missing.
+      // FIX 3: Check expiry FIRST, before compress. Don't waste 5s compressing then fail.
+      const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
+      const expiryDate = getExpiryForType(expiryDates, documentType)
+      if (card?.expiryRequired && !expiryDate) throw new Error('Please select Expiry Date FIRST, then click Upload. Expiry is required for this document.')
+      if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) throw new Error('This document has expired.')
       let processedFile: File = file
       if (file.type.startsWith('image/')) {
-        setError(`Compressing ${(file.size / 1024 / 1024).toFixed(1)}MB photo...`)
+        setUploadStatus(`Compressing ${(file.size / 1024 / 1024).toFixed(1)}MB photo...`)
         try {
           processedFile = await compressImageFile(file)
         } catch {
@@ -276,10 +298,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       }
       if (processedFile.size <= 0) throw new Error('File is empty. Try again or take a screenshot.')
       if (processedFile.size > MAX_UPLOAD_SIZE) throw new Error(`File too large ${(processedFile.size/1024/1024).toFixed(1)}MB > 20MB.`)
-      const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
-      const expiryDate = getExpiryForType(expiryDates, documentType)
-      if (card?.expiryRequired && !expiryDate) throw new Error('Please select Expiry Date FIRST, then click Upload. Expiry is required for this document.')
-      if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) throw new Error('This document has expired.')
       const extFromName = processedFile.name.split('.').pop()?.toLowerCase() || ''
       const guessedType = processedFile.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       const isPdf = guessedType === 'application/pdf'
@@ -293,7 +311,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       const finalDocType = canonicalType(documentType)
       const path = `${ownerId}/${finalDocType}/${safeUUID()}.${extension}`
       uploadedPath = path
-      setError(`Uploading ${(processedFile.size / 1024).toFixed(0)}KB...`)
+      setUploadStatus(`Uploading ${(processedFile.size / 1024).toFixed(0)}KB...`)
       const { error: uploadError } = await supabase.storage.from(bucket).upload(path, blob, { contentType: outputType, upsert: true })
       if (uploadError) throw new Error(`Storage: ${uploadError.message}`)
       const storageReference = `${bucket}:${path}`
@@ -309,12 +327,12 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       setDocuments(current => latestDocuments([...current.filter(d => canonicalType(d.doc_type) !== finalDocType), { ...(savedDocument as StoredDocument), expiry_date: savedDocument.expiry_date || expiryDate, preview_url: savedPreview }]))
       uploadedPath = null
       if (finalDocType === 'profile_photo') { const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(path); await supabase.from('profiles').update({ avatar_url: publicData.publicUrl }).eq('id', ownerId) }
-      setError('')
+      setUploadStatus(''); setError('')
       return true
     } catch (e: unknown) {
       if (uploadedPath) await supabase.storage.from(bucket).remove([uploadedPath]).catch(()=>{})
       const message = e instanceof Error ? e.message : String(e)
-      setError(`Upload failed for ${documentType}: ${message}`); return false
+      setError(`Upload failed for ${documentType}: ${message}`); setUploadStatus(''); return false
     } finally { setUploading(null) }
   }
 
@@ -328,8 +346,13 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     const cType = canonicalType(documentType)
     if (field === 'document_date') setDocumentDates(current => ({ ...current, [cType]: value, [documentType]: value }))
     else {
-      setExpiryDates(current => ({ ...current, [cType]: value, [documentType]: value, drivers_license: value, drivers_licence: value, driver_license: value, driver_licence: value }))
-      try { const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}'); cur[cType] = value; cur[documentType] = value; cur['drivers_license']=value; localStorage.setItem('br_expiry_dates', JSON.stringify(cur)) } catch {}
+      const next = { [cType]: value, [documentType]: value, drivers_license: value, drivers_licence: value, driver_license: value, driver_licence: value }
+      setExpiryDates(current => ({ ...current, ...next }))
+      // Save synchronously - don't wait for useEffect, or reload will wipe it
+      try {
+        const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}')
+        localStorage.setItem('br_expiry_dates', JSON.stringify({ ...cur, ...next }))
+      } catch {}
     }
     if (!documents.some(d => canonicalType(d.doc_type) === cType)) return
     const { data: { user } } = await supabase.auth.getUser()
@@ -488,6 +511,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
         </div>
       </section>
       )}
+      {uploadStatus && <p style={{ ...cardStyle, margin: '16px 0 0', padding: 14, borderColor: '#B2CCFF', background: '#E6F0FF', color: '#0052CC', fontSize: 13, fontWeight: 700 }}>{uploadStatus}</p>}
       {error && <p role="alert" style={{ ...cardStyle, margin: '16px 0 0', padding: 14, borderColor: '#fecdca', color: '#b42318', fontSize: 13, whiteSpace: 'pre-wrap' }}>{error}</p>}
       <section style={{ ...cardStyle, marginTop: 16, padding: 17, display: 'flex', alignItems: 'center', gap: 12 }}><ShieldCheck size={22} color="#0066FF" /><div><strong style={{ fontSize: 14 }}>Your documents are kept secure</strong><p style={{ margin: '4px 0 0', color: '#667085', fontSize: 12 }}>They’re used only to verify your driver account.</p></div></section>
       {phase === 'identity' ? (
