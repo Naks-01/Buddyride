@@ -56,6 +56,25 @@ function loadSavedExpiry(): Record<string, string> {
   } catch { return {} }
 }
 
+// NEW: Single source of truth for expiry - survives Chrome Android reload when Files picker backgrounds page
+function getExpiryFromAnywhere(stateExpiry: Record<string, string>, documentType: string): string | null {
+  const fromState = getExpiryForType(stateExpiry, documentType)
+  if (fromState) return fromState
+  try {
+    const saved = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}')
+    const fromStorage = getExpiryForType(saved, documentType)
+    if (fromStorage) return fromStorage
+  } catch {}
+  // Last fallback: date input currently on screen
+  try {
+    const inputs = Array.from(document.querySelectorAll('input[type="date"]')) as HTMLInputElement[]
+    for (const input of inputs) {
+      if (input.value) return input.value
+    }
+  } catch {}
+  return null
+}
+
 const DOCUMENT_CARDS = REQUIRED_DOCS.map(document => ({
   ...document,
   type: canonicalType(document.type),
@@ -179,11 +198,10 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const [licenceNumber, setLicenceNumber] = useState((profile as any).licence_number || (profile as any).driver_licence_number || '')
   const [bankDetails, setBankDetails] = useState({ bank_name: '', bank_account_holder: '', bank_account_number: '', bank_branch_code: '' })
   const [documentDates, setDocumentDates] = useState<Record<string, string>>({})
-  // FIX 1: init from localStorage, not {}
   const [expiryDates, setExpiryDates] = useState<Record<string, string>>(() => loadSavedExpiry())
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState<string | null>(null)
-  const [uploadStatus, setUploadStatus] = useState('') // FIX 3: separate progress from error
+  const [uploadStatus, setUploadStatus] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [checking, setChecking] = useState(false)
@@ -191,7 +209,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
   const [phase, setPhase] = useState<'identity' | 'remaining'>('identity')
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  // FIX 2: NEVER overwrite localStorage with empty object on mount
   useEffect(() => {
     try {
       if (driverIdNumber) localStorage.setItem('br_id_number', driverIdNumber)
@@ -250,16 +267,16 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     let localExpiry: Record<string,string> = {}
     try { localExpiry = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}') } catch {}
     const dbExpiry = Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), document.expiry_date!.slice(0, 10)]))
-    const merged: Record<string,string> = { ...dbExpiry, ...localExpiry }
-    // If DB has a real expiry, prefer DB. If local has it and DB doesn't, keep local.
-    for (const [k, v] of Object.entries(dbExpiry)) merged[k] = v
+    // FIXED MERGE: start with local, overlay DB only where DB has a real value
+    const merged: Record<string,string> = { ...localExpiry, ...dbExpiry }
     const expanded: Record<string,string> = { ...merged }
     for (const [k,v] of Object.entries(merged)) {
       const c = canonicalType(k)
       expanded[c] = v; expanded[k] = v
       if (c.includes('licen')) { expanded['drivers_license']=v; expanded['drivers_licence']=v; expanded['driver_license']=v; expanded['driver_licence']=v }
     }
-    setExpiryDates(prev => ({ ...expanded, ...prev, ...expanded }))
+    // FIXED: don't let empty DB wipe local. Local + DB merged, prev kept as fallback
+    setExpiryDates(prev => ({ ...prev, ...expanded }))
     setBankDetails({ bank_name: profileResult.data.bank_name || '', bank_account_holder: profileResult.data.bank_account_holder || '', bank_account_number: profileResult.data.bank_account_number || '', bank_branch_code: profileResult.data.bank_branch_code || '' })
     let localId = ''; let localLic = ''
     try { localId = localStorage.getItem('br_id_number') || ''; localLic = localStorage.getItem('br_licence_number') || '' } catch {}
@@ -282,11 +299,20 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setUploading(cardType); setError(''); setUploadStatus('')
     let uploadedPath: string | null = null
     try {
-      // FIX 3: Check expiry FIRST, before compress. Don't waste 5s compressing then fail.
+      // FIX: Check expiry FIRST, from ANYWHERE (state + localStorage + DOM), not just stale state
       const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
-      const expiryDate = getExpiryForType(expiryDates, documentType)
+      const expiryDate = getExpiryFromAnywhere(expiryDates, documentType)
       if (card?.expiryRequired && !expiryDate) throw new Error('Please select Expiry Date FIRST, then click Upload. Expiry is required for this document.')
       if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) throw new Error('This document has expired.')
+      // Persist the resolved expiry immediately so a reload can't lose it
+      if (expiryDate) {
+        const next = { [canonicalType(documentType)]: expiryDate, [documentType]: expiryDate, drivers_license: expiryDate, drivers_licence: expiryDate, driver_license: expiryDate, driver_licence: expiryDate }
+        setExpiryDates(cur => ({ ...cur, ...next }))
+        try {
+          const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}')
+          localStorage.setItem('br_expiry_dates', JSON.stringify({ ...cur, ...next }))
+        } catch {}
+      }
       let processedFile: File = file
       if (file.type.startsWith('image/')) {
         setUploadStatus(`Compressing ${(file.size / 1024 / 1024).toFixed(1)}MB photo...`)
@@ -307,7 +333,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not logged in')
       const ownerId = user.id
-      await saveIdNumbersNow(driverIdNumber, licenceNumber)
+      // FIX: DO NOT call saveIdNumbersNow here - it triggers profile reload mid-upload which wipes expiryDates. Moved to after DB insert.
       const finalDocType = canonicalType(documentType)
       const path = `${ownerId}/${finalDocType}/${safeUUID()}.${extension}`
       uploadedPath = path
@@ -323,6 +349,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       if (existing) { const res = await supabase.from('driver_documents').update(payload).eq('id', existing.id).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single(); savedDocument = res.data; saveError = res.error }
       else { const res = await supabase.from('driver_documents').insert({ ...payload, created_at: new Date().toISOString() }).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single(); savedDocument = res.data; saveError = res.error }
       if (saveError) throw new Error(`DB: ${saveError.message}`)
+      // FIX: Now safe to save ID numbers - upload already done
+      await saveIdNumbersNow(driverIdNumber, licenceNumber)
       const savedPreview = await createDriverDocumentSignedUrl(storageReference).catch(() => null)
       setDocuments(current => latestDocuments([...current.filter(d => canonicalType(d.doc_type) !== finalDocType), { ...(savedDocument as StoredDocument), expiry_date: savedDocument.expiry_date || expiryDate, preview_url: savedPreview }]))
       uploadedPath = null
@@ -330,7 +358,8 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       setUploadStatus(''); setError('')
       return true
     } catch (e: unknown) {
-      if (uploadedPath) await supabase.storage.from(bucket).remove([uploadedPath]).catch(()=>{})
+      // FIX: DO NOT delete file on DB error - leave it in Storage so you can see it in Dashboard and debug. Only delete on storage error is handled by keeping uploadedPath only if DB failed after storage succeeded - we now keep it.
+      // if (uploadedPath) await supabase.storage.from(bucket).remove([uploadedPath]).catch(()=>{})
       const message = e instanceof Error ? e.message : String(e)
       setError(`Upload failed for ${documentType}: ${message}`); setUploadStatus(''); return false
     } finally { setUploading(null) }
@@ -348,7 +377,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     else {
       const next = { [cType]: value, [documentType]: value, drivers_license: value, drivers_licence: value, driver_license: value, driver_licence: value }
       setExpiryDates(current => ({ ...current, ...next }))
-      // Save synchronously - don't wait for useEffect, or reload will wipe it
       try {
         const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}')
         localStorage.setItem('br_expiry_dates', JSON.stringify({ ...cur, ...next }))
@@ -386,7 +414,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     if (!isComplete(documents) || rejectedTypes.size > 0 || !bankDetailsComplete || submitting) return
     const hasBadExpiry = REQUIRED_DOCS.some(document => {
       if (!EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type)) return false
-      const exp = getExpiryForType(expiryDates, document.type) || ''
+      const exp = getExpiryFromAnywhere(expiryDates, document.type) || ''
       if (!exp) return true
       if (exp < southAfricanToday()) return true
       return false
@@ -395,7 +423,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setSubmitting(true); setError('')
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || profile.id
-    const metadataUpdates = await Promise.all(REQUIRED_DOCS.map(document => supabase.from('driver_documents').update({ document_date: documentDates[canonicalType(document.type)] || documentDates[document.type] || new Date().toISOString().split('T')[0], expiry_date: EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type) ? (getExpiryForType(expiryDates, document.type) || null) : null }).eq('driver_id', ownerId).or(`doc_type.eq.${canonicalType(document.type)},document_type.eq.${canonicalType(document.type)}`)))
+    const metadataUpdates = await Promise.all(REQUIRED_DOCS.map(document => supabase.from('driver_documents').update({ document_date: documentDates[canonicalType(document.type)] || documentDates[document.type] || new Date().toISOString().split('T')[0], expiry_date: EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type) ? (getExpiryFromAnywhere(expiryDates, document.type) || null) : null }).eq('driver_id', ownerId).or(`doc_type.eq.${canonicalType(document.type)},document_type.eq.${canonicalType(document.type)}`)))
     const metadataError = metadataUpdates.find(result => result.error)?.error
     if (metadataError) { setError(`Could not save details: ${metadataError.message}`); setSubmitting(false); return }
     const { error: bankError } = await supabase.from('profiles').update({ bank_name: bankDetails.bank_name, bank_account_holder: bankDetails.bank_account_holder.trim(), bank_account_number: bankDetails.bank_account_number.trim(), bank_branch_code: bankDetails.bank_branch_code.trim(), id_number: trimmedId, licence_number: licenceNumber.trim() } as any).eq('id', ownerId)
