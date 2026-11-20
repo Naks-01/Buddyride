@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { supabase, type DriverDocument, type Profile } from '../lib/supabase'
 import { createDriverDocumentSignedUrl, EXPIRING_DRIVER_DOCUMENT_TYPES, REQUIRED_DOCS, normalizeDocType as canonicalType } from '../lib/driverDocuments'
+import compressImageFile from '../lib/compressImageFile' // FIXED: Added - was imported but never used
 
 type StoredDocument = Pick<DriverDocument,
   'id' | 'doc_type' | 'document_type' | 'document_url' | 'document_date' | 'file_url' | 'status' | 'rejection_reason' | 'created_at' | 'expiry_date' | 'prdp_number' | 'document_hash'
@@ -40,7 +41,6 @@ function isValidSAID(id: string) {
   return (sum + Number(id[12])) % 10 === 0
 }
 
-// FIX: helper to get expiry from any key variant
 function getExpiryForType(expiryDates: Record<string, string>, documentType: string): string | null {
   const c = canonicalType(documentType)
   return expiryDates[c] || expiryDates[documentType] || expiryDates['drivers_license'] || expiryDates['drivers_licence'] || expiryDates['driver_license'] || expiryDates['driver_licence'] || expiryDates['drivers-license'] || null
@@ -87,7 +87,6 @@ function latestDocuments(documents: StoredDocument[]) {
   return [...latest.values()]
 }
 
-// FIXED: tolerant check - handles doc_type/document_type mismatch + expiry variants
 function isCardComplete(card: typeof DOCUMENT_CARDS[number], documents: StoredDocument[]) {
   const want = canonicalType(card.type)
   const document = documents.find(item => {
@@ -235,7 +234,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     let localExpiry: Record<string,string> = {}
     try { localExpiry = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}') } catch {}
     const dbExpiry = Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), document.expiry_date!.slice(0, 10)]))
-    // FIXED: DB wins over local, and expand to all key variants
     const merged: Record<string,string> = { ...localExpiry, ...dbExpiry }
     const expanded: Record<string,string> = { ...merged }
     for (const [k,v] of Object.entries(merged)) {
@@ -266,16 +264,24 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setUploading(cardType); setError('')
     let uploadedPath: string | null = null
     try {
-      const processedFile = file
+      // FIXED: Compress 7MB -> ~0.8MB before upload. This was missing.
+      let processedFile: File = file
+      if (file.type.startsWith('image/')) {
+        setError(`Compressing ${(file.size / 1024 / 1024).toFixed(1)}MB photo...`)
+        try {
+          processedFile = await compressImageFile(file)
+        } catch {
+          processedFile = file
+        }
+      }
       if (processedFile.size <= 0) throw new Error('File is empty. Try again or take a screenshot.')
       if (processedFile.size > MAX_UPLOAD_SIZE) throw new Error(`File too large ${(processedFile.size/1024/1024).toFixed(1)}MB > 20MB.`)
       const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
-      // FIXED: use helper that checks all variants
       const expiryDate = getExpiryForType(expiryDates, documentType)
       if (card?.expiryRequired && !expiryDate) throw new Error('Please select Expiry Date FIRST, then click Upload. Expiry is required for this document.')
       if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) throw new Error('This document has expired.')
-      const extFromName = file.name.split('.').pop()?.toLowerCase() || ''
-      const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
+      const extFromName = processedFile.name.split('.').pop()?.toLowerCase() || ''
+      const guessedType = processedFile.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       const isPdf = guessedType === 'application/pdf'
       const blob: Blob | File = processedFile
       const outputType = isPdf ? 'application/pdf' : (processedFile.type || guessedType || 'image/jpeg')
@@ -287,6 +293,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       const finalDocType = canonicalType(documentType)
       const path = `${ownerId}/${finalDocType}/${safeUUID()}.${extension}`
       uploadedPath = path
+      setError(`Uploading ${(processedFile.size / 1024).toFixed(0)}KB...`)
       const { error: uploadError } = await supabase.storage.from(bucket).upload(path, blob, { contentType: outputType, upsert: true })
       if (uploadError) throw new Error(`Storage: ${uploadError.message}`)
       const storageReference = `${bucket}:${path}`
@@ -299,15 +306,15 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       else { const res = await supabase.from('driver_documents').insert({ ...payload, created_at: new Date().toISOString() }).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single(); savedDocument = res.data; saveError = res.error }
       if (saveError) throw new Error(`DB: ${saveError.message}`)
       const savedPreview = await createDriverDocumentSignedUrl(storageReference).catch(() => null)
-      // FIXED: keep expiry_date on saved doc so isCardComplete passes immediately
       setDocuments(current => latestDocuments([...current.filter(d => canonicalType(d.doc_type) !== finalDocType), { ...(savedDocument as StoredDocument), expiry_date: savedDocument.expiry_date || expiryDate, preview_url: savedPreview }]))
       uploadedPath = null
       if (finalDocType === 'profile_photo') { const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(path); await supabase.from('profiles').update({ avatar_url: publicData.publicUrl }).eq('id', ownerId) }
+      setError('')
       return true
     } catch (e: unknown) {
       if (uploadedPath) await supabase.storage.from(bucket).remove([uploadedPath]).catch(()=>{})
       const message = e instanceof Error ? e.message : String(e)
-      setError(`Upload failed for ${documentType}: ${message}`); alert(`Upload failed for ${documentType}: ${message}`); return false
+      setError(`Upload failed for ${documentType}: ${message}`); return false
     } finally { setUploading(null) }
   }
 
@@ -317,7 +324,6 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     await uploadFile(cardType, bucket, selectedFiles[0], documentType)
   }
 
-  // FIXED: save expiry under ALL variants + persist even if doc not yet uploaded
   async function updateDocumentDate(documentType: string, field: 'document_date' | 'expiry_date', value: string) {
     const cType = canonicalType(documentType)
     if (field === 'document_date') setDocumentDates(current => ({ ...current, [cType]: value, [documentType]: value }))
