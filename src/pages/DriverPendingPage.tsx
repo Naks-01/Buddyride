@@ -1,6 +1,7 @@
 "use client"
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { normalizeDocType as canonicalType } from '../lib/driverDocuments'
 
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
@@ -24,29 +25,21 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
   const [identityCount, setIdentityCount] = useState(0)
   const [missingDocs, setMissingDocs] = useState<string[]>([])
   const [hasIdNumbers, setHasIdNumbers] = useState(false)
+  const [licenseExpiryMissing, setLicenseExpiryMissing] = useState(false)
   const checkingRef = useRef(false)
   const needsRecheckRef = useRef(false)
 
-  // ===== FIXED: same canonical as Onboarding =====
-  const normalizeKey = (raw: string) => {
-    let k = (raw || '').toLowerCase().trim()
-    k = k.replace(/-/g, '_').replace(/\s+/g, '_')
-    k = k.replaceAll('licence', 'license') // FIX: licence -> license
-    if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id' || k === 'south_african_id_document') return 'sa_id'
-    if (k.includes('driver') && k.includes('license')) return 'drivers_license'
-    if (k === 'license' || k === 'driving_license') return 'drivers_license'
-    if (k === 'license_disc') return 'license_disc'
-    return k
-  }
+  // FIXED: Use SAME canonical as Onboarding - no more local normalizeKey mismatch
+  const normalizeKey = (raw: string) => canonicalType(raw || '')
 
   const prettyName = (key: string) => {
-    if (key === 'sa_id') return 'SA ID'
-    if (key === 'drivers_license') return 'Drivers License'
-    if (key === 'license_disc') return 'License Disc'
-    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    const k = canonicalType(key)
+    if (k === 'sa_id') return 'SA ID'
+    if (k === 'drivers_license') return 'Drivers License'
+    if (k === 'license_disc') return 'License Disc'
+    return k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
 
-  // FIXED: all normalized to _license spelling
   const ALL_DOCS = ['profile_photo','selfie','sa_id','drivers_license','prdp','vehicle_registration','license_disc','vehicle_photo_1','vehicle_photo_2','vehicle_photo_3','vehicle_photo_4','vehicle_interior_photo_1','vehicle_interior_photo_2','huru_criminal_check','vehicle_inspection_report']
 
   async function checkStatus() {
@@ -62,7 +55,7 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
           .select('phone_number, phone, verification_status, is_verified, verification_rejection_reason, id_number, licence_number, driver_licence_number')
           .eq('id', user.id).single(),
         supabase.from('driver_documents')
-          .select('doc_type,document_type,status,rejection_reason,created_at,file_url,document_url')
+          .select('doc_type,document_type,status,rejection_reason,created_at,file_url,document_url,expiry_date')
           .eq('driver_id', user.id)
           .order('created_at', { ascending: false })
       ])
@@ -85,16 +78,24 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
         }
       }
 
+      // FIXED: dedupe by canonical, keep newest, preserve expiry_date
       const latest = new Map<string, any>()
       for (const d of (docsRes.data || [])) {
         const key = normalizeKey(d.doc_type || d.document_type || '')
-        if (key && !latest.has(key)) latest.set(key, { ...d, doc_type: key })
+        if (!key) continue
+        if (!latest.has(key)) latest.set(key, { ...d, doc_type: key, document_type: key })
       }
       const deduped = [...latest.values()]
       setTotalDocs(TOTAL_EXPECTED)
       setUploadedCount(deduped.filter(d => d.file_url || d.document_url).length)
-      // FIXED: use normalizeKey on both sides
-      setIdentityCount(deduped.filter(d => IDENTITY_TYPES.has(normalizeKey(d.doc_type)) && (d.file_url || d.document_url)).length)
+
+      // FIXED: Identity = 4 docs WITH files + license must have expiry_date
+      const identityDocs = deduped.filter(d => IDENTITY_TYPES.has(normalizeKey(d.doc_type)) && (d.file_url || d.document_url))
+      setIdentityCount(identityDocs.length)
+      const licenseDoc = deduped.find(d => normalizeKey(d.doc_type) === 'drivers_license')
+      const licenseMissingExpiry = Boolean(licenseDoc && (licenseDoc.file_url || licenseDoc.document_url) && !licenseDoc.expiry_date)
+      setLicenseExpiryMissing(licenseMissingExpiry)
+
       const missing = ALL_DOCS.filter(k => !latest.has(normalizeKey(k)))
       setMissingDocs(missing.map(prettyName))
 
@@ -142,8 +143,9 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
   }, [])
 
   const isRejected = status.toLowerCase() === 'rejected' || rejectedDocs.length > 0 || !!rejectionReason
-  const isIdentityComplete = !isRejected && (status.toLowerCase() === 'identity_complete' || (identityCount === 4 && uploadedCount >= 4 && hasIdNumbers))
-  const isIdentityPhotosOnly = !isRejected && identityCount === 4 && uploadedCount >= 4 && !hasIdNumbers
+  // FIXED: Identity complete ONLY if 4 files + ID numbers + license expiry present
+  const isIdentityComplete = !isRejected && !licenseExpiryMissing && (status.toLowerCase() === 'identity_complete' || (identityCount === 4 && uploadedCount >= 4 && hasIdNumbers))
+  const isIdentityPhotosOnly = !isRejected && identityCount === 4 && uploadedCount >= 4 && (!hasIdNumbers || licenseExpiryMissing)
   const isFullPending = ['pending','pending_verification','submitted','under_review','in_review'].includes(status.toLowerCase())
 
   const goFixDocuments = () => { window.location.href = '/driver/onboarding' }
@@ -158,13 +160,16 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
         {isIdentityPhotosOnly && (
           <>
             <div style={{ margin: '0 auto 18px', width: 72, height: 72, borderRadius: 36, display: 'grid', placeItems: 'center', background: '#FEF3C7', fontSize: 32 }}>⚠️</div>
-            <h1 style={{ margin: '0 0 12px', fontSize: 24 }}>Almost There - ID Numbers Missing</h1>
+            <h1 style={{ margin: '0 0 12px', fontSize: 24 }}>{licenseExpiryMissing ? 'License Expiry Missing' : 'Almost There - ID Numbers Missing'}</h1>
             <p style={{ margin: 0, color: '#667085', lineHeight: 1.6 }}>
-              You uploaded 4 identity photos ✅ but SA ID Number + Licence Number are missing.<br />
-              Enter them to unlock Enter App.
+              {licenseExpiryMissing ? (
+                <>You uploaded 4 identity photos ✅ but <strong>Drivers License expiry date is missing.</strong><br />Go back, pick expiry date (e.g. 20/03/2031) then click Replace to re-upload License.</>
+              ) : (
+                <>You uploaded 4 identity photos ✅ but SA ID Number + Licence Number are missing.<br />Enter them to unlock Enter App.</>
+              )}
             </p>
             <button onClick={goViewDocuments} style={{ marginTop: 20, width: '100%', padding: 14, border: 0, borderRadius: 12, background: BLUE, color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer' }}>
-              Enter ID Numbers →
+              {licenseExpiryMissing ? 'Fix License Expiry →' : 'Enter ID Numbers →'}
             </button>
           </>
         )}

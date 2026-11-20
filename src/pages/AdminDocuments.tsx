@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
-import { createDriverDocumentSignedUrl, isFakeFile, REQUIRED_DOCS, normalizeDriverDocType } from '../lib/driverDocuments'
+import { createDriverDocumentSignedUrl, isFakeFile, REQUIRED_DOCS, normalizeDriverDocType, hasRealDocument as hasRealFile } from '../lib/driverDocuments'
 
 export const DRIVER_DOCUMENTS = REQUIRED_DOCS.map((document, index) => ({
-  id: document.type,
+  id: normalizeDriverDocType(document.type),
   label: document.label,
   section: document.section,
   expiryRequired: Boolean(document.expiryRequired),
@@ -18,8 +18,9 @@ function errMsg(e: any) {
 }
 
 function findDriverRequirementDocument(docs: StoredDocument[], type: string) {
+  const want = normalizeDriverDocType(type)
   const matchingDocuments = docs.filter(item =>
-    normalizeDriverDocType(item.document_type || item.doc_type) === type,
+    normalizeDriverDocType(item.document_type || item.doc_type) === want,
   )
   return matchingDocuments.find(item => hasRealDocument(item)) || matchingDocuments[0]
 }
@@ -68,29 +69,23 @@ function groupDriversById(docs: StoredDocument[]) {
 
 function isExpired(expiryDate?: string | null) {
   if (!expiryDate) return false
-  const expiry = new Date(expiryDate)
-  expiry.setHours(0, 0, 0, 0)
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  return expiry < today
+  const expiry = new Date(String(expiryDate).slice(0, 10) + 'T00:00:00')
+  const today = new Date(new Date().toDateString())
+  return expiry.getTime() < today.getTime()
 }
 
 function getDocumentUrl(doc?: Pick<StoredDocument, 'file_url' | 'document_url' | 'file_path' | 'storage_path' | 'file_name'>) {
   return doc?.document_url?.trim() || doc?.file_url?.trim() || doc?.file_path?.trim() || doc?.storage_path?.trim() || doc?.file_name?.trim() || ''
 }
 
+// FIXED: Use SAME real-file check as Guard / driverDocuments.ts - no local divergent logic
 function hasRealDocument(doc?: Pick<StoredDocument, 'file_url' | 'document_url' | 'file_path' | 'storage_path' | 'file_name'>) {
   const filePath = getDocumentUrl(doc)
   if (!filePath) return false
   const lower = filePath.toLowerCase()
-  // LAUNCH: block fake/test data FIRST - before any other check
   if (lower.includes('temp.fix') || lower.includes('temp_fix') || lower.includes('no real file') || lower === 'test' || lower === 'fake') return false
-  if (lower.includes('supabase') || lower.includes('/storage/') || lower.includes('driver-documents') || lower.includes('vehicle-documents')) return true
-  if (isFakeFile(filePath)) {
-    if (/\.(jpg|jpeg|png|webp|pdf)$/i.test(filePath)) return true
-    return false
-  }
-  return filePath.length > 10
+  // FIXED: Delegate to shared helper - it already handles placeholder URLs
+  return hasRealFile(filePath)
 }
 
 function safeStatus(s?: string | null) {
@@ -101,8 +96,11 @@ function displayStatus(doc?: StoredDocument, optional = false) {
   if (!doc) return optional ? 'OPTIONAL' : 'MISSING'
   if (!hasRealDocument(doc)) return 'MISSING'
   if (safeStatus(doc.status) === 'expired' || isExpired(doc.expiry_date)) return 'EXPIRED'
+  // FIXED: Show EXPIRY MISSING distinctly - Admin was seeing PENDING and approving docs with null expiry
+  const req = DRIVER_DOCUMENTS.find(r => r.id === normalizeDriverDocType(doc.document_type || doc.doc_type))
+  if (req?.expiryRequired && !doc.expiry_date) return 'EXPIRY MISSING'
   if (doc.expiry_date) {
-    const daysRemaining = Math.ceil((new Date(`${doc.expiry_date}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86_400_000)
+    const daysRemaining = Math.ceil((new Date(`${String(doc.expiry_date).slice(0, 10)}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86_400_000)
     if (daysRemaining < 30) return 'EXPIRING SOON'
   }
   const status = safeStatus(doc.status).toUpperCase()
@@ -135,36 +133,35 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
 
   async function viewDriverDocument(fileUrl?: string | null) {
     const docUrl = fileUrl?.trim()
-    if (!docUrl) {
-      setError('No document uploaded yet')
-      return
-    }
-    // LAUNCH: never try to open fake files
+    if (!docUrl) { setError('No document uploaded yet'); return }
     if (docUrl.toLowerCase().includes('temp.fix') || docUrl.toLowerCase().includes('no real file')) {
       setError('No real file uploaded - ask driver to re-upload this document.')
       return
     }
-    if (/^https?:\/\//i.test(docUrl)) {
-      window.open(docUrl, '_blank')
+    if (/^https?:\/\//i.test(docUrl)) { window.open(docUrl, '_blank'); return }
+    // FIXED: Try shared helper first - it handles bucket: path + http + private buckets correctly
+    try {
+      const signedUrl = await createDriverDocumentSignedUrl(docUrl)
+      window.open(signedUrl, '_blank')
       return
-    }
+    } catch {}
+    // Fallback: manual bucket: path
     let bucket = 'driver-documents'
     let path = docUrl
     if (docUrl.includes(':')) {
       const [b, ...rest] = docUrl.split(':')
       if (b && rest.join(':')) { bucket = b; path = rest.join(':') }
     }
-    if (path.includes('profile_photo') && bucket === 'driver-documents') bucket = 'profile-photos'
     try {
       const { data, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 3600)
-      if (!signedErr && data?.signedUrl) {
-        window.open(data.signedUrl, '_blank')
-        return
+      if (!signedErr && data?.signedUrl) { window.open(data.signedUrl, '_blank'); return }
+      // FIXED: profile_photo may be in either bucket - try profile-photos as fallback
+      if (bucket === 'driver-documents') {
+        const { data: alt } = await supabase.storage.from('profile-photos').createSignedUrl(path, 3600)
+        if (alt?.signedUrl) { window.open(alt.signedUrl, '_blank'); return }
       }
       const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path)
       if (pub?.publicUrl) { window.open(pub.publicUrl, '_blank'); return }
-      const signedUrl = await createDriverDocumentSignedUrl(docUrl)
-      window.open(signedUrl, '_blank')
     } catch (viewError: unknown) {
       setError(`Could not open document: ${errMsg(viewError)}`)
     }
@@ -190,14 +187,13 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       if (!driverProfilesResult.error) setDriverProfiles(driverProfilesResult.data || [])
       const profileById = new Map((driverProfilesResult.data || []).map((p: any) => [p.id, p]))
       if (!driverResult.error) {
-        const requiredTypes = new Set(REQUIRED_DOCS.map(document => document.type))
+        // FIXED: Single canonical filter - no duplicate raw/norm lists that created ghost types
+        const requiredTypes = new Set(REQUIRED_DOCS.map(d => normalizeDriverDocType(d.type)))
         const loadedDocuments = (driverResult.data || []).filter(document => {
           const raw = (document.document_type || document.doc_type || '').toLowerCase()
-          const norm = normalizeDriverDocType(document.document_type || document.doc_type || '').toLowerCase()
           if (/police|holding|selfie with id/i.test(raw)) return false
-          if (['sa_id','said','sa-id','drivers_license','license','drivers-license','sa_id_document','south_african_id'].includes(raw)) return true
-          if (['sa_id','said','sa-id','drivers_license','license','drivers-license','sa_id_document','south_african_id'].includes(norm)) return true
-          return requiredTypes.has(normalizeDriverDocType(document.document_type || document.doc_type || ''))
+          const norm = normalizeDriverDocType(document.document_type || document.doc_type || '')
+          return requiredTypes.has(norm)
         })
         setPendingDriverDocumentCount(loadedDocuments.filter(document => safeStatus(document.status) === 'pending').length)
         const latestByType = new Map<string, typeof driverResult.data[number]>()
@@ -208,6 +204,7 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
         setDriverDocs([...latestByType.values()].map(document => ({
           ...document,
           doc_type: normalizeDriverDocType(document.document_type || document.doc_type),
+          document_type: normalizeDriverDocType(document.document_type || document.doc_type),
           profiles: profileById.get(document.driver_id) || null,
         })))
       }
@@ -326,7 +323,7 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
     const requirement = DRIVER_DOCUMENTS.find(item => item.id === id)
     const expired = isExpired(doc?.expiry_date)
     const expiryDateMissing = Boolean(requirement?.expiryRequired && !doc?.expiry_date)
-    const canViewDocument = status !== 'MISSING' && hasRealDocument(doc)
+    const canViewDocument = status !== 'MISSING' && status !== 'EXPIRY MISSING' && hasRealDocument(doc)
     const canApproveDocument = Boolean(doc && canViewDocument && !expiryDateMissing && !expired)
     const isSaving = loadingId === doc?.id
     const badgeColors: Record<string, { color: string, background: string }> = {
@@ -337,6 +334,7 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
       REJECTED: { color:'#fca5a5', background:'#7f1d1d' },
       EXPIRED: { color:'#fca5a5', background:'#7f1d1d' },
       'EXPIRING SOON': { color:'#fcd34d', background:'#78350f' },
+      'EXPIRY MISSING': { color:'#fca5a5', background:'#7f1d1d' },
     }
     const badge = badgeColors[status] || badgeColors.PENDING
     return <div key={id} style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', padding:'10px 0', borderTop:'1px solid #333'}}>

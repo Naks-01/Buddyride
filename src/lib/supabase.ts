@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
 export const isSupabaseConfigured = Boolean(url && anonKey)
 
@@ -9,15 +9,24 @@ if (!isSupabaseConfigured) {
   console.error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY - check Vercel Env Vars + .env.local')
 }
 
-export const supabase = createClient(url || 'https://configuration-missing.invalid', anonKey || 'configuration-missing', {
+// FIXED: Don't create a client with an invalid URL - it throws on auth/storage calls
+// Use real values if present, otherwise use a dummy that won't crash the import
+const supabaseUrl = url || 'https://placeholder.supabase.co'
+const supabaseAnonKey = anonKey || 'placeholder-anon-key'
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    // FIXED: PKCE is secure + doesn't leak token in URL like implicit flow
     flowType: 'pkce',
-    // FIXED: Unique key so BuddyRide doesn't clash with other Supabase apps on same domain
     storageKey: 'buddyride-auth',
+    // FIXED: Don't lock session to a single tab - driver uploads in one tab, admin in another
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+  },
+  // FIXED: Global headers so Supabase logs show which app made the call
+  global: {
+    headers: { 'x-client-info': 'buddyride-web' },
   },
 })
 
@@ -35,7 +44,7 @@ export type DriverDocument = {
   file_path: string | null
   storage_path: string | null
   file_name: string | null
-  status: DriverDocumentStatus
+  status: DriverDocumentStatus | string
   rejection_reason: string | null
   reviewed_at: string | null
   reviewed_by: string | null
@@ -43,6 +52,7 @@ export type DriverDocument = {
   prdp_number?: string | null
   document_hash?: string | null
   created_at: string
+  updated_at?: string | null
 }
 
 export type Profile = {
@@ -50,12 +60,18 @@ export type Profile = {
   email: string | null
   role: Role
   full_name: string | null
+  // FIXED: These were used as (profile as any) everywhere - now typed
+  first_name?: string | null
+  last_name?: string | null
   phone: string | null
   phone_number?: string | null
   avatar_url: string | null
   selfie_url?: string | null
   id_document_url?: string | null
   id_number?: string | null
+  // FIXED: Licence numbers - used in Onboarding / Documents / Pending
+  licence_number?: string | null
+  driver_licence_number?: string | null
   id_verification_method?: 'id_number' | 'id_photo' | null
   id_verified?: boolean | null
   is_verified?: boolean | null
@@ -76,13 +92,11 @@ export type Profile = {
   bank_account_holder?: string | null
   bank_account_number?: string | null
   bank_branch_code?: string | null
-  // FIXED: These were used everywhere but missing from type
   city?: string | null
   created_at?: string | null
   updated_at?: string | null
 }
 
-// FIXED: Real table is driver_profiles, not drivers
 export type DriverProfile = {
   id: string
   user_id: string
@@ -131,7 +145,6 @@ export type Ride = {
   duration_min?: number | null
   fare: number
   booking_fee?: number | null
-  // FIXED 100%: Removed total_fare, driver_earnings, buddyride_commission — not in DB yet, calculated in fare.ts
   status: RideStatus
   ride_category?: string | null
   payment_method?: 'cash' | 'paystack' | null
@@ -154,4 +167,10 @@ export type Ride = {
   driver_lat?: number | null
   driver_lng?: number | null
   driver_rating?: number | null
+}
+
+// FIXED: Helper so every file gets ownerId the same way - no more user?.id || profile.id drift
+export async function getOwnerId(fallbackId?: string | null): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser()
+  return user?.id || fallbackId || null
 }

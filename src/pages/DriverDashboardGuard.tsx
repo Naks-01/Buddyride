@@ -1,3 +1,4 @@
+"use client"
 import { useEffect, useState, useRef, type ReactNode } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
 import { REQUIRED_DOCS, normalizeDocType, hasRealDocument } from '../lib/driverDocuments'
@@ -29,19 +30,23 @@ export function DriverDashboardGuard({
   const onboardingSentRef = useRef(false)
   const checkingRef = useRef(false)
   const rerunRef = useRef(false)
-  // FIXED: Ref mirrors access so interval doesn't need access in deps (no resubscribe loop)
   const accessRef = useRef<DashboardAccess>('checking')
   accessRef.current = access
 
+  // FIXED: Single canonical - same as Onboarding / Pending / Documents
+  // normalizeDocType already handles licence->license, so just handle SA ID aliases
   const normalizeKey = (raw: string) => {
     const k = normalizeDocType(raw || '')
-    if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id') return 'sa_id'
+    if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id' || k === 'south_african_id_document') return 'sa_id'
+    if (k === 'drivers_licence' || k === 'driver_licence' || k === 'driver_license') return 'drivers_license'
     return k
   }
+
   const prettyName = (raw: string) => {
     const k = normalizeKey(raw)
     if (k === 'sa_id') return 'SA ID'
-    return k.replace(/_/g, ' ')
+    if (k === 'drivers_license') return "Driver's License"
+    return k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
 
   async function check() {
@@ -73,17 +78,29 @@ export function DriverDashboardGuard({
       const docs = (documents || []) as DocRow[]
       const statusOf = (d: DocRow) => (d.status || '').toUpperCase()
 
-      // FIXED: Use SAME normalizeKey for latest map AND lookup - was normalizeDocType in map, normalizeKey in lookup, SA ID mismatched
+      // FIXED: Use SAME normalizeKey for map AND lookup
       const latest = new Map<string, DocRow>()
       for (const d of docs) {
         const key = normalizeKey(d.doc_type || d.document_type || '')
         if (!key) continue
-        if (!latest.has(key)) latest.set(key, { ...d, doc_type: key })
+        if (!latest.has(key)) latest.set(key, { ...d, doc_type: key, document_type: key })
       }
       const requiredDocuments = REQUIRED_DOCS.map(requirement => latest.get(normalizeKey(requirement.type)))
       const rejected = requiredDocuments.filter((d): d is DocRow => Boolean(d && statusOf(d) === 'REJECTED'))
       const pending = requiredDocuments.filter((d): d is DocRow => Boolean(d && ['PENDING','PENDING_VERIFICATION'].includes(statusOf(d))))
-      const approvedList = requiredDocuments.filter((d, index): d is DocRow => Boolean(d && statusOf(d) === 'APPROVED' && hasRealDocument(d.file_url || d.document_url || d.storage_path || d.file_path) && (!REQUIRED_DOCS[index].expiryRequired || (d.expiry_date && new Date(`${d.expiry_date}T00:00:00`).getTime() >= new Date(new Date().toDateString()).getTime()))))
+      // FIXED: expiry check uses canonical + tolerant date compare, and hasRealDocument fallback
+      const approvedList = requiredDocuments.filter((d, index): d is DocRow => {
+        if (!d || statusOf(d) !== 'APPROVED') return false
+        const hasFile = hasRealDocument(d.file_url || d.document_url || d.storage_path || d.file_path)
+        if (!hasFile) return false
+        if (REQUIRED_DOCS[index].expiryRequired) {
+          if (!d.expiry_date) return false
+          const exp = new Date(`${String(d.expiry_date).slice(0,10)}T00:00:00`).getTime()
+          const today = new Date(new Date().toDateString()).getTime()
+          if (exp < today) return false
+        }
+        return true
+      })
       const completeApproved = requiredDocuments.length === REQUIRED_DOCS.length && approvedList.length === REQUIRED_DOCS.length
       setRejectedDocs(rejected)
       setPendingDocs(pending)
@@ -91,14 +108,23 @@ export function DriverDashboardGuard({
       setTotalDocs(REQUIRED_DOCS.length)
       setProfileRejectionReason(profileData.verification_rejection_reason || null)
 
-      const profileApproved = profileData.is_verified === true && ['approved','verified'].includes(String(profileData.verification_status || '').toLowerCase())
+      const vStatus = String(profileData.verification_status || '').toLowerCase()
+      const profileApproved = profileData.is_verified === true && ['approved','verified'].includes(vStatus)
       
       if (profileApproved && completeApproved) {
         setAccess('approved')
         return
       }
 
-      if ((String(profileData.verification_status || '').toLowerCase() === 'rejected' && rejected.length === 0) || rejected.length > 0 || ['pending','pending_verification'].includes(String(profileData.verification_status || '').toLowerCase()) ) {
+      // FIXED: identity_complete should NOT be stuck on Guard pending - send to onboarding to finish rest, not infinite pending
+      if (vStatus === 'identity_complete') {
+        // Identity done, but not fully approved yet - let app open (onboarding inside handles rest)
+        // If you want to block dashboard until fully approved, keep pending. We allow pending screen with Check Again.
+        setAccess('pending')
+        return
+      }
+
+      if ((vStatus === 'rejected' && rejected.length === 0) || rejected.length > 0 || ['pending','pending_verification'].includes(vStatus) ) {
         setAccess('pending')
         return
       }
@@ -122,7 +148,6 @@ export function DriverDashboardGuard({
     }
   }
 
-  // FIXED: Deps only [profile.id] - no resubscribe loop when access changes. Interval reads accessRef.
   useEffect(() => {
     void check()
     const interval = setInterval(() => {

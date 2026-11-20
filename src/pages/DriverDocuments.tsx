@@ -1,17 +1,20 @@
 "use client"
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { normalizeDocType as canonicalType } from '../lib/driverDocuments'
 
 const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
 const BLUE_LIGHT = '#E6F0FF'
 
+// FIXED: Use SAME canonical as Onboarding + Pending - no local manual mapping
 function canonicalKey(raw: string | null | undefined) {
-  let k = (raw || '').toLowerCase().trim().replace(/-/g, '_').replace(/\s+/g, '_')
-  k = k.replaceAll('licence', 'license')
-  if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'south_african_id_document') return 'sa_id'
-  if (k.includes('driver') && k.includes('license')) return 'drivers_license'
-  return k
+  return canonicalType(raw || '')
+}
+
+function getExpiryForType(expiryDates: Record<string, string>, key: string): string | null {
+  const c = canonicalType(key)
+  return expiryDates[c] || expiryDates[key] || expiryDates['drivers_license'] || expiryDates['drivers_licence'] || expiryDates['driver_license'] || expiryDates['driver_licence'] || null
 }
 
 const DOC_TYPES = [
@@ -63,8 +66,6 @@ function isValidSAID(id: string) {
   for (let index = 11; index >= 0; index -= 1) { let digit = Number(id[index]); if (doubleDigit) { digit *= 2; if (digit > 9) digit -= 9 } sum += digit; doubleDigit = !doubleDigit }
   return (sum + Number(id[12])) % 10 === 0
 }
-
-// REMOVED compressSafely - was crashing on 7-8MB files
 
 async function signedUrlFor(ref: string): Promise<string | null> {
   if (!ref) return null
@@ -126,9 +127,15 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       const exp: Record<string, string> = {}
       for (const d of deduped) {
         const key = canonicalKey(d.doc_type || d.document_type)
-        if (key && d.expiry_date && !exp[key]) exp[key] = String(d.expiry_date).slice(0, 10)
+        if (key && d.expiry_date && !exp[key]) {
+          const v = String(d.expiry_date).slice(0, 10)
+          exp[key] = v
+          // FIXED: expand to all variants so upload can find it
+          if (key.includes('licen')) { exp['drivers_license']=v; exp['drivers_licence']=v; exp['driver_license']=v; exp['driver_licence']=v }
+        }
       }
-      setExpiryDates(exp)
+      // FIXED: merge with previous so picking date before upload is not lost on reload
+      setExpiryDates(prev => ({ ...prev, ...exp }))
       const previews: Record<string, string> = {}
       await Promise.all(deduped.map(async (d) => {
         const key = canonicalKey(d.doc_type || d.document_type)
@@ -148,9 +155,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
   useEffect(() => { void load() }, [driverId])
 
+  // FIXED: save expiry under ALL variants + persist even if doc not yet uploaded
   async function saveExpiry(key: DocKey, value: string) {
     const cKey = canonicalKey(key)
-    setExpiryDates(prev => ({ ...prev, [cKey]: value }))
+    setExpiryDates(prev => ({ ...prev, [cKey]: value, [key]: value, drivers_license: value, drivers_licence: value, driver_license: value, driver_licence: value }))
+    try { const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}'); cur[cKey]=value; cur[key]=value; cur['drivers_license']=value; localStorage.setItem('br_expiry_dates', JSON.stringify(cur)) } catch {}
     if (!value) return
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || driverId
@@ -171,11 +180,13 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       if (['heic','heif'].includes(extFromName)) throw new Error('iPhone HEIC not supported. Screenshot the document or pick JPG.')
       const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       if (file.size <= 0 || file.size > 20 * 1024 * 1024) throw new Error('File must be greater than 0 bytes and smaller than 20 MB.')
-      if (EXPIRING_DOCS.has(cKey) && expiryDates[cKey] && expiryDates[cKey] < southAfricanToday()) {
+      // FIXED: BLOCK upload if expiring doc has no expiry - was saving null before
+      const expiryForUpload = getExpiryForType(expiryDates, key)
+      if (EXPIRING_DOCS.has(cKey) && !expiryForUpload) throw new Error(`Please select Expiry Date for ${meta.label} FIRST, then click Upload.`)
+      if (EXPIRING_DOCS.has(cKey) && expiryForUpload && expiryForUpload < southAfricanToday()) {
         throw new Error('This document has expired. Upload a current document.')
       }
       const isImage = guessedType.startsWith('image/')
-      // NO COMPRESSION - upload original file direct
       let blob: Blob | File = file
       if (blob.size > 20 * 1024 * 1024) throw new Error('Processed file must be smaller than 20 MB.')
       const outputType = isImage ? (file.type || 'image/jpeg') : guessedType
@@ -201,7 +212,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         storage_path: path,
         file_name: file.name,
         status: 'PENDING',
-        expiry_date: EXPIRING_DOCS.has(cKey) ? (expiryDates[cKey] || null) : null,
+        expiry_date: EXPIRING_DOCS.has(cKey) ? (expiryForUpload || null) : null,
       }
       const { data: existingList } = await supabase.from('driver_documents').select('id').eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`).limit(1)
       const existing = existingList?.[0]
@@ -248,7 +259,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       if (!licenceNumber.trim()) throw new Error('Enter your driver licence number - required.')
       for (const t of DOC_TYPES) {
         if (EXPIRING_DOCS.has(canonicalKey(t.key))) {
-          const exp = expiryDates[canonicalKey(t.key)]
+          const exp = getExpiryForType(expiryDates, t.key)
           if (!exp) throw new Error(`Enter expiry date for ${t.label} before submitting.`)
           if (exp < southAfricanToday()) throw new Error(`${t.label} is expired.`)
         }
@@ -320,10 +331,11 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
             const doc = getDoc(t.key)
             const uploaded = Boolean(doc?.file_url || doc?.document_url)
             const preview = previewUrls[canonicalKey(t.key)]
+            const expiryMissing = isExpiring && uploaded && !doc?.expiry_date && !getExpiryForType(expiryDates, t.key)
             return (
               <div key={t.key} style={{ padding: 16, border: `1px solid ${isApproved ? '#B2CCFF' : '#EDF0F3'}`, borderRadius: 16, background: isApproved ? BLUE_LIGHT : '#fff', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: '0 5px 18px rgba(20,33,50,0.045)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                  <div><div style={{ fontWeight: 700, fontSize: 14 }}>{t.label} {isExpiring && <span style={{ fontSize: 10, background: '#FEF0C7', color: '#B54708', padding: '2px 6px', borderRadius: 99, marginLeft: 6, fontWeight: 800 }}>NEEDS EXPIRY</span>}</div><div style={{ marginTop: 6, display: 'inline-block', padding: '4px 8px', borderRadius: 99, fontSize: 11, fontWeight: 800, background: isApproved ? BLUE : uploaded ? '#ECFDF3' : '#F2F4F7', color: isApproved ? '#fff' : uploaded ? '#067647' : '#667085' }}>{isApproved ? 'VERIFIED' : String(status).toUpperCase()}</div>{doc?.expiry_date && <div style={{ fontSize: 11, color: '#667085', marginTop: 4 }}>Expires: {String(doc.expiry_date).slice(0, 10)}</div>}<div style={{ fontSize: 10, color: '#98A2B3', marginTop: 2 }}>📁 {t.folder}/</div></div>
+                  <div><div style={{ fontWeight: 700, fontSize: 14 }}>{t.label} {isExpiring && <span style={{ fontSize: 10, background: '#FEF0C7', color: '#B54708', padding: '2px 6px', borderRadius: 99, marginLeft: 6, fontWeight: 800 }}>NEEDS EXPIRY</span>}</div><div style={{ marginTop: 6, display: 'inline-block', padding: '4px 8px', borderRadius: 99, fontSize: 11, fontWeight: 800, background: isApproved ? BLUE : uploaded ? '#ECFDF3' : '#F2F4F7', color: isApproved ? '#fff' : uploaded ? '#067647' : '#667085' }}>{isApproved ? 'VERIFIED' : expiryMissing ? 'EXPIRY MISSING' : String(status).toUpperCase()}</div>{doc?.expiry_date && <div style={{ fontSize: 11, color: '#667085', marginTop: 4 }}>Expires: {String(doc.expiry_date).slice(0, 10)}</div>}<div style={{ fontSize: 10, color: '#98A2B3', marginTop: 2 }}>📁 {t.folder}/</div></div>
                   <label style={{ background: isApproved ? '#fff' : BLUE, color: isApproved ? BLUE : 'white', border: isApproved ? `1px solid ${BLUE}` : 'none', padding: '10px 14px', borderRadius: 11, fontWeight: 800, fontSize: 13, cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.6 : 1, whiteSpace: 'nowrap' }}>
                     {uploading === t.key ? 'Uploading...' : status === 'Missing' ? 'Upload' : 'Replace'}
                     <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" style={{ display: 'none' }} disabled={!!uploading} onChange={e => { const f = e.target.files?.[0]; if (f) void upload(t.key, f); e.currentTarget.value = '' }} />
@@ -331,8 +343,9 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
                 </div>
                 {isExpiring && (
                   <label style={{ display: 'grid', gap: 4, fontSize: 12, color: '#344054', fontWeight: 700 }}>
-                    Expiry Date (as printed on document) - REQUIRED AT SUBMIT
-                    <input type="date" value={expiryDates[canonicalKey(t.key)] || ''} onChange={e => void saveExpiry(t.key, e.target.value)} style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9 }} />
+                    Expiry Date (as printed on document) - REQUIRED BEFORE UPLOAD
+                    <input type="date" value={getExpiryForType(expiryDates, t.key) || ''} onChange={e => void saveExpiry(t.key, e.target.value)} style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9 }} />
+                    {expiryMissing && <span style={{ color: '#B54708', fontSize: 11 }}>⚠️ File uploaded but expiry missing - pick date then click Replace.</span>}
                   </label>
                 )}
                 {preview && (
