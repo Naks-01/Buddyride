@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { AdminHome } from './pages/AdminHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
 import { getProfile, signUp as createAccount, sendSmsOtp, verifySmsOtp } from './lib/auth'
@@ -47,6 +47,17 @@ function Brand({ compact = false }: { compact?: boolean }) {
   </div>
 }
 
+function driverScreenFor(status: string | null | undefined, path: string): 'onboarding' | 'pending' | 'home' {
+  const vs = String(status || '').toLowerCase()
+  const p = String(path || '/').replace(/\/+$/, '') || '/'
+  if (p === '/driver/onboarding') return 'onboarding'
+  if (vs === 'approved' || vs === 'verified') return 'home'
+  if (vs === 'identity_complete') return 'home'
+  if (vs === 'pending' || vs === 'pending_verification' || vs === 'submitted' || vs === 'under_review' || vs === 'in_review') return 'pending'
+  if (vs === 'rejected') return 'onboarding'
+  return 'onboarding'
+}
+
 export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -70,6 +81,8 @@ export default function App() {
   const [otpStep, setOtpStep] = useState<'details' | 'otp'>('details')
   const [otpCode, setOtpCode] = useState('')
   const [otpSent, setOtpSent] = useState(false)
+  const loadingProfileRef = useRef(false)
+  const lastLoadedUserRef = useRef<string | null>(null)
 
   const navigateDriverPath = useCallback((path: string, replace = false) => {
     if (replace) window.history.replaceState(null, '', path)
@@ -82,14 +95,15 @@ export default function App() {
   const hasAdminAccess = Boolean(profile && profile.role === 'admin' && profile.email?.trim().toLowerCase() === ADMIN_EMAIL && verifiedAdminUserId === profile.id)
 
   const loadProfile = useCallback(async (userId: string, userEmail: string | null, preferredRole?: Role, fullNameValue?: string, phoneValue?: string) => {
+    if (loadingProfileRef.current && lastLoadedUserRef.current === userId) return
+    loadingProfileRef.current = true
+    lastLoadedUserRef.current = userId
     setLoading(true)
     try {
       let result = await getProfile(userId)
       const emailLower = userEmail?.toLowerCase().trim() || null
       const isAdminUser = emailLower === ADMIN_EMAIL
       if (isAdminUser) {
-        // Never grant administrator privileges from the browser. An administrator
-        // profile must be provisioned by a trusted database/service-role process.
         if (!result || result.role !== 'admin') {
           throw new Error('This account is not provisioned as a BuddyRide administrator. Ask the platform owner to grant admin access securely.')
         }
@@ -112,8 +126,6 @@ export default function App() {
         result = data as Profile
         localStorage.removeItem('buddyride_pending_role')
       } else {
-        // Existing account roles are authoritative. Never change passenger/driver
-        // privileges from browser storage or login-time client code.
         localStorage.removeItem('buddyride_pending_role')
         if (result.role === 'admin') {
           throw new Error('This administrator profile is not authorized for the configured administrator account.')
@@ -121,20 +133,20 @@ export default function App() {
       }
       setProfile(result); setShowLanding(false)
       if (result.role === 'driver') {
-        const vs = String((result as any).verification_status || '').toLowerCase()
-        if (vs === 'identity_complete') {
-          if (window.location.pathname !== '/driver/dashboard' && window.location.pathname !== '/driver') navigateDriverPath('/driver/dashboard', true)
-          return
+        // FIXED Ln 145 - use String() to avoid TS literal union error
+        const current = String(window.location.pathname || '/')
+        if (current === '/' || current === '') {
+          const driverEntryPath = getDriverEntryPath(result.role, result.verification_status, current) as string | null
+          if (driverEntryPath && String(driverEntryPath) !== current) navigateDriverPath(driverEntryPath, true)
         }
-        const driverEntryPath = getDriverEntryPath(result.role, result.verification_status, window.location.pathname)
-        if (driverEntryPath && driverEntryPath !== window.location.pathname) navigateDriverPath(driverEntryPath, true)
       } else {
         if (window.location.pathname.startsWith('/driver')) navigateDriverPath('/', true)
       }
     } catch (error: any) {
       setMessage(error instanceof Error ? error.message : 'Could not load your profile.')
       setProfile(null)
-    } finally { setLoading(false) }
+      lastLoadedUserRef.current = null
+    } finally { setLoading(false); loadingProfileRef.current = false }
   }, [navigateDriverPath])
 
   useEffect(() => { const t = window.setTimeout(() => setSplashVisible(false), 1900); return () => window.clearTimeout(t) }, [])
@@ -154,8 +166,9 @@ export default function App() {
         await loadProfile(data.session.user.id, data.session.user.email ?? null, undefined)
       } else if (active) setLoading(false)
     })
-    const { data: listener } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
-      if (!session?.user) { setProfile(null); setLoading(false); setShowLanding(true); setVerifiedAdminUserId(null); setCheckedAdminUserId(null) }
+    const { data: listener } = supabase.auth.onAuthStateChange((event: any, session: any) => {
+      if (event === 'INITIAL_SESSION') return
+      if (!session?.user) { setProfile(null); setLoading(false); setShowLanding(true); setVerifiedAdminUserId(null); setCheckedAdminUserId(null); lastLoadedUserRef.current = null }
       else {
         const hasPending = localStorage.getItem('buddyride_pending_role')
         const metaRole = hasPending ? (session.user.user_metadata?.role as Role | undefined) : undefined
@@ -231,6 +244,12 @@ export default function App() {
     } catch (error: any) { setMessage(error instanceof Error ? error.message : 'Auth failed.') } finally { setBusy(false) }
   }
 
+  const refreshProfile = useCallback(async () => {
+    if (!profile) return
+    const fresh = await getProfile(profile.id)
+    if (fresh) setProfile(fresh)
+  }, [profile])
+
   if (currentPath === '/terms') return <TermsPage />
   if (currentPath === '/privacy') return <PrivacyPage />
   if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading ? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
@@ -254,26 +273,21 @@ export default function App() {
       </Suspense>
     }
     if (profile.role === 'driver') {
-      const driverRoute = (currentPath || '/').replace(/\/+$/, '') || '/'
+      const driverRoute = String(currentPath || '/').replace(/\/+$/, '') || '/'
+      const screen = driverScreenFor(profile.verification_status, driverRoute)
+
+      if (screen === 'onboarding') {
+        return <DriverOnboarding profile={profile} onDashboard={async () => { await refreshProfile(); navigateDriverPath('/driver/dashboard', true) }} />
+      }
+      if (screen === 'pending') {
+        return <DriverPendingPage onApproved={async () => { await refreshProfile(); navigateDriverPath('/driver/dashboard', true) }} />
+      }
       if (profile.verification_status === 'identity_complete') {
-        if (driverRoute === '/driver/onboarding') return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
-        return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
-          <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
-        </DriverDashboardGuard>
+        return <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
       }
-      if (driverRoute === '/driver/onboarding') return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/dashboard', true)} />
-      if (driverRoute === '/driver/dashboard' || driverRoute === '/driver') {
-        return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
-          <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
-        </DriverDashboardGuard>
-      }
-      if (['pending', 'pending_verification'].includes(profile.verification_status ?? '')) return <DriverPendingPage onApproved={() => navigateDriverPath('/driver/dashboard', true)} />
-      if (profile.verification_status === 'verified' || profile.verification_status === 'approved') {
-        return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
-          <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
-        </DriverDashboardGuard>
-      }
-      return <DriverOnboarding profile={profile} onDashboard={() => navigateDriverPath('/driver/onboarding', true)} />
+      return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
+        <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
+      </DriverDashboardGuard>
     }
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={() => setPage('home')} />
     if (hasAdminAccess && (page === 'admin-docs' || page === 'admin-documents')) return <AdminDocuments profile={profile} onBack={() => { setSelectedDriverId(null); setPage('home') }} driverId={selectedDriverId} />
@@ -291,7 +305,6 @@ export default function App() {
     </Suspense>
   }
 
-  // FIXED: Now only 2 props - matches your LandingPage
   if (showLanding) return <LandingPage
     onLogin={() => {
       try { localStorage.removeItem('buddyride_pending_role') } catch {}
