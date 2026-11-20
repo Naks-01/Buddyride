@@ -28,6 +28,20 @@ function safeUUID() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
 }
 
+function normalizeDateInput(raw: string): string {
+  if (!raw) return ''
+  raw = raw.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  const m = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+  if (m) {
+    const d = m[1].padStart(2,'0')
+    const mo = m[2].padStart(2,'0')
+    const y = m[3]
+    return `${y}-${mo}-${d}`
+  }
+  return raw
+}
+
 function isValidSAID(id: string) {
   if (!/^\d{13}$/.test(id)) return false
   const yy = Number(id.slice(0, 2)); const month = Number(id.slice(2, 4)); const day = Number(id.slice(4, 6))
@@ -43,7 +57,8 @@ function isValidSAID(id: string) {
 
 function getExpiryForType(expiryDates: Record<string, string>, documentType: string): string | null {
   const c = canonicalType(documentType)
-  return expiryDates[c] || expiryDates[documentType] || expiryDates['drivers_license'] || expiryDates['drivers_licence'] || expiryDates['driver_license'] || expiryDates['driver_licence'] || expiryDates['drivers-license'] || null
+  const raw = expiryDates[c] || expiryDates[documentType] || expiryDates['drivers_license'] || expiryDates['drivers_licence'] || expiryDates['driver_license'] || expiryDates['driver_licence'] || expiryDates['drivers-license'] || null
+  return raw ? normalizeDateInput(raw) : null
 }
 
 function loadSavedExpiry(): Record<string, string> {
@@ -51,22 +66,34 @@ function loadSavedExpiry(): Record<string, string> {
     const raw = localStorage.getItem('br_expiry_dates')
     if (!raw) return {}
     const parsed = JSON.parse(raw)
-    return typeof parsed === 'object' && parsed ? parsed : {}
+    const out: Record<string,string> = {}
+    if (typeof parsed === 'object' && parsed) {
+      for (const [k,v] of Object.entries(parsed)) {
+        if (typeof v === 'string') out[k] = normalizeDateInput(v)
+      }
+    }
+    return out
   } catch { return {} }
 }
 
 function getExpiryFromAnywhere(stateExpiry: Record<string, string>, documentType: string): string | null {
   const fromState = getExpiryForType(stateExpiry, documentType)
-  if (fromState) return fromState
+  if (fromState) return normalizeDateInput(fromState)
   try {
     const saved = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}')
     const fromStorage = getExpiryForType(saved, documentType)
-    if (fromStorage) return fromStorage
+    if (fromStorage) return normalizeDateInput(fromStorage)
   } catch {}
   try {
     const inputs = Array.from(document.querySelectorAll('input[type="date"]')) as HTMLInputElement[]
     for (const input of inputs) {
-      if (input.value) return input.value
+      if (input.value) return normalizeDateInput(input.value)
+    }
+  } catch {}
+  try {
+    const all = Array.from(document.querySelectorAll('input')) as HTMLInputElement[]
+    for (const input of all) {
+      if (input.value && /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/.test(input.value)) return normalizeDateInput(input.value)
     }
   } catch {}
   return null
@@ -261,14 +288,18 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setDocuments(documentsWithPreviews); setVerificationStatus(status)
     setDocumentDates(Object.fromEntries(loadedDocuments.filter(document => document.document_date).map(document => [canonicalType(document.doc_type), document.document_date!.slice(0, 10)])))
     let localExpiry: Record<string,string> = {}
-    try { localExpiry = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}') } catch {}
-    const dbExpiry = Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), document.expiry_date!.slice(0, 10)]))
+    try { 
+      const raw = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}')
+      for (const [k,v] of Object.entries(raw)) if (typeof v==='string') localExpiry[k]=normalizeDateInput(v)
+    } catch {}
+    const dbExpiry = Object.fromEntries(loadedDocuments.filter(document => document.expiry_date).map(document => [canonicalType(document.doc_type), normalizeDateInput(document.expiry_date!.slice(0, 10))]))
     const merged: Record<string,string> = { ...localExpiry, ...dbExpiry }
     const expanded: Record<string,string> = { ...merged }
     for (const [k,v] of Object.entries(merged)) {
       const c = canonicalType(k)
-      expanded[c] = v; expanded[k] = v
-      if (c.includes('licen')) { expanded['drivers_license']=v; expanded['drivers_licence']=v; expanded['driver_license']=v; expanded['driver_licence']=v }
+      const norm = normalizeDateInput(v)
+      expanded[c] = norm; expanded[k] = norm
+      if (c.includes('licen')) { expanded['drivers_license']=norm; expanded['drivers_licence']=norm; expanded['driver_license']=norm; expanded['driver_licence']=norm }
     }
     setExpiryDates(prev => ({ ...prev, ...expanded }))
     setBankDetails({ bank_name: profileResult.data.bank_name || '', bank_account_holder: profileResult.data.bank_account_holder || '', bank_account_number: profileResult.data.bank_account_number || '', bank_branch_code: profileResult.data.bank_branch_code || '' })
@@ -293,19 +324,33 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setUploading(cardType); setError(''); setUploadStatus('')
     let uploadedPath: string | null = null
     try {
-      // FIXED FOR LICENSE: get expiry from anywhere + DOM fallback survives Android Files picker reload
       let expiryDate = getExpiryFromAnywhere(expiryDates, documentType)
       if (!expiryDate) {
         try {
           const inputs = Array.from(document.querySelectorAll('input[type="date"]')) as HTMLInputElement[]
           const firstWithValue = inputs.find(i => i.value)
-          if (firstWithValue?.value) expiryDate = firstWithValue.value
+          if (firstWithValue?.value) expiryDate = normalizeDateInput(firstWithValue.value)
+        } catch {}
+      }
+      if (!expiryDate) {
+        try {
+          const all = Array.from(document.querySelectorAll('input')) as HTMLInputElement[]
+          for (const i of all) {
+            if (i.value && /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/.test(i.value)) {
+              expiryDate = normalizeDateInput(i.value)
+              break
+            }
+          }
         } catch {}
       }
       const card = DOCUMENT_CARDS.find(item => canonicalType(item.type) === canonicalType(documentType))
-      if (card?.expiryRequired && !expiryDate) throw new Error('Please select Expiry Date FIRST, then click Upload. Expiry is required for this document.')
-      if (card?.expiryRequired && expiryDate && expiryDate < southAfricanToday()) throw new Error('This document has expired.')
+      if (card?.expiryRequired) {
+        if (!expiryDate) throw new Error('Please select Expiry Date FIRST, then click Upload. Expiry is required for this document.')
+        expiryDate = normalizeDateInput(expiryDate)
+        if (expiryDate < southAfricanToday()) throw new Error('This document has expired.')
+      }
       if (expiryDate) {
+        expiryDate = normalizeDateInput(expiryDate)
         const next = { [canonicalType(documentType)]: expiryDate, [documentType]: expiryDate, drivers_license: expiryDate, drivers_licence: expiryDate, driver_license: expiryDate, driver_licence: expiryDate }
         setExpiryDates(cur => ({ ...cur, ...next }))
         try {
@@ -340,7 +385,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       const { error: uploadError } = await supabase.storage.from(bucket).upload(path, blob, { contentType: outputType, upsert: true })
       if (uploadError) throw new Error(`Storage: ${uploadError.message}`)
       const storageReference = `${bucket}:${path}`
-      const payload: any = { driver_id: ownerId, doc_type: finalDocType, document_type: finalDocType, file_url: storageReference, document_url: storageReference, document_date: documentDates[canonicalType(documentType)] || southAfricanToday(), status: 'PENDING', expiry_date: expiryDate, rejection_reason: null }
+      const payload: any = { driver_id: ownerId, doc_type: finalDocType, document_type: finalDocType, file_url: storageReference, document_url: storageReference, document_date: documentDates[canonicalType(documentType)] || southAfricanToday(), status: 'PENDING', expiry_date: expiryDate ? normalizeDateInput(expiryDate) : null, rejection_reason: null }
       const { data: existingRows, error: existingError } = await supabase.from('driver_documents').select('id, created_at').eq('driver_id', ownerId).or(`doc_type.eq.${finalDocType},document_type.eq.${finalDocType}`).order('created_at', { ascending: false }).limit(1)
       if (existingError) throw new Error(`Could not check existing document: ${existingError.message}`)
       const existing = existingRows?.[0] || null
@@ -350,7 +395,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       if (saveError) throw new Error(`DB: ${saveError.message}`)
       await saveIdNumbersNow(driverIdNumber, licenceNumber)
       const savedPreview = await createDriverDocumentSignedUrl(storageReference).catch(() => null)
-      setDocuments(current => latestDocuments([...current.filter(d => canonicalType(d.doc_type) !== finalDocType), { ...(savedDocument as StoredDocument), expiry_date: savedDocument.expiry_date || expiryDate, preview_url: savedPreview }]))
+      setDocuments(current => latestDocuments([...current.filter(d => canonicalType(d.doc_type) !== finalDocType), { ...(savedDocument as StoredDocument), expiry_date: savedDocument.expiry_date || (expiryDate ? normalizeDateInput(expiryDate) : null), preview_url: savedPreview }]))
       uploadedPath = null
       if (finalDocType === 'profile_photo') { const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(path); await supabase.from('profiles').update({ avatar_url: publicData.publicUrl }).eq('id', ownerId) }
       setUploadStatus(''); setError('')
@@ -367,29 +412,23 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     await uploadFile(cardType, bucket, selectedFiles[0], documentType)
   }
 
-  // FIXED FOR LICENSE: removed early return that blocked expiry save when doc is still MISSING
   async function updateDocumentDate(documentType: string, field: 'document_date' | 'expiry_date', value: string) {
     const cType = canonicalType(documentType)
-    if (field === 'document_date') setDocumentDates(current => ({ ...current, [cType]: value, [documentType]: value }))
+    const normalizedValue = field === 'expiry_date' ? normalizeDateInput(value) : value
+    if (field === 'document_date') setDocumentDates(current => ({ ...current, [cType]: normalizedValue, [documentType]: normalizedValue }))
     else {
-      const next = { [cType]: value, [documentType]: value, drivers_license: value, drivers_licence: value, driver_license: value, driver_licence: value }
+      const next = { [cType]: normalizedValue, [documentType]: normalizedValue, drivers_license: normalizedValue, drivers_licence: normalizedValue, driver_license: normalizedValue, driver_licence: normalizedValue }
       setExpiryDates(current => ({ ...current, ...next }))
       try {
         const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}')
         localStorage.setItem('br_expiry_dates', JSON.stringify({ ...cur, ...next }))
       } catch {}
     }
-    // FIX: don't return if doc missing - we want expiry to persist even before upload
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || profile.id
-    const { error: updateError } = await supabase.from('driver_documents').update({ [field]: value || null }).eq('driver_id', ownerId).or(`doc_type.eq.${cType},document_type.eq.${cType}`)
-    if (updateError) {
-      // If no existing row, this will fail - that's ok, uploadFile will insert it
-      if (!String(updateError.message).toLowerCase().includes('0 rows')) {
-        // silent for MISSING case
-      }
-    } else {
-      setDocuments(current => current.map(document => canonicalType(document.doc_type) === cType ? { ...document, [field]: value || null } : document))
+    const { error: updateError } = await supabase.from('driver_documents').update({ [field]: normalizedValue || null }).eq('driver_id', ownerId).or(`doc_type.eq.${cType},document_type.eq.${cType}`)
+    if (!updateError) {
+      setDocuments(current => current.map(document => canonicalType(document.doc_type) === cType ? { ...document, [field]: normalizedValue || null } : document))
     }
   }
 
@@ -419,14 +458,14 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       if (!EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type)) return false
       const exp = getExpiryFromAnywhere(expiryDates, document.type) || ''
       if (!exp) return true
-      if (exp < southAfricanToday()) return true
+      if (normalizeDateInput(exp) < southAfricanToday()) return true
       return false
     })
     if (hasBadExpiry) { setError('All required expiry dates must be current.'); return }
     setSubmitting(true); setError('')
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || profile.id
-    const metadataUpdates = await Promise.all(REQUIRED_DOCS.map(document => supabase.from('driver_documents').update({ document_date: documentDates[canonicalType(document.type)] || documentDates[document.type] || new Date().toISOString().split('T')[0], expiry_date: EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type) ? (getExpiryFromAnywhere(expiryDates, document.type) || null) : null }).eq('driver_id', ownerId).or(`doc_type.eq.${canonicalType(document.type)},document_type.eq.${canonicalType(document.type)}`)))
+    const metadataUpdates = await Promise.all(REQUIRED_DOCS.map(document => supabase.from('driver_documents').update({ document_date: documentDates[canonicalType(document.type)] || documentDates[document.type] || new Date().toISOString().split('T')[0], expiry_date: EXPIRING_DRIVER_DOCUMENT_TYPES.has(document.type) ? (normalizeDateInput(getExpiryFromAnywhere(expiryDates, document.type) || '') || null) : null }).eq('driver_id', ownerId).or(`doc_type.eq.${canonicalType(document.type)},document_type.eq.${canonicalType(document.type)}`)))
     const metadataError = metadataUpdates.find(result => result.error)?.error
     if (metadataError) { setError(`Could not save details: ${metadataError.message}`); setSubmitting(false); return }
     const { error: bankError } = await supabase.from('profiles').update({ bank_name: bankDetails.bank_name, bank_account_holder: bankDetails.bank_account_holder.trim(), bank_account_number: bankDetails.bank_account_number.trim(), bank_branch_code: bankDetails.bank_branch_code.trim(), id_number: trimmedId, licence_number: licenceNumber.trim() } as any).eq('id', ownerId)
