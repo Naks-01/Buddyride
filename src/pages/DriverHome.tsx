@@ -13,10 +13,10 @@ const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const EXPIRE_SECONDS = 15
 
 function errMsg(e: any) { return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e)) }
+
+// FIXED: single canonical - same as Guard / Onboarding / Documents
 function canonicalType(raw: string | null | undefined) {
-  const k = normalizeDocType(raw || '')
-  if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id') return 'sa_id'
-  return k
+  return normalizeDocType(raw || '')
 }
 function distanceBetweenCoordinates(from: [number, number], to: [number, number]) { const radians = (d: number) => d * Math.PI / 180; const [fromLng, fromLat] = from.map(radians); const [toLng, toLat] = to.map(radians); const deltaLat = toLat - fromLat; const deltaLng = toLng - fromLng; const a = Math.sin(deltaLat / 2) ** 2 + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(deltaLng / 2) ** 2; return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
 type PassengerBadge = { is_verified: boolean, verification_status: string | null, ride_count: number, full_name: string | null, rating: number | null }
@@ -58,7 +58,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [docsUploaded, setDocsUploaded] = useState(0)
   const [identityUploaded, setIdentityUploaded] = useState(0)
   const [docsApprovedCount, setDocsApprovedCount] = useState(0)
-  const TOTAL_DOCS = 15
+  // FIXED: was hardcoded 15, now follows REQUIRED_DOCS
+  const TOTAL_DOCS = REQUIRED_DOCS.length
   const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_license'])
   const [expiryWarnings, setExpiryWarnings] = useState<string[]>([])
   const [showDriverCancelReason, setShowDriverCancelReason] = useState(false)
@@ -137,13 +138,28 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { let interval: any; let active = true; let routeRequestActive = false; async function buildRoute() { if (!ride || routeRequestActive) return; const from = lastLocation.current; const target: [number, number] = ['accepted','driver_assigned','arrived'].includes(String(ride.status)) ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]; routeRequestActive = true; try { const r = await getRoute(from, target); if (!active) return; activeStepIndexRef.current = 0; setActiveStepIndex(0); routeDataRef.current = r; setRoute(r.geometry); setRouteData(r); updateNavigationProgress(from) } catch (routeError) { console.error('Could not refresh driver route', routeError) } finally { routeRequestActive = false } }; void buildRoute(); if (isNavigating) { interval = setInterval(() => void buildRoute(), 15000) } return () => { active = false; clearInterval(interval) } }, [ride?.id, ride?.status, isNavigating])
   async function toggleOnline() {
     if (!isOnline) {
+      // FIXED: re-check fresh from DB, don't trust stale canGoOnline state
       const { data: prof, error: profileCheckError } = await supabase.from('profiles').select('is_verified,verification_status').eq('id', effectiveId).single()
       if (profileCheckError) { alert(`Could not check your approval status: ${errMsg(profileCheckError)}`); return }
       const liveApproved = prof?.is_verified === true && ['approved', 'verified'].includes(String(prof?.verification_status || '').toLowerCase())
       const liveStatus = String(prof?.verification_status || '').toLowerCase()
-      if (!liveApproved || !canGoOnline) {
+      // Fresh docs check
+      const { data: freshDocs } = await supabase.from('driver_documents').select('doc_type,document_type,status,expiry_date,file_url,document_url,storage_path,file_path').eq('driver_id', effectiveId)
+      const latest = new Map<string, any>()
+      for (const d of (freshDocs || [])) { const t = canonicalType((d as any).doc_type || (d as any).document_type); if (t && !latest.has(t)) latest.set(t, d) }
+      const today = new Date(); today.setHours(0,0,0,0)
+      const freshAllApproved = REQUIRED_DOCS.every(req => {
+        const doc: any = latest.get(canonicalType(req.type))
+        if (!doc || String(doc.status || '').toUpperCase() !== 'APPROVED') return false
+        if (!(doc.file_url || doc.document_url || doc.storage_path || doc.file_path)) return false
+        if (req.expiryRequired) { if (!doc.expiry_date) return false; if (new Date(`${doc.expiry_date}T00:00:00`) < today) return false }
+        return true
+      })
+      const freshRejected = (freshDocs || []).some((d: any) => String(d.status || '').toUpperCase() === 'REJECTED')
+      if (!liveApproved || !freshAllApproved || freshRejected) {
         if (liveStatus === 'pending' || liveStatus === 'pending_verification') alert('Waiting for Admin Approval - You cannot go online yet')
         else if (liveStatus === 'identity_complete') alert(`Identity done! You uploaded ${docsUploaded}/${TOTAL_DOCS}. Finish the remaining ${TOTAL_DOCS - docsUploaded} documents to go online.`)
+        else if (freshRejected) alert('One of your documents was rejected. Fix it in onboarding to go online.')
         else alert(`Complete onboarding to go online - ${TOTAL_DOCS - docsUploaded} documents left.`)
         setIsOnline(false)
         return

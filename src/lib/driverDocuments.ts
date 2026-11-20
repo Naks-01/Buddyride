@@ -18,7 +18,6 @@ export const REQUIRED_DOCS = [
   { type: 'vehicle_inspection_report', label: 'Vehicle Inspection Report', section: 'Safety', expiryRequired: true },
 ]
 
-// FIXED: Always canonical - so .has(canonical) and .has(raw) both work
 export const EXPIRING_DRIVER_DOCUMENT_TYPES = new Set(
   REQUIRED_DOCS.filter(document => document.expiryRequired).map(document => normalizeDocType(document.type)),
 )
@@ -35,33 +34,30 @@ export const PASSENGER_DOCUMENTS = [
 export type DriverDocumentType = string
 export type DocumentRequirement = { type: string; label: string; section?: string; expiryRequired?: boolean; helper?: string }
 
-// FIXED: Single source of truth - handles ALL variants: _, -, space, licence/license, singular/plural
 export function normalizeDocType(type: any): string {
   if (!type) return ''
   const t = String(type).toLowerCase().trim().replace(/[_/-]+/g, ' ').replace(/\s+/g, ' ')
 
-  // Vehicle photos - check BEFORE generic, because "vehicle photo 1" would otherwise fall through
   const vehiclePhoto = t.match(/^(?:vehicle|car) photos? (\d+)$/)
   if (vehiclePhoto) return 'vehicle_photo_' + vehiclePhoto[1]
   const interiorPhoto = t.match(/^vehicle interior photos? (\d+)$/)
   if (interiorPhoto) return 'vehicle_interior_photo_' + interiorPhoto[1]
-  // Also handle "vehicle interior 1" without word "photo"
   const interiorShort = t.match(/^vehicle interior (\d+)$/)
   if (interiorShort) return 'vehicle_interior_photo_' + interiorShort[1]
 
   if (['profile', 'profile photo', 'profile picture', 'avatar'].includes(t)) return 'profile_photo'
   if (['selfie', 'selfie face verification', 'face selfie', 'selfie with id', 'face verification'].includes(t)) return 'selfie'
 
-  if (t === 'passport') return 'passport'
+  // FIXED: passport counts as SA ID / Passport - was creating ghost 'passport' type
+  // that made uploadedCount 16/15 and hid missing SA ID
+  if (t === 'passport' || t === 'passport document' || t === 'sa passport') return 'sa_id'
 
-  // SA ID - ALL aliases, including the ones that were creating ghost types
   if ([
     'sa id', 'sa id passport', 'id document', 'id doc', 'id', 'south african id',
     'sa id document', 'south african id document', 'south african id doc',
     'sa id card', 'id card', 'national id', 'south africa id'
   ].includes(t)) return 'sa_id'
 
-  // Drivers License - ALL licence/license + singular/plural + driver/drivers
   if ([
     'drivers license', 'drivers licence', 'license', 'licence', 'drivers', 'driver license', 'driver licence',
     'drivers license card', 'drivers licence card', 'driver license card', 'driver licence card',
@@ -73,22 +69,19 @@ export function normalizeDocType(type: any): string {
   if (['huru criminal check', 'huru check', 'criminal check', 'police clearance', 'huru', 'furn check', 'furn'].includes(t)) return 'huru_criminal_check'
   if (['vehicle inspection report', 'inspection report', 'inspection', 'vehicle inspection'].includes(t)) return 'vehicle_inspection_report'
   if (t === 'vehicle photo') return 'vehicle_photo_1'
-  if (t === 'vehicle') return 'vehicle_registration'
+  // FIXED: removed `if (t === 'vehicle') return 'vehicle_registration'`
+  // and `insurance -> vehicle_registration` - both clobbered registration
+  // Insurance is NOT a required doc, let it fall through to its own type
   if (['pdp', 'prdp', 'pdp doc', 'prdp doc', 'pdp prdp', 'professional driving permit'].includes(t)) return 'prdp'
-  if (['insurance', 'insurance doc', 'insurance document'].includes(t)) return 'vehicle_registration'
 
-  // Fallback: underscores, but also strip "document/doc" suffix if it creates ghost type
-  // e.g. "sa id document" already handled above, this is for unknown future types
   return t.replace(/\s+/g, '_')
 }
 
 export function isFakeFile(filePath?: string | null): boolean {
   const normalizedPath = filePath?.trim().toLowerCase()
   if (!normalizedPath) return true
-  // FIXED: Only flag placeholder URLs, NOT real filenames like test.jpg / dummy.jpg
-  // Must be http AND contain placeholder domain, or be exactly a placeholder filename
   if (normalizedPath.startsWith('http')) {
-    return ['example.com', 'placeholder', 'via.placeholder.com', 'picsum.photos', 'fake.jpg', 'bypassed.jpg'].some(value => normalizedPath.includes(value))
+    return ['example.com', 'via.placeholder.com', 'picsum.photos', 'fake.jpg', 'bypassed.jpg'].some(value => normalizedPath.includes(value))
   }
   return false
 }
@@ -112,8 +105,10 @@ function parseStorageRef(reference: string): { bucket: string, path: string } {
       const parsed = new URL(ref)
       const match = parsed.pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+)$/)
       if (match) return { bucket: match[1], path: decodeURIComponent(match[2]) }
+      // FIXED: old fallback took parts[0] = 'storage' as bucket
+      // Only use fallback if path looks like /bucket/path
       const parts = parsed.pathname.split('/').filter(Boolean)
-      if (parts.length >= 2) return { bucket: parts[0], path: decodeURIComponent(parts.slice(1).join('/')) }
+      if (parts.length >= 2 && !parts[0].includes('storage')) return { bucket: parts[0], path: decodeURIComponent(parts.slice(1).join('/')) }
     } catch {}
     return { bucket: 'driver-documents', path: ref.replace(/^\/+/, '') }
   }
@@ -135,7 +130,6 @@ export async function createDriverDocumentSignedUrl(filePath?: string | null): P
     throw new Error('Unsupported driver document storage path: ' + bucket)
   }
 
-  // All buckets are PRIVATE - MUST use signed URL. getPublicUrl on private bucket returns 403.
   const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 3600)
   if (error) throw new Error(`Could not load document: ${error.message}`)
   return data.signedUrl

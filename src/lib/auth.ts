@@ -37,8 +37,6 @@ export async function ensureProfile(userId: string, email: string | null, rolePa
   const fullName = (user?.user_metadata?.full_name as string) || 'User'
   const phoneValue = (user?.user_metadata?.phone_number as string) || (user?.user_metadata?.phone as string) || ''
   
-  const isPassenger = selectedRole === 'passenger'
-
   const { data, error } = await supabase
    .from('profiles')
    .insert({
@@ -50,9 +48,12 @@ export async function ensureProfile(userId: string, email: string | null, rolePa
       role: selectedRole,
       wallet_balance: 0,
       trips_completed: 0,
-      rating: 5.0,
+      // FIXED: was 5.0 - new user has NO rating, null = show "—"
+      rating: null,
       is_online: false,
-      verification_status: isPassenger ? 'not_started' : 'pending_verification',
+      // FIXED: was pending_verification for drivers - new driver must start
+      // at not_started so App sends them to Onboarding, not Pending screen
+      verification_status: 'not_started',
       is_verified: false,
       id_verified: false,
     } as any)
@@ -95,7 +96,10 @@ export async function signUp(email: string, password: string, role: Exclude<Role
   }
   if (data.user) {
     try {
-      await ensureProfile(data.user.id, normalizedEmail, role)
+      // Only create profile if we have a session - if email confirmation is on,
+      // getUser() will be null and App.loadProfile will create it on first login
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) await ensureProfile(data.user.id, normalizedEmail, role)
     } catch (e) {
       console.error('ensureProfile failed after signup:', e)
     }
@@ -103,8 +107,18 @@ export async function signUp(email: string, password: string, role: Exclude<Role
   return data.user
 }
 
+// FIXED: was `return true` stub - now actually checks last_selfie_date
+// Returns true if selfie already taken TODAY (locked), false if allowed
 export async function checkSelfieLock(userId: string): Promise<boolean> {
-  return true
+  try {
+    const { data } = await supabase.from('profiles').select('last_selfie_date').eq('id', userId).maybeSingle()
+    if (!data?.last_selfie_date) return false
+    const today = new Date()
+    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0')
+    return String((data as any).last_selfie_date).slice(0, 10) === todayStr
+  } catch {
+    return false
+  }
 }
 
 export async function updateSelfieDate(userId: string, selfieUrl: string) {
@@ -133,7 +147,6 @@ export async function sendSmsOtp(phone: string): Promise<void> {
   if ((data as any)?.error) throw new Error((data as any).error)
 }
 
-// ✅ FIXED - was calling send-sms-otp, now calls verify-sms-otp
 export async function verifySmsOtp(phone: string, code: string): Promise<boolean> {
   const cleanPhone = formatSAPhone(phone)
   if (!/^\+27[0-9]{9}$/.test(cleanPhone) || !/^\d{6}$/.test(code.trim())) return false

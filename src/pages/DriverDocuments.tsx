@@ -7,14 +7,14 @@ const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
 const BLUE_LIGHT = '#E6F0FF'
 
-// FIXED: Use SAME canonical as Onboarding + Pending - no local manual mapping
 function canonicalKey(raw: string | null | undefined) {
   return canonicalType(raw || '')
 }
 
+// FIXED: only per-type, no fallback to drivers_license
 function getExpiryForType(expiryDates: Record<string, string>, key: string): string | null {
   const c = canonicalType(key)
-  return expiryDates[c] || expiryDates[key] || expiryDates['drivers_license'] || expiryDates['drivers_licence'] || expiryDates['driver_license'] || expiryDates['driver_licence'] || null
+  return expiryDates[c] || expiryDates[key] || null
 }
 
 const DOC_TYPES = [
@@ -128,13 +128,9 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       for (const d of deduped) {
         const key = canonicalKey(d.doc_type || d.document_type)
         if (key && d.expiry_date && !exp[key]) {
-          const v = String(d.expiry_date).slice(0, 10)
-          exp[key] = v
-          // FIXED: expand to all variants so upload can find it
-          if (key.includes('licen')) { exp['drivers_license']=v; exp['drivers_licence']=v; exp['driver_license']=v; exp['driver_licence']=v }
+          exp[key] = String(d.expiry_date).slice(0, 10)
         }
       }
-      // FIXED: merge with previous so picking date before upload is not lost on reload
       setExpiryDates(prev => ({ ...prev, ...exp }))
       const previews: Record<string, string> = {}
       await Promise.all(deduped.map(async (d) => {
@@ -155,11 +151,14 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
 
   useEffect(() => { void load() }, [driverId])
 
-  // FIXED: save expiry under ALL variants + persist even if doc not yet uploaded
+  // FIXED: save expiry ONLY for this key, no cross-over
   async function saveExpiry(key: DocKey, value: string) {
     const cKey = canonicalKey(key)
-    setExpiryDates(prev => ({ ...prev, [cKey]: value, [key]: value, drivers_license: value, drivers_licence: value, driver_license: value, driver_licence: value }))
-    try { const cur = JSON.parse(localStorage.getItem('br_expiry_dates') || '{}'); cur[cKey]=value; cur[key]=value; cur['drivers_license']=value; localStorage.setItem('br_expiry_dates', JSON.stringify(cur)) } catch {}
+    setExpiryDates(prev => {
+      const next = { ...prev, [cKey]: value, [key]: value }
+      try { localStorage.setItem('br_expiry_dates', JSON.stringify(next)) } catch {}
+      return next
+    })
     if (!value) return
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || driverId
@@ -180,7 +179,6 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       if (['heic','heif'].includes(extFromName)) throw new Error('iPhone HEIC not supported. Screenshot the document or pick JPG.')
       const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       if (file.size <= 0 || file.size > 20 * 1024 * 1024) throw new Error('File must be greater than 0 bytes and smaller than 20 MB.')
-      // FIXED: BLOCK upload if expiring doc has no expiry - was saving null before
       const expiryForUpload = getExpiryForType(expiryDates, key)
       if (EXPIRING_DOCS.has(cKey) && !expiryForUpload) throw new Error(`Please select Expiry Date for ${meta.label} FIRST, then click Upload.`)
       if (EXPIRING_DOCS.has(cKey) && expiryForUpload && expiryForUpload < southAfricanToday()) {

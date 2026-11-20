@@ -14,23 +14,39 @@ if (!rootEl) {
 
 const root = ReactDOM.createRoot(rootEl)
 
-// FIXED: If a new deploy breaks cached chunks, auto-reload once instead of white-screen loop
 function isChunkError(msg: string) {
-  return msg.includes('ChunkLoadError') || msg.includes('Loading chunk') || msg.includes('Failed to fetch dynamically imported module') || msg.includes('Importing a module script failed')
+  return msg.includes('ChunkLoadError') || msg.includes('Loading chunk') || msg.includes('Failed to fetch dynamically imported module') || msg.includes('Importing a module script failed') || msg.includes('Failed to fetch')
 }
-let chunkReloaded = false
-try { chunkReloaded = sessionStorage.getItem('buddyride_chunk_reloaded') === '1' } catch {}
+
+// FIXED: timestamp guard, not permanent flag - allows reload on NEXT deploy too
+const CHUNK_RELOAD_KEY = 'buddyride_chunk_reloaded_at'
+function shouldReloadForChunk(): boolean {
+  try {
+    const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0)
+    // If we already reloaded in last 10s, don't loop
+    if (Date.now() - last < 10_000) return false
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()))
+    return true
+  } catch { return false }
+}
+// FIXED: clear the guard once app loads successfully, so next deploy can reload again
+function clearChunkReloadGuard() {
+  try { sessionStorage.removeItem(CHUNK_RELOAD_KEY) } catch {}
+}
+window.addEventListener('load', () => {
+  // App mounted OK - clear guard after 3s
+  setTimeout(clearChunkReloadGuard, 3000)
+})
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
   state = { hasError: false, error: null as Error | null }
   static getDerivedStateFromError(error: Error) { return { hasError: true, error } }
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('BuddyRide crash:', error, info)
-    // FIXED: Auto-recover from stale chunk after deploy
-    const msg = String((error as any)?.message || error || '')
-    if (isChunkError(msg) && !chunkReloaded) {
-      try { sessionStorage.setItem('buddyride_chunk_reloaded', '1') } catch {}
+    const msg = String((error as any)?.message || error || '') + String((error as any)?.stack || '')
+    if (isChunkError(msg) && shouldReloadForChunk()) {
       window.location.reload()
+      return
     }
   }
   handleReset = () => {
@@ -41,7 +57,6 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
     try {
       localStorage.removeItem('buddyride_pending_role')
       ;(window as any).__buddyride_role = undefined
-      // FIXED: Clear Supabase auth keys too - a corrupted token can cause infinite crash loop
       const keys: string[] = []
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i)
@@ -77,18 +92,13 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 let rejectionToast: HTMLDivElement | null = null
 window.addEventListener('unhandledrejection', (e) => {
   console.error('BuddyRide unhandled rejection:', e.reason)
-  const msg = String((e.reason as any)?.message || e.reason || '')
-  // FIXED: Do not spam toast for benign errors
+  const msg = String((e.reason as any)?.message || e.reason || '') + String((e.reason as any)?.stack || '')
   if (msg.includes('AbortError') || msg.includes('aborted')) return
   if (msg.includes('ResizeObserver')) return
   if (msg.includes('AuthRetryableFetchError') || msg.includes('Network request failed')) return
-  if (msg.includes('Failed to fetch')) return
-  // FIXED: Chunk error after deploy - reload once, do not show toast
+  if (msg.includes('Failed to fetch') && !isChunkError(msg)) return
   if (isChunkError(msg)) {
-    if (!chunkReloaded) {
-      try { sessionStorage.setItem('buddyride_chunk_reloaded', '1') } catch {}
-      window.location.reload()
-    }
+    if (shouldReloadForChunk()) window.location.reload()
     return
   }
   if (rejectionToast) return

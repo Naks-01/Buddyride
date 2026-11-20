@@ -1,12 +1,13 @@
 "use client"
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { normalizeDocType as canonicalType } from '../lib/driverDocuments'
+import { normalizeDocType as canonicalType, REQUIRED_DOCS } from '../lib/driverDocuments'
 
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
 const BLUE_DARK = '#0052CC'
-const TOTAL_EXPECTED = 15
+// FIXED: was hardcoded 15, now follows REQUIRED_DOCS
+const TOTAL_EXPECTED = REQUIRED_DOCS.length
 const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_license'])
 
 type DocRow = { name: string, reason: string, status: string }
@@ -29,7 +30,6 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
   const checkingRef = useRef(false)
   const needsRecheckRef = useRef(false)
 
-  // FIXED: Use SAME canonical as Onboarding - no more local normalizeKey mismatch
   const normalizeKey = (raw: string) => canonicalType(raw || '')
 
   const prettyName = (key: string) => {
@@ -40,7 +40,8 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
     return k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
 
-  const ALL_DOCS = ['profile_photo','selfie','sa_id','drivers_license','prdp','vehicle_registration','license_disc','vehicle_photo_1','vehicle_photo_2','vehicle_photo_3','vehicle_photo_4','vehicle_interior_photo_1','vehicle_interior_photo_2','huru_criminal_check','vehicle_inspection_report']
+  // FIXED: derive from REQUIRED_DOCS, not a hardcoded copy
+  const ALL_DOCS = REQUIRED_DOCS.map(d => canonicalType(d.type))
 
   async function checkStatus() {
     if (checkingRef.current) { needsRecheckRef.current = true; return }
@@ -70,7 +71,8 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
         setRejectionReason((data as any).verification_rejection_reason || null)
         const hasNumbers = Boolean(((data as any).id_number || '').toString().trim() && (((data as any).licence_number || (data as any).driver_licence_number || '').toString().trim()))
         setHasIdNumbers(hasNumbers)
-        const isApproved = (data as any).is_verified === true || ['approved','verified'].includes(String(vStatus).toLowerCase())
+        // FIXED: was OR, now AND - must be verified AND status approved
+        const isApproved = (data as any).is_verified === true && ['approved','verified'].includes(String(vStatus).toLowerCase())
         if (isApproved) {
           if (onApproved) onApproved()
           else window.location.href = '/driver'
@@ -78,7 +80,6 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
         }
       }
 
-      // FIXED: dedupe by canonical, keep newest, preserve expiry_date
       const latest = new Map<string, any>()
       for (const d of (docsRes.data || [])) {
         const key = normalizeKey(d.doc_type || d.document_type || '')
@@ -89,7 +90,6 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
       setTotalDocs(TOTAL_EXPECTED)
       setUploadedCount(deduped.filter(d => d.file_url || d.document_url).length)
 
-      // FIXED: Identity = 4 docs WITH files + license must have expiry_date
       const identityDocs = deduped.filter(d => IDENTITY_TYPES.has(normalizeKey(d.doc_type)) && (d.file_url || d.document_url))
       setIdentityCount(identityDocs.length)
       const licenseDoc = deduped.find(d => normalizeKey(d.doc_type) === 'drivers_license')
@@ -143,7 +143,6 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
   }, [])
 
   const isRejected = status.toLowerCase() === 'rejected' || rejectedDocs.length > 0 || !!rejectionReason
-  // FIXED: Identity complete ONLY if 4 files + ID numbers + license expiry present
   const isIdentityComplete = !isRejected && !licenseExpiryMissing && (status.toLowerCase() === 'identity_complete' || (identityCount === 4 && uploadedCount >= 4 && hasIdNumbers))
   const isIdentityPhotosOnly = !isRejected && identityCount === 4 && uploadedCount >= 4 && (!hasIdNumbers || licenseExpiryMissing)
   const isFullPending = ['pending','pending_verification','submitted','under_review','in_review'].includes(status.toLowerCase())

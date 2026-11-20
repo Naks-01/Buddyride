@@ -47,15 +47,14 @@ function Brand({ compact = false }: { compact?: boolean }) {
   </div>
 }
 
-function driverScreenFor(status: string | null | undefined, path: string): 'onboarding' | 'pending' | 'home' {
-  const vs = String(status || '').toLowerCase()
+// FIXED: Route by PATH only, let DriverDashboardGuard decide by STATUS
+// Old code returned 'pending' for /driver/dashboard when status=pending,
+// trapping identity_complete / pending drivers in Pending loop.
+function driverScreenFor(_status: string | null | undefined, path: string): 'onboarding' | 'pending' | 'home' {
   const p = String(path || '/').replace(/\/+$/, '') || '/'
   if (p === '/driver/onboarding') return 'onboarding'
-  if (vs === 'approved' || vs === 'verified') return 'home'
-  if (vs === 'identity_complete') return 'home'
-  if (vs === 'pending' || vs === 'pending_verification' || vs === 'submitted' || vs === 'under_review' || vs === 'in_review') return 'pending'
-  if (vs === 'rejected') return 'onboarding'
-  return 'onboarding'
+  if (p === '/driver/pending') return 'pending'
+  return 'home'
 }
 
 export default function App() {
@@ -133,7 +132,6 @@ export default function App() {
       }
       setProfile(result); setShowLanding(false)
       if (result.role === 'driver') {
-        // FIXED Ln 145 - use String() to avoid TS literal union error
         const current = String(window.location.pathname || '/')
         if (current === '/' || current === '') {
           const driverEntryPath = getDriverEntryPath(result.role, result.verification_status, current) as string | null
@@ -258,13 +256,13 @@ export default function App() {
     if (shouldVerifyAdminAccess && checkedAdminUserId !== profile.id) {
       return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>Verifying admin access…</p><div className="loading-dots"><i /><i /><i /></div></main>
     }
-    const navigationRideId = window.location.pathname.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
+    const navigationRideId = currentPath.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {
       if (profile.role !== 'driver') return <main className="auth-page"><section className="auth-card"><h1>Driver access required</h1><p>This navigation screen is only available to the assigned driver.</p><button className="primary" style={{ background: BLUE }} onClick={() => window.location.assign('/')}>Back to home</button></section></main>
       return <Suspense fallback={<main className="splash splash-intro">Loading driver navigation…</main>}><DriverNavigationView rideId={navigationRideId} profile={profile} onBack={() => window.location.assign('/')} /></Suspense>
     }
     if (profile.role === 'passenger') {
-      if (window.location.pathname.startsWith('/driver')) {
+      if (currentPath.startsWith('/driver')) {
         window.history.replaceState(null, '', '/')
       }
       return <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}>
@@ -277,14 +275,13 @@ export default function App() {
       const screen = driverScreenFor(profile.verification_status, driverRoute)
 
       if (screen === 'onboarding') {
-        return <DriverOnboarding profile={profile} onDashboard={async () => { await refreshProfile(); navigateDriverPath('/driver/dashboard', true) }} />
+        return <DriverOnboarding profile={profile} onDashboard={async () => { await refreshProfile(); navigateDriverPath('/driver', true) }} />
       }
       if (screen === 'pending') {
-        return <DriverPendingPage onApproved={async () => { await refreshProfile(); navigateDriverPath('/driver/dashboard', true) }} />
+        return <DriverPendingPage onApproved={async () => { await refreshProfile(); navigateDriverPath('/driver', true) }} />
       }
-      if (profile.verification_status === 'identity_complete') {
-        return <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
-      }
+      // FIXED: No more identity_complete bypass - ALL driver home goes through Guard
+      // Guard now allows identity_complete in, and shows pending only if truly submitted
       return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
         <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
       </DriverDashboardGuard>

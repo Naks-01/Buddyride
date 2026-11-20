@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { normalizeDocType as canonicalType, REQUIRED_DOCS } from '../lib/driverDocuments'
 
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
@@ -7,7 +8,8 @@ const BLUE_DARK = '#0052CC'
 const SUPPORT_PHONE = '064 101 8991'
 const SUPPORT_TEL = '0641018991'
 const SUPPORT_WHATSAPP = 'https://wa.me/27641018991'
-const TOTAL_EXPECTED = 15
+// FIXED: was hardcoded 15
+const TOTAL_EXPECTED = REQUIRED_DOCS.length
 const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_license'])
 
 export default function DriverProfile({ onBack }: { onBack?: () => void }) {
@@ -44,11 +46,8 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
   const [totalFares, setTotalFares] = useState(0)
   const [platformFees, setPlatformFees] = useState(0)
 
-  const normalizeKey = (raw: string) => {
-    const k = (raw || '').toLowerCase().trim()
-    if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id') return 'sa_id'
-    return k
-  }
+  // FIXED: use same canonical as all other files
+  const normalizeKey = (raw: string) => canonicalType(raw || '')
 
   useEffect(() => {
     async function load() {
@@ -77,7 +76,6 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
         }
       } catch {}
 
-      // FIXED: No fake defaults - 0 trips = 0 acceptance, no rating, no score
       let acceptance = 0
       let hasTrips = false
       let rating = 0
@@ -104,7 +102,6 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
           setTrips(rides.slice(0, 20))
           setTotalFares(totalFare)
           setPlatformFees(fees)
-          // Only use real rating if profile has one
           if (profile?.rating != null && Number(profile.rating) > 0) { rating = Number(profile.rating); hasRating = true }
           if (driverData?.rating != null && Number(driverData.rating) > 0) { rating = Number(driverData.rating); hasRating = true }
         }
@@ -167,7 +164,6 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
     if (['heic','heif'].includes(ext)) { alert('iPhone HEIC not supported. Take a screenshot of the photo and upload that.'); e.target.value = ''; return }
     if (!file.type.startsWith('image/')) { alert('Please choose an image file (JPEG, PNG, WebP).'); e.target.value = ''; return }
     if (file.size > 20 * 1024 * 1024) { alert('Image must be under 20MB.'); e.target.value = ''; return }
-    // FIXED: Warn - changing photo sends it back for review
     if (!confirm('Change profile photo? It will be sent for admin re-review.')) { e.target.value = ''; return }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
@@ -256,7 +252,6 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
     { icon: '🛡️', label: 'Safety', action: () => togglePanel('safety') },
     { icon: '⚙️', label: 'Settings', action: () => togglePanel('settings') },
     { icon: '❓', label: 'Help Centre', sub: 'WhatsApp us', action: () => { window.open(SUPPORT_WHATSAPP, '_blank') } },
-    // FIXED: Always dial Support, not driver's own number
     { icon: '📞', label: 'Contact Support', sub: SUPPORT_PHONE, action: () => { window.open(`tel:${SUPPORT_TEL}`, '_blank') } },
     { icon: '🚪', label: 'Log Out', danger: true, action: () => void handleLogout() },
   ]

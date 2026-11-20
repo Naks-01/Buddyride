@@ -33,14 +33,8 @@ export function DriverDashboardGuard({
   const accessRef = useRef<DashboardAccess>('checking')
   accessRef.current = access
 
-  // FIXED: Single canonical - same as Onboarding / Pending / Documents
-  // normalizeDocType already handles licence->license, so just handle SA ID aliases
-  const normalizeKey = (raw: string) => {
-    const k = normalizeDocType(raw || '')
-    if (k === 'south_african_id' || k === 'id' || k === 'sa_id_document' || k === 'sa-id' || k === 'south_african_id_document') return 'sa_id'
-    if (k === 'drivers_licence' || k === 'driver_licence' || k === 'driver_license') return 'drivers_license'
-    return k
-  }
+  // FIXED: normalizeDocType already handles licence/license + sa_id aliases
+  const normalizeKey = (raw: string) => normalizeDocType(raw || '')
 
   const prettyName = (raw: string) => {
     const k = normalizeKey(raw)
@@ -78,7 +72,6 @@ export function DriverDashboardGuard({
       const docs = (documents || []) as DocRow[]
       const statusOf = (d: DocRow) => (d.status || '').toUpperCase()
 
-      // FIXED: Use SAME normalizeKey for map AND lookup
       const latest = new Map<string, DocRow>()
       for (const d of docs) {
         const key = normalizeKey(d.doc_type || d.document_type || '')
@@ -88,7 +81,6 @@ export function DriverDashboardGuard({
       const requiredDocuments = REQUIRED_DOCS.map(requirement => latest.get(normalizeKey(requirement.type)))
       const rejected = requiredDocuments.filter((d): d is DocRow => Boolean(d && statusOf(d) === 'REJECTED'))
       const pending = requiredDocuments.filter((d): d is DocRow => Boolean(d && ['PENDING','PENDING_VERIFICATION'].includes(statusOf(d))))
-      // FIXED: expiry check uses canonical + tolerant date compare, and hasRealDocument fallback
       const approvedList = requiredDocuments.filter((d, index): d is DocRow => {
         if (!d || statusOf(d) !== 'APPROVED') return false
         const hasFile = hasRealDocument(d.file_url || d.document_url || d.storage_path || d.file_path)
@@ -101,7 +93,7 @@ export function DriverDashboardGuard({
         }
         return true
       })
-      const completeApproved = requiredDocuments.length === REQUIRED_DOCS.length && approvedList.length === REQUIRED_DOCS.length
+      const completeApproved = approvedList.length === REQUIRED_DOCS.length
       setRejectedDocs(rejected)
       setPendingDocs(pending)
       setApprovedCount(approvedList.length)
@@ -116,31 +108,44 @@ export function DriverDashboardGuard({
         return
       }
 
-      // FIXED: identity_complete should NOT be stuck on Guard pending - send to onboarding to finish rest, not infinite pending
+      // FIXED: identity_complete = LET THEM IN to finish rest inside app
+      // This matches DriverOnboarding enterAppAfterIdentity()
       if (vStatus === 'identity_complete') {
-        // Identity done, but not fully approved yet - let app open (onboarding inside handles rest)
-        // If you want to block dashboard until fully approved, keep pending. We allow pending screen with Check Again.
+        setAccess('approved')
+        return
+      }
+
+      if (rejected.length > 0) {
         setAccess('pending')
         return
       }
 
-      if ((vStatus === 'rejected' && rejected.length === 0) || rejected.length > 0 || ['pending','pending_verification'].includes(vStatus) ) {
+      if (['pending','pending_verification','submitted','under_review','in_review'].includes(vStatus)) {
         setAccess('pending')
         return
       }
 
-      if (docs.length > 0) {
-        setAccess('pending')
-        return
-      }
-
-      if (!profileApproved || !completeApproved) {
+      // FIXED: no docs at all, or incomplete and never submitted -> onboarding, not pending
+      if (docs.length === 0 || !vStatus || vStatus === 'not_started') {
         if (!onboardingSentRef.current) {
           onboardingSentRef.current = true
           onRequireOnboarding()
         }
         return
       }
+
+      // Has some docs but never submitted -> onboarding to finish
+      if (vStatus !== 'rejected' && pending.length === 0 && approvedList.length < REQUIRED_DOCS.length) {
+        // If they have docs but haven't submitted, send back to onboarding
+        // Unless they are explicitly pending above, don't trap them
+        if (!onboardingSentRef.current) {
+          onboardingSentRef.current = true
+          onRequireOnboarding()
+        }
+        return
+      }
+
+      setAccess('pending')
     } finally {
       checkingRef.current = false
       setChecking(false)
