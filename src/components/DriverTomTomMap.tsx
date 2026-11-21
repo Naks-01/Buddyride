@@ -13,11 +13,9 @@ type Props = {
   theme?: 'dark' | 'light' | string
 }
 
-// FIX: Parse ALL route formats - TomTom raw + array + GeoJSON
 function parseRoute(route: any): [number, number][] {
   if (!route) return []
   try {
-    // 1. TomTom raw: { routes: [{ legs: [{ points: [...] }] }] }
     if (route.routes?.[0]?.legs) {
       const pts: [number, number][] = []
       for (const leg of route.routes[0].legs) {
@@ -27,23 +25,18 @@ function parseRoute(route: any): [number, number][] {
       }
       if (pts.length >= 2) return pts
     }
-    // 2. TomTom points directly: { points: [{latitude, longitude}] }
     if (Array.isArray(route.points) && route.points[0]?.latitude !== undefined) {
       return route.points.map((p: any) => [p.latitude, p.longitude] as [number, number])
     }
-    // 3. Array of {latitude, longitude}
     if (Array.isArray(route) && route.length > 0 && route[0]?.latitude !== undefined) {
       return route.map((p: any) => [p.latitude, p.longitude] as [number, number])
     }
-    // 4. Array of {lat, lng}
     if (Array.isArray(route) && route.length > 0 && route[0]?.lat !== undefined) {
       return route.map((p: any) => [p.lat, p.lng ?? p.lon] as [number, number])
     }
-    // 5. Array of [lng, lat]
     if (Array.isArray(route) && route.length > 0 && Array.isArray(route[0])) {
       return route.map((c: any) => [c[1], c[0]] as [number, number])
     }
-    // 6. GeoJSON Feature / FeatureCollection / LineString / MultiLineString
     let coords: any = null
     if (route.type === 'FeatureCollection' && route.features?.[0]?.geometry?.coordinates) coords = route.features[0].geometry.coordinates
     else if (route.type === 'Feature' && route.geometry?.coordinates) coords = route.geometry.coordinates
@@ -57,6 +50,14 @@ function parseRoute(route: any): [number, number][] {
   return []
 }
 
+// Bolt: shortest angle interpolation so car doesn't spin 350deg backwards
+function lerpAngle(a: number, b: number, t: number) {
+  let diff = (b - a) % 360
+  if (diff > 180) diff -= 360
+  if (diff < -180) diff += 360
+  return a + diff * t
+}
+
 export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, theme = 'light' }: Props) {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -64,8 +65,15 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   const driverMarkerRef = useRef<L.Marker | null>(null)
   const tileLayerRef = useRef<L.TileLayer | null>(null)
   const followRef = useRef(followDriver)
+  const animRef = useRef<number | null>(null)
+  const currentPos = useRef<[number, number] | null>(null)
+  const currentBearing = useRef(0)
+  const targetPos = useRef<[number, number] | null>(null)
+  const targetBearing = useRef(0)
+
   useEffect(() => { followRef.current = followDriver }, [followDriver])
 
+  // INIT MAP - Bolt style: no zoomControl, smooth
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
     const map = L.map(containerRef.current, {
@@ -80,6 +88,8 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       minZoom: 2,
       maxZoom: 22,
       maxBoundsViscosity: 0,
+      zoomAnimation: true,
+      fadeAnimation: true,
     } as any).setView([center[1], center[0]], 16)
     mapRef.current = map
     const t1 = setTimeout(() => map.invalidateSize(), 100)
@@ -87,46 +97,89 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     const t3 = setTimeout(() => map.invalidateSize(), 1500)
     const onResize = () => map.invalidateSize()
     window.addEventListener('resize', onResize)
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); window.removeEventListener('resize', onResize); map.remove(); mapRef.current = null }
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); window.removeEventListener('resize', onResize); if (animRef.current) cancelAnimationFrame(animRef.current); map.remove(); mapRef.current = null }
   }, [])
 
+  // TILE LAYER - same as yours
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current)
     const KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
-    console.log('[DriverMap] TomTom key exists?', !!KEY)
-    if (!KEY || KEY === 'undefined') {
-      console.error('[DriverMap] VITE_TOMTOM_API_KEY missing - TomTom only, no fallback')
-      return
-    }
+    if (!KEY || KEY === 'undefined') return
     const isDark = theme === 'dark'
     const url = isDark
       ? `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${KEY}`
       : `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${KEY}`
-    tileLayerRef.current = L.tileLayer(url, { minZoom: 2, maxZoom: 22, maxNativeZoom: 19, attribution: '&copy; TomTom' })
-      .on('tileerror', () => {
-        console.error('[DriverMap] TomTom tile error - check key / quota')
-      })
-      .addTo(map)
+    tileLayerRef.current = L.tileLayer(url, { minZoom: 2, maxZoom: 22, maxNativeZoom: 19, attribution: '&copy; TomTom' }).addTo(map)
   }, [theme])
 
+  // === BOLT SMOOTH MOVEMENT - THIS IS THE FIX ===
   useEffect(() => {
     if (!mapRef.current || !driverLocation) return
-    const latLng: any = [driverLocation[1], driverLocation[0]]
-    if (!driverMarkerRef.current) {
-      const icon = L.divIcon({ html: `<div style="width:40px;height:40px;border-radius:50%;background:#0066FF;border:3px solid white;display:grid;place-items:center;color:white;transform:rotate(${bearing}deg)">▲</div>`, className: '', iconSize: [40,40], iconAnchor: [20,20] })
-      driverMarkerRef.current = L.marker(latLng, { icon }).addTo(mapRef.current)
-    } else {
-      driverMarkerRef.current.setLatLng(latLng)
-      try { (driverMarkerRef.current.getElement() as any).firstChild.style.transform = `rotate(${bearing}deg)` } catch {}
+    const map = mapRef.current
+    const newLatLng: [number, number] = [driverLocation[1], driverLocation[0]]
+
+    // First time: place instantly
+    if (!currentPos.current) {
+      currentPos.current = newLatLng
+      targetPos.current = newLatLng
+      currentBearing.current = bearing
+      targetBearing.current = bearing
+      const icon = L.divIcon({
+        html: `<div id="buddy-car" style="width:48px;height:48px;display:grid;place-items:center;transform:rotate(${bearing}deg);transition:transform 0.1s linear;"><div style="width:38px;height:56px;background:#111;border-radius:10px;border:2px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;font-size:20px;">▲</div></div>`,
+        className: '',
+        iconSize: [48, 48],
+        iconAnchor: [24, 24]
+      })
+      driverMarkerRef.current = L.marker(newLatLng, { icon, zIndexOffset: 1000 }).addTo(map)
+      map.setView(newLatLng, 17, { animate: true })
+      return
     }
-    if (followRef.current) {
-      mapRef.current.setView([driverLocation[1], driverLocation[0]], mapRef.current.getZoom(), { animate: false })
+
+    targetPos.current = newLatLng
+    targetBearing.current = bearing
+
+    // Cancel previous animation
+    if (animRef.current) cancelAnimationFrame(animRef.current)
+
+    const startPos = [...currentPos.current] as [number, number]
+    const startBearing = currentBearing.current
+    const startTime = performance.now()
+    const DURATION = 1000 // 1s glide like Bolt
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime
+      const t = Math.min(elapsed / DURATION, 1)
+      // Ease out cubic - fast start, smooth stop like Bolt
+      const eased = 1 - Math.pow(1 - t, 3)
+
+      const lat = startPos[0] + (targetPos.current![0] - startPos[0]) * eased
+      const lng = startPos[1] + (targetPos.current![1] - startPos[1]) * eased
+      const b = lerpAngle(startBearing, targetBearing.current, eased)
+
+      currentPos.current = [lat, lng]
+      currentBearing.current = b
+
+      if (driverMarkerRef.current) {
+        driverMarkerRef.current.setLatLng([lat, lng])
+        const el = driverMarkerRef.current.getElement()?.querySelector('#buddy-car') as HTMLElement
+        if (el) el.style.transform = `rotate(${b}deg)`
+      }
+
+      // Bolt camera: follow with smooth pan, keep zoom 17
+      if (followRef.current) {
+        map.panTo([lat, lng], { animate: true, duration: 0.3 })
+      }
+
+      if (t < 1) {
+        animRef.current = requestAnimationFrame(animate)
+      }
     }
+    animRef.current = requestAnimationFrame(animate)
   }, [driverLocation, bearing])
 
-  // POLYLINE - FIXED
+  // ROUTE POLYLINE - same as yours
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -136,23 +189,15 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       return
     }
     const latLngs = parseRoute(route)
-    console.log('[Driver Polyline] points:', latLngs.length, 'route type:', Array.isArray(route) ? 'array' : route?.type || Object.keys(route || {}))
-    if (latLngs.length < 2) {
-      console.warn('[Driver Polyline] No valid points - check what DriverHome passes as route')
-      return
-    }
+    if (latLngs.length < 2) return
     if (!routeLineRef.current) {
       routeLineRef.current = L.polyline(latLngs, { color: '#0066FF', weight: 7, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map)
     } else {
       routeLineRef.current.setLatLngs(latLngs)
     }
     routeLineRef.current.bringToFront()
-    // Only fit once when route first appears - don't fight followDriver
-    // If you want auto-zoom to route, uncomment:
-    // map.fitBounds(routeLineRef.current.getBounds(), { padding: [60, 60] })
   }, [route])
 
-  // FIX: screenshot bug - container must have real height, not 100% of unknown parent
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', minHeight: '100vh', background: '#e5e7eb', zIndex: 0 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '100vh' }} />

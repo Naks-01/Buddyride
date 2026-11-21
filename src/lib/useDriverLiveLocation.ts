@@ -5,11 +5,13 @@ type DriverLocationRow = {
   driver_id: string
   lat: number
   lng: number
+  heading?: number | null
   updated_at: string
 }
 
 type DriverLiveLocation = {
   coordinates: [number, number]
+  bearing: number
   updatedAt: string
 }
 
@@ -18,37 +20,27 @@ export function useDriverLiveLocation(driverId: string | null) {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!driverId) {
-      setLocation(null)
-      setError('')
-      return
-    }
-
+    if (!driverId) { setLocation(null); setError(''); return }
     let active = true
     let receivedRealtimeUpdate = false
+
     const applyLocation = (row: DriverLocationRow | null) => {
       if (!active) return
-      if (!row || !Number.isFinite(row.lng) || !Number.isFinite(row.lat)) {
-        setLocation(null)
-        return
-      }
-      setLocation({ coordinates: [row.lng, row.lat], updatedAt: row.updated_at })
+      if (!row || !Number.isFinite(row.lng) || !Number.isFinite(row.lat)) { setLocation(null); return }
+      setLocation({ 
+        coordinates: [row.lng, row.lat], 
+        bearing: row.heading ?? 0, // BOLT: need heading to rotate car
+        updatedAt: row.updated_at 
+      })
     }
 
-    // FIX: Don't use cached createRealtimeChannel here - this hook needs a FRESH channel per mount.
-    // Cached channel + .on() again = duplicate listeners. Direct channel + removeChannel = clean.
     const channel = supabase.channel(`passenger-driver-location-${driverId}-${Date.now()}`)
       .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'driver_locations',
+        event: '*', schema: 'public', table: 'driver_locations',
         filter: `driver_id=eq.${driverId}`,
       }, payload => {
         receivedRealtimeUpdate = true
-        if (payload.eventType === 'DELETE') {
-          applyLocation(null)
-          return
-        }
+        if (payload.eventType === 'DELETE') { applyLocation(null); return }
         applyLocation(payload.new as DriverLocationRow)
       })
       .subscribe((status, subscribeError) => {
@@ -59,36 +51,25 @@ export function useDriverLiveLocation(driverId: string | null) {
         }
       })
 
-    void supabase
-      .from('driver_locations')
-      .select('driver_id,lat,lng,updated_at')
-      .eq('driver_id', driverId)
-      .maybeSingle()
+    void supabase.from('driver_locations')
+      .select('driver_id,lat,lng,heading,updated_at')
+      .eq('driver_id', driverId).maybeSingle()
       .then(({ data, error: queryError }) => {
         if (!active || receivedRealtimeUpdate) return
-        if (queryError) {
-          setError(`Could not load the driver's location: ${queryError.message}`)
-          return
-        }
+        if (queryError) { setError(`Could not load the driver's location: ${queryError.message}`); return }
         applyLocation(data as DriverLocationRow | null)
       })
 
-    // FIX: Polling fallback - if Realtime fails (common on mobile / bad network), still update every 8s
+    // BOLT: 3s not 8s - 8s = jump, 3s + smooth animation = glide
     const poll = setInterval(async () => {
       if (!active) return
-      const { data } = await supabase
-        .from('driver_locations')
-        .select('driver_id,lat,lng,updated_at')
-        .eq('driver_id', driverId)
-        .maybeSingle()
+      const { data } = await supabase.from('driver_locations')
+        .select('driver_id,lat,lng,heading,updated_at')
+        .eq('driver_id', driverId).maybeSingle()
       if (data) applyLocation(data as DriverLocationRow)
-    }, 8000)
+    }, 3000)
 
-    return () => {
-      active = false
-      clearInterval(poll)
-      void supabase.removeChannel(channel)
-    }
+    return () => { active = false; clearInterval(poll); void supabase.removeChannel(channel) }
   }, [driverId])
 
   return { location, error }
