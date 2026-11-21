@@ -55,66 +55,52 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
     const KEY = import.meta.env.VITE_TOMTOM_API_KEY
-    
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: `https://api.tomtom.com/map/1/style/20.1.0-8/style.json?map=basic_main&poi=poi_main&key=${KEY}`,
+      style: {
+        version: 8,
+        sources: {
+          tomtom: {
+            type: 'raster',
+            tiles: [`https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${KEY}`],
+            tileSize: 256,
+            maxzoom: 19
+          }
+        },
+        layers: [{ id: 'tomtom', type: 'raster', source: 'tomtom', paint: { 'raster-fade-duration': 0 } }]
+      } as any,
       center: [center[0], center[1]],
       zoom: 16,
-      pitch: 0,
     })
-
     mapRef.current = map
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
-
     map.on('movestart', (e: any) => { if (e.originalEvent) onMapMoveRef.current?.() })
-    map.on('zoomstart', (e: any) => { if (e.originalEvent) onMapMoveRef.current?.() })
-
-    return () => {
-      if (animRef.current) cancelAnimationFrame(animRef.current)
-      map.remove()
-      mapRef.current = null
-    }
+    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); map.remove(); mapRef.current = null }
   }, [])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !driverLocation) return
     const lngLat: [number, number] = [driverLocation[0], driverLocation[1]]
-
     if (!markerRef.current) {
       const el = document.createElement('div')
-      el.style.width = '48px'
-      el.style.height = '48px'
-      el.style.background = '#111'
-      el.style.borderRadius = '14px'
-      el.style.border = '3px solid white'
-      el.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)'
-      el.style.display = 'grid'
-      el.style.placeItems = 'center'
-      el.style.transform = `rotate(${bearing}deg)`
-      el.innerHTML = `<div style="color:white;font-size:22px">▲</div>`
+      el.style.width = '48px'; el.style.height = '48px'; el.style.background = '#111'; el.style.borderRadius = '14px'; el.style.border = '3px solid white'; el.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)'; el.style.display = 'grid'; el.style.placeItems = 'center'; el.style.transform = `rotate(${bearing}deg)`; el.innerHTML = `<div style="color:white;font-size:22px">▲</div>`
       markerElRef.current = el
-      currentPos.current = lngLat
-      currentBearing.current = bearing
+      currentPos.current = lngLat; currentBearing.current = bearing
       markerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(lngLat).addTo(map)
       map.setCenter(lngLat)
       return
     }
-
     const start = currentPos.current || lngLat
     const startB = currentBearing.current
     const startTime = performance.now()
     if (animRef.current) cancelAnimationFrame(animRef.current)
-
     const animate = (now: number) => {
       const t = Math.min((now - startTime) / 800, 1)
       const eased = 1 - Math.pow(1 - t, 3)
       const lng = start[0] + (lngLat[0] - start[0]) * eased
       const lat = start[1] + (lngLat[1] - start[1]) * eased
       const b = lerpAngle(startB, bearing, eased)
-      currentPos.current = [lng, lat]
-      currentBearing.current = b
+      currentPos.current = [lng, lat]; currentBearing.current = b
       markerRef.current?.setLngLat([lng, lat])
       if (markerElRef.current) markerElRef.current.style.transform = `rotate(${b}deg)`
       if (followRef.current) map.setCenter([lng, lat])
@@ -126,35 +112,27 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    const routeId = 'buddy-route'
-    const outlineId = 'buddy-route-outline'
-
+    const routeId = 'buddy-route'; const outlineId = 'buddy-route-outline'
     const draw = () => {
-      if (!route) {
-        if (map.getLayer(routeId)) map.removeLayer(routeId)
-        if (map.getLayer(outlineId)) map.removeLayer(outlineId)
-        if (map.getSource(routeId)) map.removeSource(routeId)
-        if (map.getSource(outlineId)) map.removeSource(outlineId)
-        return
-      }
-      const coords = parseRoute(route)
-      if (coords.length < 2) return
-
-      if (map.getSource(routeId)) {
-        (map.getSource(routeId) as any).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } })
-        ;(map.getSource(outlineId) as any).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } })
-        return
-      }
-
+      if (!route) { if (map.getLayer(routeId)) map.removeLayer(routeId); if (map.getLayer(outlineId)) map.removeLayer(outlineId); if (map.getSource(routeId)) map.removeSource(routeId); if (map.getSource(outlineId)) map.removeSource(outlineId); return }
+      const coords = parseRoute(route); if (coords.length < 2) return
+      if (map.getSource(routeId)) { (map.getSource(routeId) as any).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } }); (map.getSource(outlineId) as any).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } }); return }
       map.addSource(outlineId, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } as any })
       map.addSource(routeId, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } as any })
-      map.addLayer({ id: outlineId, type: 'line', source: outlineId, paint: { 'line-color': 'white', 'line-width': 10, 'line-opacity': 1 } })
-      map.addLayer({ id: routeId, type: 'line', source: routeId, paint: { 'line-color': '#0066FF', 'line-width': 6, 'line-opacity': 0.95 } })
+      map.addLayer({ id: outlineId, type: 'line', source: outlineId, paint: { 'line-color': 'white', 'line-width': 10 } })
+      map.addLayer({ id: routeId, type: 'line', source: routeId, paint: { 'line-color': '#0066FF', 'line-width': 6 } })
     }
-
-    if (map.isStyleLoaded()) draw()
-    else map.once('load', draw)
+    if (map.isStyleLoaded()) draw(); else map.once('load', draw)
   }, [route])
 
-  return <div ref={containerRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
+  return (
+    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#E6F0FF', overflow: 'hidden' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <button onClick={() => mapRef.current?.zoomIn()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>+</button>
+        <button onClick={() => mapRef.current?.zoomOut()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>−</button>
+        <button onClick={() => { if (mapRef.current && driverLocation) { mapRef.current.setCenter([driverLocation[0], driverLocation[1]]); mapRef.current.setZoom(16) } }} style={{ width: 44, height: 44, borderRadius: 12, background: '#0066FF', color: 'white', border: 'none', fontSize: 18, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>📍</button>
+      </div>
+    </div>
+  )
 }
