@@ -3,6 +3,9 @@ import { useEffect, useState, useRef, type ReactNode } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
 import { REQUIRED_DOCS, normalizeDocType, hasRealDocument } from '../lib/driverDocuments'
 
+// BUNDLE MODEL: Guard checks Docs + Vehicle + Zones + Ride Type.
+// Bundle is NOT checked here - DriverHome handles Bundle gate (so driver can enter app to BUY bundle).
+
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
 
@@ -27,13 +30,18 @@ export function DriverDashboardGuard({
   const [approvedCount, setApprovedCount] = useState(0)
   const [totalDocs, setTotalDocs] = useState(0)
   const [checking, setChecking] = useState(false)
+  // NEW: Bolt Vehicle + Zones + Ride Type + Bundle
+  const [vehicleDetails, setVehicleDetails] = useState({ year: '', make_model: '', colour: '', registration: '' })
+  const [selectedZones, setSelectedZones] = useState<string[]>([])
+  const [zoneNames, setZoneNames] = useState<Record<string, string>>({})
+  const [selectedRideType, setSelectedRideType] = useState('')
+  const [bundleCredits, setBundleCredits] = useState<number | null>(null)
   const onboardingSentRef = useRef(false)
   const checkingRef = useRef(false)
   const rerunRef = useRef(false)
   const accessRef = useRef<DashboardAccess>('checking')
   accessRef.current = access
 
-  // FIXED: normalizeDocType already handles licence/license + sa_id aliases
   const normalizeKey = (raw: string) => normalizeDocType(raw || '')
 
   const prettyName = (raw: string) => {
@@ -53,22 +61,45 @@ export function DriverDashboardGuard({
       const ownerId = user?.id || profile.id
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('is_verified,verification_status,verification_rejection_reason')
+        .select('is_verified,verification_status,verification_rejection_reason,vehicle_year,vehicle_make_model,vehicle_colour,vehicle_registration,service_zones,ride_type')
         .eq('id', ownerId)
         .single()
       if (profileError) {
         setError(`Could not check your driver approval: ${profileError.message}`)
         return
       }
-      const { data: documents, error: documentsError } = await supabase
-        .from('driver_documents')
-        .select('doc_type,document_type,status,rejection_reason,created_at,file_url,document_url,storage_path,file_path,expiry_date')
-        .eq('driver_id', ownerId)
-        .order('created_at', { ascending: false })
+      const [documentsRes, vehicleRes, zonesRes, bundlesRes] = await Promise.all([
+        supabase
+          .from('driver_documents')
+          .select('doc_type,document_type,status,rejection_reason,created_at,file_url,document_url,storage_path,file_path,expiry_date')
+          .eq('driver_id', ownerId)
+          .order('created_at', { ascending: false }),
+        supabase.from('driver_vehicles').select('*').eq('driver_id', ownerId).maybeSingle(),
+        supabase.from('service_zones').select('id,name'),
+        supabase.from('driver_bundles').select('trips_remaining').eq('driver_id', ownerId).gt('trips_remaining', 0),
+      ])
+      const documents = documentsRes.data
+      const documentsError = documentsRes.error
       if (documentsError) {
         setError(`Could not check your driver documents: ${documentsError.message}`)
         return
       }
+      if (zonesRes.data) setZoneNames(Object.fromEntries((zonesRes.data as any).map((z: any) => [z.id, z.name])))
+      if (!bundlesRes.error && bundlesRes.data) setBundleCredits((bundlesRes.data as any).reduce((s: number, b: any) => s + Number(b.trips_remaining || 0), 0))
+      // Vehicle from driver_vehicles first, fallback to profiles
+      const v: any = vehicleRes.data || profileData
+      if (v) {
+        setVehicleDetails({
+          year: v.vehicle_year ? String(v.vehicle_year) : '',
+          make_model: v.make_model || v.vehicle_make_model || '',
+          colour: v.colour || v.vehicle_colour || '',
+          registration: v.registration || v.vehicle_registration || '',
+        })
+        if (Array.isArray(v.service_zones)) setSelectedZones(v.service_zones)
+        else if (Array.isArray((profileData as any)?.service_zones)) setSelectedZones((profileData as any).service_zones)
+        setSelectedRideType(v.ride_type || (profileData as any)?.ride_type || '')
+      }
+
       const docs = (documents || []) as DocRow[]
       const statusOf = (d: DocRow) => (d.status || '').toUpperCase()
 
@@ -103,13 +134,26 @@ export function DriverDashboardGuard({
       const vStatus = String(profileData.verification_status || '').toLowerCase()
       const profileApproved = profileData.is_verified === true && ['approved','verified'].includes(vStatus)
       
+      // Vehicle gate - Admin should not have approved without this, but double-check
+      const vehicleComplete = Boolean((v?.vehicle_year || (profileData as any)?.vehicle_year) && ((v?.make_model || (profileData as any)?.vehicle_make_model)?.trim()) && ((v?.colour || (profileData as any)?.vehicle_colour)?.trim()) && ((v?.registration || (profileData as any)?.vehicle_registration)?.trim()))
+      const zonesComplete = ((v?.service_zones || (profileData as any)?.service_zones || []) as any[]).length > 0
+      const rideComplete = Boolean(v?.ride_type || (profileData as any)?.ride_type)
+
+      // If profile says approved but vehicle incomplete -> treat as pending, show what's missing
       if (profileApproved && completeApproved) {
-        setAccess('approved')
+        if (vehicleComplete && zonesComplete && rideComplete) {
+          setAccess('approved')
+          return
+        }
+        // Approved on docs but vehicle missing = send to onboarding to fix, not trap in pending loop
+        if (!onboardingSentRef.current) {
+          onboardingSentRef.current = true
+          onRequireOnboarding()
+        }
         return
       }
 
-      // FIXED: identity_complete = LET THEM IN to finish rest inside app
-      // This matches DriverOnboarding enterAppAfterIdentity()
+      // identity_complete = LET THEM IN to finish rest inside app
       if (vStatus === 'identity_complete') {
         setAccess('approved')
         return
@@ -125,7 +169,6 @@ export function DriverDashboardGuard({
         return
       }
 
-      // FIXED: no docs at all, or incomplete and never submitted -> onboarding, not pending
       if (docs.length === 0 || !vStatus || vStatus === 'not_started') {
         if (!onboardingSentRef.current) {
           onboardingSentRef.current = true
@@ -134,10 +177,7 @@ export function DriverDashboardGuard({
         return
       }
 
-      // Has some docs but never submitted -> onboarding to finish
       if (vStatus !== 'rejected' && pending.length === 0 && approvedList.length < REQUIRED_DOCS.length) {
-        // If they have docs but haven't submitted, send back to onboarding
-        // Unless they are explicitly pending above, don't trap them
         if (!onboardingSentRef.current) {
           onboardingSentRef.current = true
           onRequireOnboarding()
@@ -162,10 +202,20 @@ export function DriverDashboardGuard({
     const ch = supabase.channel(`guard-${profile.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${profile.id}` }, () => { void check() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_documents', filter: `driver_id=eq.${profile.id}` }, () => { void check() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_vehicles', filter: `driver_id=eq.${profile.id}` }, () => { void check() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_bundles', filter: `driver_id=eq.${profile.id}` }, () => { void check() })
       .subscribe()
     return () => { clearInterval(interval); supabase.removeChannel(ch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile.id])
+
+  const vehicleComplete = Boolean(vehicleDetails.year && vehicleDetails.make_model.trim() && vehicleDetails.colour.trim() && vehicleDetails.registration.trim())
+  const zonesComplete = selectedZones.length > 0
+  const rideComplete = Boolean(selectedRideType)
+  const missingVehicleItems: string[] = []
+  if (!vehicleComplete) missingVehicleItems.push('Vehicle Details (Year + Make/Model + Colour + Registration)')
+  if (!zonesComplete) missingVehicleItems.push('Service Area')
+  if (!rideComplete) missingVehicleItems.push('Ride Type')
 
   if (error) return <main role="alert" style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F6F7F9', color: '#b42318', fontFamily: 'Inter, sans-serif' }}>
     <div style={{ maxWidth: 460, padding: 24, borderRadius: 16, background: '#fff', boxShadow: '0 5px 18px rgba(20,33,50,.06)' }}>
@@ -206,6 +256,12 @@ export function DriverDashboardGuard({
             <div style={{ marginTop: 16, textAlign: 'left', background: BLUE_LIGHT, border: `1px solid #B2CCFF`, padding: 12, borderRadius: 12, fontSize: 13 }}>
               <strong style={{ color: '#111827' }}>Approved: {approvedCount}/{totalDocs}</strong>
               {pendingDocs.length > 0 && <div style={{ marginTop: 6, color: '#667085' }}>Pending: {pendingDocs.map(d => prettyName(d.doc_type || d.document_type || '')).join(', ')}</div>}
+              {missingVehicleItems.length > 0 && <div style={{ marginTop: 8, color: '#B54708', fontWeight: 700 }}>Still missing: {missingVehicleItems.join(' • ')}</div>}
+              {vehicleComplete && <div style={{ marginTop: 8, color: '#067647' }}>🚗 {vehicleDetails.year} {vehicleDetails.make_model} • {vehicleDetails.colour} • {vehicleDetails.registration}</div>}
+              {zonesComplete && <div style={{ marginTop: 4, color: '#067647' }}>📍 {selectedZones.map(z => zoneNames[z] || z).join(', ')}</div>}
+              {rideComplete && <div style={{ marginTop: 4, color: '#067647' }}>🚙 {selectedRideType}</div>}
+              {bundleCredits !== null && <div style={{ marginTop: 8, color: BLUE, fontWeight: 700 }}>🎫 Bundle trips left: {bundleCredits} {bundleCredits === 0 ? '- Buy bundle after approval to Go Online' : ''}</div>}
+              {allDocsApproved && <div style={{ marginTop: 8, color: '#111827', fontWeight: 700 }}>After Admin approval: Buy Bundle → Go Online. You keep 100%.</div>}
             </div>
           )}
         </>

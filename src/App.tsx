@@ -26,6 +26,8 @@ const BLUE_LIGHT = '#E6F0FF'
 const DriverHome = lazy(() => import('./pages/DriverHome').then(module => ({ default: module.DriverHome })))
 const DriverNavigationView = lazy(() => import('./pages/DriverNavigationView').then(module => ({ default: module.DriverNavigationView })))
 const PassengerHome = lazy(() => import('./pages/PassengerHome').then(module => ({ default: module.PassengerHome })))
+// BUNDLE: Driver buys trips to Go Online - Driver keeps 100%, no commission
+const DriverBundlePurchase = lazy(() => import('./pages/DriverBundlePurchase').then(module => ({ default: module.DriverBundlePurchase })))
 
 const ADMIN_EMAIL = 'buddyride@outlook.com'
 const logoCandidates = ['/buddyride-logo.jpg', '/buddyride-logo-main.jpg', '/buddyridelogo.jpg']
@@ -47,13 +49,11 @@ function Brand({ compact = false }: { compact?: boolean }) {
   </div>
 }
 
-// FIXED: Route by PATH only, let DriverDashboardGuard decide by STATUS
-// Old code returned 'pending' for /driver/dashboard when status=pending,
-// trapping identity_complete / pending drivers in Pending loop.
-function driverScreenFor(_status: string | null | undefined, path: string): 'onboarding' | 'pending' | 'home' {
+function driverScreenFor(_status: string | null | undefined, path: string): 'onboarding' | 'pending' | 'home' | 'bundle' {
   const p = String(path || '/').replace(/\/+$/, '') || '/'
   if (p === '/driver/onboarding') return 'onboarding'
   if (p === '/driver/pending') return 'pending'
+  if (p === '/driver/bundle' || p === '/driver/bundles' || p === '/driver/buy-bundle') return 'bundle'
   return 'home'
 }
 
@@ -280,8 +280,17 @@ export default function App() {
       if (screen === 'pending') {
         return <DriverPendingPage onApproved={async () => { await refreshProfile(); navigateDriverPath('/driver', true) }} />
       }
-      // FIXED: No more identity_complete bypass - ALL driver home goes through Guard
-      // Guard now allows identity_complete in, and shows pending only if truly submitted
+      if (screen === 'bundle') {
+        // FIXED BUNDLE GUARD: Don't let not_started driver pay before identity is done.
+        // Allowed: identity_complete, pending, pending_verification, submitted, under_review, approved, verified
+        // Blocked: not_started, empty, rejected -> send to onboarding
+        const v = String((profile as any).verification_status || '').toLowerCase()
+        const canBuyBundle = !['', 'not_started', 'rejected'].includes(v)
+        if (!canBuyBundle) {
+          return <DriverOnboarding profile={profile} onDashboard={async () => { await refreshProfile(); navigateDriverPath('/driver', true) }} />
+        }
+        return <Suspense fallback={<main className="splash splash-intro">Loading bundles…</main>}><DriverBundlePurchase profile={profile} onBack={() => navigateDriverPath('/driver', true)} /></Suspense>
+      }
       return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
         <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
       </DriverDashboardGuard>

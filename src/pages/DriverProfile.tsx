@@ -2,13 +2,15 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { normalizeDocType as canonicalType, REQUIRED_DOCS } from '../lib/driverDocuments'
 
+// BUNDLE MODEL: No commission. Driver keeps 100% of fare. Platform earns from Bundles, not fares.
+// Earnings = Total fares. No platform fee. Wallet = Bundle trips, not Payouts.
+
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
 const BLUE_DARK = '#0052CC'
 const SUPPORT_PHONE = '064 101 8991'
 const SUPPORT_TEL = '0641018991'
 const SUPPORT_WHATSAPP = 'https://wa.me/27641018991'
-// FIXED: was hardcoded 15
 const TOTAL_EXPECTED = REQUIRED_DOCS.length
 const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_license'])
 
@@ -34,7 +36,7 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
     identityUploaded: 0,
     verificationStatus: 'not_started',
     isVerified: false,
-    commission: 20,
+    bundleCredits: 0,
     loading: true
   })
   const [showTrips, setShowTrips] = useState(false)
@@ -44,9 +46,7 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
   const [showSettings, setShowSettings] = useState(false)
   const [trips, setTrips] = useState<any[]>([])
   const [totalFares, setTotalFares] = useState(0)
-  const [platformFees, setPlatformFees] = useState(0)
 
-  // FIXED: use same canonical as all other files
   const normalizeKey = (raw: string) => canonicalType(raw || '')
 
   useEffect(() => {
@@ -66,14 +66,11 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
         driverData = data
       } catch { driverData = null }
 
-      let commission = 20
-      let driverShare = 0.8
+      // NEW: Bundle credits, not commission
+      let bundleCredits = 0
       try {
-        const { data: settings } = await supabase.from('app_settings').select('value').eq('key', 'commission_percent').maybeSingle()
-        if (settings?.value != null) {
-          const c = Number(settings.value)
-          if (!Number.isNaN(c)) { commission = c; driverShare = (100 - c) / 100 }
-        }
+        const { data: bundles } = await supabase.from('driver_bundles').select('trips_remaining').eq('driver_id', user.id).gt('trips_remaining', 0)
+        bundleCredits = (bundles as any[] || []).reduce((s, b) => s + Number(b.trips_remaining || 0), 0)
       } catch {}
 
       let acceptance = 0
@@ -82,7 +79,6 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
       let hasRating = false
       let earnings = 0
       let totalFare = 0
-      let fees = 0
       let cancellation = 0
       let tripsCount = 0
       try {
@@ -97,11 +93,10 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
           const completed = rides.filter(r => r.status === 'completed' || r.status === 'rated')
           tripsCount = completed.length
           totalFare = completed.reduce((sum, r: any) => sum + Number(r.fare || 0), 0)
-          fees = Math.round(totalFare * commission / 100)
-          earnings = totalFare - fees
+          // BUNDLE: Driver keeps 100% - no platform fee deduction
+          earnings = totalFare
           setTrips(rides.slice(0, 20))
           setTotalFares(totalFare)
-          setPlatformFees(fees)
           if (profile?.rating != null && Number(profile.rating) > 0) { rating = Number(profile.rating); hasRating = true }
           if (driverData?.rating != null && Number(driverData.rating) > 0) { rating = Number(driverData.rating); hasRating = true }
         }
@@ -150,7 +145,7 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
         identityUploaded,
         verificationStatus: (profile as any)?.verification_status || 'not_started',
         isVerified: (profile as any)?.is_verified === true,
-        commission,
+        bundleCredits,
         loading: false
       }))
     }
@@ -244,9 +239,9 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
   }
 
   const menu = [
-    { icon: '💳', label: 'Earnings', sub: `R ${driver.earnings.toFixed(2)} • ${driver.trips} trips`, action: () => togglePanel('earnings') },
+    { icon: '💳', label: 'Earnings', sub: `R ${driver.earnings.toFixed(2)} • ${driver.trips} trips • You keep 100%`, action: () => togglePanel('earnings') },
     { icon: '🚕', label: 'My Trips', sub: `${driver.trips} completed trips`, action: () => togglePanel('trips') },
-    { icon: '💰', label: 'Wallet / Payouts', sub: `Balance: R ${driver.earnings.toFixed(2)}`, action: () => togglePanel('wallet') },
+    { icon: '🎫', label: 'My Bundle', sub: `${driver.bundleCredits} trips left • Buy more to Go Online`, action: () => togglePanel('wallet') },
     { icon: '📄', label: 'Documents', sub: `${driver.docsUploaded}/${driver.docsTotal} Uploaded • ${driver.docsApproved} Approved ${canGoOnline ? '✓' : ''}`, action: () => { window.location.href = '/driver/onboarding' } },
     { icon: '🚗', label: 'Vehicles', action: () => { window.location.href = '/driver/onboarding' } },
     { icon: '🛡️', label: 'Safety', action: () => togglePanel('safety') },
@@ -278,9 +273,14 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
       {!canGoOnline && !isIdentityPhase && driver.docsUploaded > 0 && driver.docsUploaded < TOTAL_EXPECTED && (
         <div onClick={() => { window.location.href = '/driver/onboarding' }} style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 12, background: '#FFF7ED', border: '1px solid #FDBA74', cursor: 'pointer' }}>
           <div style={{ fontWeight: 800, fontSize: 14, color: '#C2410C' }}>⏳ {driver.docsUploaded}/{TOTAL_EXPECTED} docs • {remaining} left to Go Online</div>
-          <div style={{ fontSize: 12, color: '#667085', marginTop: 4 }}>Tap to finish → Admin approval → Go Online</div>
+          <div style={{ fontSize: 12, color: '#667085', marginTop: 4 }}>Tap to finish → Admin approval → Buy Bundle → Go Online</div>
         </div>
       )}
+      {/* NEW: Bundle banner */}
+      <div onClick={() => { window.location.href = '/driver/bundle' }} style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 12, background: driver.bundleCredits > 0 ? '#ECFDF3' : '#FEF3C7', border: `1px solid ${driver.bundleCredits > 0 ? '#ABEFC6' : '#FDE68A'}`, cursor: 'pointer' }}>
+        <div style={{ fontWeight: 800, fontSize: 14, color: driver.bundleCredits > 0 ? '#067647' : '#92400E' }}>🎫 Bundle: {driver.bundleCredits} trips left {driver.bundleCredits === 0 ? '• Tap to buy → Go Online' : '• Tap to buy more'}</div>
+        <div style={{ fontSize: 12, color: '#667085', marginTop: 4 }}>No commission. You keep 100% of every fare. Rider pays you directly.</div>
+      </div>
       <div style={{ padding: '20px 16px', display: 'flex', gap: 12, alignItems: 'center', background: '#fff' }}>
         {hasAvatar ? (
           <img src={driver.avatar} alt="Driver" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${BLUE}` }} />
@@ -323,12 +323,13 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
 
       {showEarnings && (
         <div style={{ margin: '0 12px 12px', background: '#fff', borderRadius: 14, padding: 14, border: '1px solid #EDF0F3' }}>
-          <b>Earnings</b>
+          <b>Earnings - You keep 100%</b>
           <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.8 }}>
             <div>Total fares: <b>R {totalFares.toFixed(2)}</b></div>
-            <div>Platform fee ({driver.commission}%): <b>- R {platformFees.toFixed(2)}</b></div>
+            <div>Platform fee: <b>R 0.00 (0% - Bundle Model)</b></div>
             <div>You keep: <b style={{ color: BLUE }}>R {driver.earnings.toFixed(2)}</b></div>
             <div>Completed trips: <b>{driver.trips}</b></div>
+            <div style={{ color: '#667085' }}>Rider pays you directly. No payout wait.</div>
           </div>
           {!driver.hasTrips && <p style={{ fontSize: 13, color: '#667085' }}>No trips yet - complete your first trip to see earnings here.</p>}
         </div>
@@ -336,13 +337,13 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
 
       {showWallet && (
         <div style={{ margin: '0 12px 12px', background: '#fff', borderRadius: 14, padding: 14, border: '1px solid #EDF0F3' }}>
-          <b>Wallet / Payouts</b>
+          <b>🎫 My Bundle</b>
           <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.8 }}>
-            <div>Balance available: <b>R {driver.earnings.toFixed(2)}</b></div>
-            <div style={{ color: '#667085' }}>Payouts are paid via EFT to your bank on file.</div>
+            <div>Trips left: <b>{driver.bundleCredits} trips</b></div>
+            <div style={{ color: '#667085' }}>1 credit = normal ride. 2 credits = long distance (Polokwane ↔ Gauteng).</div>
+            <div style={{ color: '#667085' }}>No commission. Platform earns from bundle, not your fare.</div>
           </div>
-          <button onClick={() => window.open(SUPPORT_WHATSAPP, '_blank')} style={{ marginTop: 12, width: '100%', padding: 12, border: 0, borderRadius: 10, background: BLUE, color: '#fff', fontWeight: 800 }}>Request Payout on WhatsApp</button>
-          <button onClick={() => { window.location.href = '/driver/onboarding' }} style={{ marginTop: 8, width: '100%', padding: 12, border: '1px solid #D0D5DD', borderRadius: 10, background: '#fff', fontWeight: 700 }}>Update Bank Details</button>
+          <button onClick={() => { window.location.href = '/driver/bundle' }} style={{ marginTop: 12, width: '100%', padding: 12, border: 0, borderRadius: 10, background: BLUE, color: '#fff', fontWeight: 800 }}>Buy Bundle → Go Online</button>
         </div>
       )}
 
@@ -366,6 +367,7 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
             <div>Online status: Change in Driver Home</div>
             <div>Profile photo: Change above</div>
             <div>Documents: <button onClick={() => { window.location.href = '/driver/onboarding' }} style={{ background: 'none', border: 0, color: BLUE, fontWeight: 800, padding: 0, cursor: 'pointer' }}>Open Documents →</button></div>
+            <div>Bundle: <button onClick={() => { window.location.href = '/driver/bundle' }} style={{ background: 'none', border: 0, color: BLUE, fontWeight: 800, padding: 0, cursor: 'pointer' }}>Buy Bundle →</button></div>
           </div>
         </div>
       )}
@@ -377,7 +379,7 @@ export default function DriverProfile({ onBack }: { onBack?: () => void }) {
           {trips.map((t: any) => (
             <div key={t.id} style={{ padding: '10px 0', borderBottom: '1px solid #EDF0F3', fontSize: 13 }}>
               <div style={{ fontWeight: 700 }}>{t.pickup_address} → {t.dropoff_address}</div>
-              <div style={{ color: '#667085' }}>{t.status} • R{Number(t.fare || 0).toFixed(2)} • {new Date(t.created_at).toLocaleDateString()}</div>
+              <div style={{ color: '#667085' }}>{t.status} • R{Number(t.fare || 0).toFixed(2)} • {new Date(t.created_at).toLocaleDateString()} • You kept 100%</div>
             </div>
           ))}
         </div>
