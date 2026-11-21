@@ -11,6 +11,7 @@ type Props = {
   isNavigating?: boolean
   followDriver?: boolean
   theme?: 'dark' | 'light' | string
+  onMapMove?: () => void
 }
 
 function parseRoute(route: any): [number, number][] {
@@ -50,7 +51,6 @@ function parseRoute(route: any): [number, number][] {
   return []
 }
 
-// Bolt: shortest angle interpolation so car doesn't spin 350deg backwards
 function lerpAngle(a: number, b: number, t: number) {
   let diff = (b - a) % 360
   if (diff > 180) diff -= 360
@@ -58,22 +58,24 @@ function lerpAngle(a: number, b: number, t: number) {
   return a + diff * t
 }
 
-export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, theme = 'light' }: Props) {
+export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, theme = 'light', onMapMove }: Props) {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const routeLineRef = useRef<L.Polyline | null>(null)
   const driverMarkerRef = useRef<L.Marker | null>(null)
   const tileLayerRef = useRef<L.TileLayer | null>(null)
   const followRef = useRef(followDriver)
+  const onMapMoveRef = useRef(onMapMove)
   const animRef = useRef<number | null>(null)
   const currentPos = useRef<[number, number] | null>(null)
   const currentBearing = useRef(0)
   const targetPos = useRef<[number, number] | null>(null)
   const targetBearing = useRef(0)
+  const isUserInteracting = useRef(false)
 
   useEffect(() => { followRef.current = followDriver }, [followDriver])
+  useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
 
-  // INIT MAP - Bolt style: no zoomControl, smooth
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
     const map = L.map(containerRef.current, {
@@ -92,6 +94,13 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       fadeAnimation: true,
     } as any).setView([center[1], center[0]], 16)
     mapRef.current = map
+    const handleUserMove = () => {
+      isUserInteracting.current = true
+      if (onMapMoveRef.current) onMapMoveRef.current()
+      setTimeout(() => { isUserInteracting.current = false }, 500)
+    }
+    map.on('movestart', (e: any) => { if (e?.originalEvent) handleUserMove() })
+    map.on('zoomstart', (e: any) => { if (e?.originalEvent) handleUserMove() })
     const t1 = setTimeout(() => map.invalidateSize(), 100)
     const t2 = setTimeout(() => map.invalidateSize(), 600)
     const t3 = setTimeout(() => map.invalidateSize(), 1500)
@@ -100,7 +109,6 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); window.removeEventListener('resize', onResize); if (animRef.current) cancelAnimationFrame(animRef.current); map.remove(); mapRef.current = null }
   }, [])
 
-  // TILE LAYER - same as yours
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -114,13 +122,10 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     tileLayerRef.current = L.tileLayer(url, { minZoom: 2, maxZoom: 22, maxNativeZoom: 19, attribution: '&copy; TomTom' }).addTo(map)
   }, [theme])
 
-  // === BOLT SMOOTH MOVEMENT - THIS IS THE FIX ===
   useEffect(() => {
     if (!mapRef.current || !driverLocation) return
     const map = mapRef.current
     const newLatLng: [number, number] = [driverLocation[1], driverLocation[0]]
-
-    // First time: place instantly
     if (!currentPos.current) {
       currentPos.current = newLatLng
       targetPos.current = newLatLng
@@ -136,50 +141,35 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       map.setView(newLatLng, 17, { animate: true })
       return
     }
-
     targetPos.current = newLatLng
     targetBearing.current = bearing
-
-    // Cancel previous animation
     if (animRef.current) cancelAnimationFrame(animRef.current)
-
     const startPos = [...currentPos.current] as [number, number]
     const startBearing = currentBearing.current
     const startTime = performance.now()
-    const DURATION = 1000 // 1s glide like Bolt
-
+    const DURATION = 1000
     const animate = (now: number) => {
       const elapsed = now - startTime
       const t = Math.min(elapsed / DURATION, 1)
-      // Ease out cubic - fast start, smooth stop like Bolt
       const eased = 1 - Math.pow(1 - t, 3)
-
       const lat = startPos[0] + (targetPos.current![0] - startPos[0]) * eased
       const lng = startPos[1] + (targetPos.current![1] - startPos[1]) * eased
       const b = lerpAngle(startBearing, targetBearing.current, eased)
-
       currentPos.current = [lat, lng]
       currentBearing.current = b
-
       if (driverMarkerRef.current) {
         driverMarkerRef.current.setLatLng([lat, lng])
         const el = driverMarkerRef.current.getElement()?.querySelector('#buddy-car') as HTMLElement
         if (el) el.style.transform = `rotate(${b}deg)`
       }
-
-      // Bolt camera: follow with smooth pan, keep zoom 17
-      if (followRef.current) {
+      if (followRef.current && !isUserInteracting.current) {
         map.panTo([lat, lng], { animate: true, duration: 0.3 })
       }
-
-      if (t < 1) {
-        animRef.current = requestAnimationFrame(animate)
-      }
+      if (t < 1) animRef.current = requestAnimationFrame(animate)
     }
     animRef.current = requestAnimationFrame(animate)
   }, [driverLocation, bearing])
 
-  // ROUTE POLYLINE - same as yours
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -198,9 +188,16 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     routeLineRef.current.bringToFront()
   }, [route])
 
+  const zoomIn = () => mapRef.current?.zoomIn()
+  const zoomOut = () => mapRef.current?.zoomOut()
+
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', minHeight: '100vh', background: '#e5e7eb', zIndex: 0 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '100vh' }} />
+      <div style={{ position: 'absolute', right: '12px', top: '76px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <button onClick={(e) => { e.stopPropagation(); zoomIn() }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', color: 'black', border: 'none', fontSize: '22px', fontWeight: 'bold', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', touchAction: 'manipulation' }}>+</button>
+        <button onClick={(e) => { e.stopPropagation(); zoomOut() }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', color: 'black', border: 'none', fontSize: '22px', fontWeight: 'bold', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', touchAction: 'manipulation' }}>−</button>
+      </div>
     </div>
   )
 }
