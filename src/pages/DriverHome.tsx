@@ -41,8 +41,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [zoom, setZoom] = useState(13)
   const [bearing, setBearing] = useState(0)
   const [speedKmh, setSpeedKmh] = useState(0)
-  const [followDriver, setFollowDriver] = useState(true)
-  const [lastTouch, setLastTouch] = useState(Date.now())
+  const [followDriver, setFollowDriver] = useState(false)
   const watchId = useRef<number | null>(null)
   const lastSupabaseUpdate = useRef<number>(0)
   const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
@@ -131,7 +130,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { clearRequestTimer(); if (!incomingRide || incomingRide.status !== 'searching' || ride) return; const expiresAt = incomingRide.offer_expires_at; let seconds = expiresAt ? Math.max(0, Math.min(EXPIRE_SECONDS, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))) : EXPIRE_SECONDS; setCountdown(seconds); if (seconds === 0) { void dismissIncomingRide(incomingRide.id); return } const rideId = incomingRide.id; requestTimerRef.current = setInterval(() => { seconds -= 1; setCountdown(seconds); if (seconds <= 0) { clearRequestTimer(); void dismissIncomingRide(rideId) } }, 1000); return clearRequestTimer }, [incomingRide?.id, ride?.id])
   useEffect(() => { if (!isOnline || ride) return; const channel = createRealtimeChannel(`new-ride-offers-${effectiveId}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rides', filter: 'status=eq.searching' }, payload => { const newRide = payload.new as Ride; if (newRide.status !== 'searching' || declinedIds.includes(newRide.id)) return; if ((newRide as any).offered_driver_id && (newRide as any).offered_driver_id !== effectiveId) return; setIncomingRide(newRide); setCountdown(EXPIRE_SECONDS); playBeep() }).subscribe(); return () => { void supabase.removeChannel(channel) } }, [isOnline, ride?.id, effectiveId, declinedIds])
 
-  // FIX - LIVE MAP MOVEMENT EVEN OFFLINE + FREE PAN
   useEffect(() => {
     watchId.current = navigator.geolocation.watchPosition(pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
@@ -166,7 +164,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     }, err => console.log('GPS error:', err), { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }) as any
     return () => { if (watchId.current) navigator.geolocation.clearWatch(watchId.current) }
   }, [isOnline, ride?.id, effectiveId])
-  // END FIX
 
   useEffect(() => { let interval: any; let active = true; let routeRequestActive = false; async function buildRoute() { if (!ride || routeRequestActive) return; const from = lastLocation.current; const target: [number, number] = ['accepted','driver_assigned','arrived'].includes(String(ride.status)) ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]; routeRequestActive = true; try { const r = await getRoute(from, target); if (!active) return; activeStepIndexRef.current = 0; setActiveStepIndex(0); routeDataRef.current = r; setRoute(r.geometry); setRouteData(r); updateNavigationProgress(from) } catch (routeError) { console.error('Could not refresh driver route', routeError) } finally { routeRequestActive = false } }; void buildRoute(); if (isNavigating) { interval = setInterval(() => void buildRoute(), 15000) } return () => { active = false; clearInterval(interval) } }, [ride?.id, ride?.status, isNavigating])
   async function toggleOnline() {
@@ -244,8 +241,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const completedRideForDisplay = ride?.status === 'completed' ? ride : pendingRating
   function clearPendingRating() { setPendingRating(null); try { localStorage.removeItem(pendingRatingStorageKey) } catch {} }
   const renderPassengerBadge = (badge: PassengerBadge | null) => { if (!badge) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#334155', color: '#cbd5e1', fontWeight: 800 }}>CHECKING RIDER…</span>; if (badge.is_verified) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: BLUE_LIGHT, color: BLUE, fontWeight: 800 }}>✅ VERIFIED • {badge.ride_count} rides</span>; if (badge.verification_status === 'pending_verification') return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#78350f', color: '#fcd34d', fontWeight: 800 }}>⏳ PENDING ID • {badge.ride_count} rides</span>; if (badge.ride_count === 0) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#7c2d12', color: '#fdba74', fontWeight: 800 }}>⚠️ NEW RIDER • First ride</span>; return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#334155', color: '#fcd34d', fontWeight: 800 }}>⚠️ UNVERIFIED • {badge.ride_count} rides</span> }
-  return <div className={`ride-app ride-app--${theme}`} onPointerDown={() => { setLastTouch(Date.now()) }} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    <div onClick={() => { setLastTouch(Date.now()) }} style={{ position: 'absolute', inset: 0 }}>
+  return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+    <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
       <DriverTomTomMap center={location} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={followDriver} onMapMove={() => setFollowDriver(false)} theme={theme} />
     </div>
     <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative' }}>
@@ -263,7 +260,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     {isNavigating && ride && (<div style={{ position: 'absolute', top: `${68 + topBannerHeight + 8}px`, left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}><div style={{ width: '44px', height: '44px', borderRadius: '22px', background: BR_GREEN, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div><div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText}</div></div></div>)}
     <div style={{ position: 'absolute', top: '14px', left: '50%', transform: 'translateX(-50%)', zIndex: 90, padding: '7px 12px', borderRadius: '999px', color: 'white', background: 'rgba(28,28,30,.88)', fontSize: '13px', fontWeight: 700 }}>{Math.round(speedKmh)} km/h</div>
     {cancelledNotification && (<div style={{position:'fixed', top:'90px', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}><div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div><div style={{flex:1}}><div style={{color:'white', fontWeight:'900', fontSize:'15px'}}>Trip Cancelled by Passenger!</div><div style={{color:'white', fontSize:'13px', opacity:0.9}}>{cancelledNotification.msg} • R{cancelledNotification.fare}</div></div><button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button></div>)}
-    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60 }}>
+    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, pointerEvents: 'none' }}>
     <BottomSheet snapPoint={sheetSnap} onSnapChange={point => { setSheetSnap(point); setIsMinimized(point === 25) }}>
       {ride && ['driver_assigned','accepted'].includes(String(ride.status)) && (<>
           {!isMinimized && passengerProfile && (<div className="ride-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', background: bg2, borderRadius: '24px', padding: '10px 12px' }}><div style={{ width: '44px', height: '44px', borderRadius: '22px', background: BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900', color: 'white' }}>{passengerProfile.full_name?.[0] || 'P'}</div><div style={{ flex: 1 }}><div style={{ fontWeight: '900', fontSize: '16px' }}>{passengerProfile.full_name || 'Passenger'}{passengerProfile.rating ? ` • ${passengerProfile.rating.toFixed(1)}★` : ''}</div><div style={{ color: subText, fontSize: '12px' }}>Passenger • {ride.pickup_address?.split(',')[0]}</div><div style={{ marginTop: 4 }}>{renderPassengerBadge(activeBadge)}</div></div><button onClick={() => setShowChat(true)} style={{ width: '40px', height: '40px', borderRadius: '20px', background: BR_GREEN, border: 'none', fontSize: '18px' }}>💬</button></div>)}

@@ -71,7 +71,6 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   const currentBearing = useRef(0)
   const targetPos = useRef<[number, number] | null>(null)
   const targetBearing = useRef(0)
-  const isUserInteracting = useRef(false)
 
   useEffect(() => { followRef.current = followDriver }, [followDriver])
   useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
@@ -85,22 +84,21 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       scrollWheelZoom: true,
       doubleClickZoom: true,
       keyboard: true,
-      zoomSnap: 0.5,
-      zoomDelta: 1,
+      tap: true,
+      zoomSnap: 0.25,
+      zoomDelta: 0.5,
+      wheelDebounceTime: 40,
       minZoom: 2,
       maxZoom: 22,
-      maxBoundsViscosity: 0,
-      zoomAnimation: true,
-      fadeAnimation: true,
     } as any).setView([center[1], center[0]], 16)
     mapRef.current = map
+
     const handleUserMove = () => {
-      isUserInteracting.current = true
       if (onMapMoveRef.current) onMapMoveRef.current()
-      setTimeout(() => { isUserInteracting.current = false }, 500)
     }
     map.on('movestart', (e: any) => { if (e?.originalEvent) handleUserMove() })
     map.on('zoomstart', (e: any) => { if (e?.originalEvent) handleUserMove() })
+
     const t1 = setTimeout(() => map.invalidateSize(), 100)
     const t2 = setTimeout(() => map.invalidateSize(), 600)
     const t3 = setTimeout(() => map.invalidateSize(), 1500)
@@ -132,13 +130,13 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       currentBearing.current = bearing
       targetBearing.current = bearing
       const icon = L.divIcon({
-        html: `<div id="buddy-car" style="width:48px;height:48px;display:grid;place-items:center;transform:rotate(${bearing}deg);transition:transform 0.1s linear;"><div style="width:38px;height:56px;background:#111;border-radius:10px;border:2px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;font-size:20px;">▲</div></div>`,
+        html: `<div id="buddy-car" style="width:48px;height:48px;display:grid;place-items:center;transform:rotate(${bearing}deg);"><div style="width:38px;height:56px;background:#111;border-radius:10px;border:2px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;font-size:20px;">▲</div></div>`,
         className: '',
         iconSize: [48, 48],
         iconAnchor: [24, 24]
       })
       driverMarkerRef.current = L.marker(newLatLng, { icon, zIndexOffset: 1000 }).addTo(map)
-      map.setView(newLatLng, 17, { animate: true })
+      map.setView(newLatLng, 16, { animate: false })
       return
     }
     targetPos.current = newLatLng
@@ -147,7 +145,7 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     const startPos = [...currentPos.current] as [number, number]
     const startBearing = currentBearing.current
     const startTime = performance.now()
-    const DURATION = 1000
+    const DURATION = 800
     const animate = (now: number) => {
       const elapsed = now - startTime
       const t = Math.min(elapsed / DURATION, 1)
@@ -162,8 +160,8 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
         const el = driverMarkerRef.current.getElement()?.querySelector('#buddy-car') as HTMLElement
         if (el) el.style.transform = `rotate(${b}deg)`
       }
-      if (followRef.current && !isUserInteracting.current) {
-        map.panTo([lat, lng], { animate: true, duration: 0.3 })
+      if (followRef.current) {
+        map.setView([lat, lng], map.getZoom(), { animate: false })
       }
       if (t < 1) animRef.current = requestAnimationFrame(animate)
     }
@@ -188,15 +186,25 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     routeLineRef.current.bringToFront()
   }, [route])
 
-  const zoomIn = () => mapRef.current?.zoomIn()
-  const zoomOut = () => mapRef.current?.zoomOut()
+  const zoomIn = () => {
+    const map = mapRef.current
+    if (!map) return
+    if (onMapMoveRef.current) onMapMoveRef.current()
+    map.setZoom(map.getZoom() + 1, { animate: true })
+  }
+  const zoomOut = () => {
+    const map = mapRef.current
+    if (!map) return
+    if (onMapMoveRef.current) onMapMoveRef.current()
+    map.setZoom(map.getZoom() - 1, { animate: true })
+  }
 
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', minHeight: '100vh', background: '#e5e7eb', zIndex: 0 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '100vh' }} />
       <div style={{ position: 'absolute', right: '12px', top: '76px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <button onClick={(e) => { e.stopPropagation(); zoomIn() }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', color: 'black', border: 'none', fontSize: '22px', fontWeight: 'bold', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', touchAction: 'manipulation' }}>+</button>
-        <button onClick={(e) => { e.stopPropagation(); zoomOut() }} style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'white', color: 'black', border: 'none', fontSize: '22px', fontWeight: 'bold', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', touchAction: 'manipulation' }}>−</button>
+        <button onClick={zoomIn} style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'white', color: 'black', border: '1px solid #ddd', fontSize: '26px', fontWeight: '900', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', display: 'grid', placeItems: 'center' }}>+</button>
+        <button onClick={zoomOut} style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'white', color: 'black', border: '1px solid #ddd', fontSize: '26px', fontWeight: '900', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', display: 'grid', placeItems: 'center' }}>−</button>
       </div>
     </div>
   )
