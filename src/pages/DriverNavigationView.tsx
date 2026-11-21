@@ -12,7 +12,6 @@ type RouteData = Awaited<ReturnType<typeof getRoute>>
 
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
-
 const ARRIVED_STATUSES = ['arrived', 'driver_arrived']
 const isArrivedStatus = (s: string) => ARRIVED_STATUSES.includes(s.toLowerCase())
 
@@ -53,6 +52,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
   const [actionBusy, setActionBusy] = useState(false)
   const [passenger, setPassenger] = useState<{ full_name?: string, phone?: string } | null>(null)
   const [arrivedAt, setArrivedAt] = useState<number | null>(null)
+  const [voiceOn, setVoiceOn] = useState(true)
 
   const rideStatus = String(ride?.status || '').toLowerCase()
   const isOnPickupLeg = ['accepted', 'driver_arriving', 'arrived', 'driver_arrived', 'driver_assigned'].includes(rideStatus)
@@ -92,6 +92,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     return () => { active = false; void supabase.removeChannel(channel) }
   }, [effectiveId, rideId])
 
+  // LIVE LOCATION + BEARING
   useEffect(() => {
     if (!navigator.geolocation) { setLocationError('Location not available'); return }
     const watchId = navigator.geolocation.watchPosition(pos => {
@@ -99,7 +100,10 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
       if (latestLocationRef.current) {
         const [oldLng, oldLat] = latestLocationRef.current
         const dLng = coords[0] - oldLng; const dLat = coords[1] - oldLat
-        if (Math.abs(dLng) > 0.00001 || Math.abs(dLat) > 0.00001) setBearing((Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360)
+        if (Math.abs(dLng) > 0.000005 || Math.abs(dLat) > 0.000005) {
+          const b = (Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360
+          setBearing(b)
+        }
       }
       latestLocationRef.current = coords
       setLocation(coords); setLocationError('')
@@ -113,24 +117,41 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
 
   const hasLocation = location !== null
 
+  // ROUTE WITH OFF-ROUTE DETECTION
   useEffect(() => {
     if (!ride || targetLng == null || targetLat == null) return
     let active = true; let refreshing = false
-    const refresh = async () => {
-      if (refreshing) return
+    const refresh = async (force = false) => {
+      if (refreshing && !force) return
       const origin = latestLocationRef.current; if (!origin) return
       refreshing = true
       try {
         const nextRoute = await getRoute(origin, [targetLng, targetLat])
         if (!active) return
-        setRouteData(nextRoute); setRouteUpdatedAt(Date.now()); setRouteError(''); setActiveStepIndex(0)
+        setRouteData(nextRoute); setRouteUpdatedAt(Date.now()); setRouteError(''); 
+        if (force) setActiveStepIndex(0)
       } catch (e:any) { if (active) setRouteError(e.message) } finally { refreshing = false }
     }
-    void refresh()
+    void refresh(true)
+    // Refresh every 15s + if off-route
     const interval = window.setInterval(() => void refresh(), 15000)
-    return () => { active = false; window.clearInterval(interval) }
+    // Off-route check: if far from route, force reroute
+    const offRouteCheck = window.setInterval(() => {
+      if (!routeData?.geometry?.coordinates || !latestLocationRef.current) return
+      const coords = routeData.geometry.coordinates as [number, number][]
+      const [lng, lat] = latestLocationRef.current
+      let minDist = Infinity
+      for (const [rlng, rlat] of coords.slice(0, 30)) {
+        const d = Math.hypot(rlng - lng, rlat - lat)
+        if (d < minDist) minDist = d
+      }
+      // > ~80 meters off route = reroute
+      if (minDist > 0.0008) void refresh(true)
+    }, 5000)
+    return () => { active = false; window.clearInterval(interval); window.clearInterval(offRouteCheck) }
   }, [ride?.id, ride?.status, targetLng, targetLat, hasLocation])
 
+  // MAP INIT - FIXED: no touchstart killing follow
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return
     const apiKey = import.meta.env.VITE_TOMTOM_API_KEY || 'no-key'
@@ -139,20 +160,20 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
         key: apiKey,
         container: mapContainerRef.current as any,
         center: location || POLOKWANE_CENTER,
-        zoom: 16,
+        zoom: 17,
         pitch: 60,
+        bearing: 0,
         dragPan: true,
         scrollZoom: true,
         doubleClickZoom: true,
         touchZoomRotate: true,
       })
       map.on('dragstart', () => { userHasInteractedRef.current = true; setFollowDriver(false) })
-      map.on('zoomstart', () => { userHasInteractedRef.current = true })
-      map.on('touchstart', () => { userHasInteractedRef.current = true })
+      // REMOVED touchstart -> was killing follow on every pinch
       mapRef.current = map
       setMapReady(true)
     } catch (e: any) { setMapError(e.message || 'Map error') }
-    return () => { try { mapRef.current?.remove() } catch {} mapRef.current = null; markerRef.current = null; destMarkerRef.current = null }
+    return () => { try { mapRef.current?.remove() } catch {} mapRef.current = null; markerRef.current = null; destMarkerRef.current = null; setMapReady(false) }
   }, [])
 
   useEffect(() => {
@@ -169,26 +190,30 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
       (map.getSource('driver-route') as any).setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } })
     } else {
       map.addSource('driver-route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } } })
-      map.addLayer({ id: 'driver-route-shadow', type: 'line', source: 'driver-route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#111827', 'line-width': 11, 'line-opacity': 0.3 } })
-      map.addLayer({ id: 'driver-route-line', type: 'line', source: 'driver-route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': BLUE, 'line-width': 7 } })
+      map.addLayer({ id: 'driver-route-shadow', type: 'line', source: 'driver-route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#000', 'line-width': 12, 'line-opacity': 0.25 } })
+      map.addLayer({ id: 'driver-route-line', type: 'line', source: 'driver-route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': BLUE, 'line-width': 7, 'line-opacity': 0.95 } })
     }
   }, [mapReady, routeData])
 
+  // FIXED: no setZoom every second, map rotates with bearing
   useEffect(() => {
     const map = mapRef.current
     if (!mapReady || !map || !location) return
     if (!markerRef.current) {
       const el = document.createElement('div')
-      el.innerHTML = `<div style="width:38px;height:38px;border-radius:50%;background:${BLUE};border:3px solid #fff;display:grid;place-items:center;color:#fff;font-size:20px;box-shadow:0 3px 12px #0007">▲</div>`
+      el.innerHTML = `<div style="width:48px;height:48px;background:white;border-radius:50%;box-shadow:0 6px 20px rgba(0,0,0,0.35);display:grid;place-items:center;transform:rotate(${bearing}deg)"><div style="width:32px;height:32px;background:#111;border-radius:9px;display:grid;place-items:center;color:white;font-size:18px">🚗</div></div>`
       markerRef.current = new tt.Marker({ element: el }).setLngLat(location).addTo(map)
     }
     markerRef.current.setLngLat(location)
     try { const inner = markerRef.current.getElement()?.firstChild as HTMLElement | null; if (inner) inner.style.transform = `rotate(${bearing}deg)` } catch {}
     if (followDriver && !userHasInteractedRef.current) {
-      map.setCenter(location)
-      map.setZoom(17)
+      try {
+        map.easeTo({ center: location, bearing: bearing, pitch: threeDimensional ? 60 : 0, duration: 600, easing: (t: number) => t })
+      } catch {
+        map.setCenter(location)
+      }
     }
-  }, [bearing, followDriver, location, mapReady])
+  }, [bearing, followDriver, location, mapReady, threeDimensional])
 
   useEffect(() => {
     const map = mapRef.current
@@ -197,11 +222,11 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     const emoji = isOnPickupLeg ? '📍' : '🏁'
     if (!destMarkerRef.current) {
       const el = document.createElement('div')
-      el.innerHTML = `<div style="width:36px;height:36px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${bg};border:3px solid #fff;display:grid;place-items:center;box-shadow:0 3px 12px #0007"><span style="transform:rotate(45deg);font-size:18px">${emoji}</span></div>`
+      el.innerHTML = `<div style="width:40px;height:40px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${bg};border:3px solid #fff;display:grid;place-items:center;box-shadow:0 4px 16px rgba(0,0,0,0.35)"><span style="transform:rotate(45deg);font-size:20px">${emoji}</span></div>`
       destMarkerRef.current = new tt.Marker({ element: el }).setLngLat(target).addTo(map)
     } else {
       destMarkerRef.current.setLngLat(target)
-      try { destMarkerRef.current.getElement().innerHTML = `<div style="width:36px;height:36px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${bg};border:3px solid #fff;display:grid;place-items:center;box-shadow:0 3px 12px #0007"><span style="transform:rotate(45deg);font-size:18px">${emoji}</span></div>` } catch {}
+      try { destMarkerRef.current.getElement().innerHTML = `<div style="width:40px;height:40px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${bg};border:3px solid #fff;display:grid;place-items:center;box-shadow:0 4px 16px rgba(0,0,0,0.35)"><span style="transform:rotate(45deg);font-size:20px">${emoji}</span></div>` } catch {}
     }
   }, [mapReady, targetLng, targetLat, isOnPickupLeg])
 
@@ -218,6 +243,22 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     if (best !== activeStepIndex) setActiveStepIndex(best)
   }, [location, routeData])
 
+  // VOICE GUIDANCE
+  const steps = (routeData?.steps || []) as any[]
+  const currentStep = steps[Math.min(activeStepIndex, Math.max(steps.length - 1, 0))]
+  const instruction = currentStep?.maneuver?.instruction || 'Continue to destination'
+
+  useEffect(() => {
+    if (!voiceOn || !instruction || !mapReady) return
+    try {
+      window.speechSynthesis?.cancel()
+      const u = new SpeechSynthesisUtterance(instruction)
+      u.rate = 1.05
+      u.volume = 0.9
+      window.speechSynthesis?.speak(u)
+    } catch {}
+  }, [instruction, activeStepIndex, voiceOn, mapReady])
+
   async function updateRideStatus(status: 'arrived' | 'in_progress') {
     if (!ride) return
     setActionBusy(true)
@@ -228,21 +269,11 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
       if (status === 'in_progress' && !isArrivedStatus(current)) throw new Error(`Cannot start trip from ${current}`)
       const payload: any = { status }
       if (status === 'arrived') payload.arrived_at = new Date().toISOString()
-      const { data, error } = await supabase
-        .from('rides')
-        .update(payload)
-        .eq('id', ride.id)
-        .eq('driver_id', effectiveId)
-        .select('*')
-        .maybeSingle()
+      const { data, error } = await supabase.from('rides').update(payload).eq('id', ride.id).eq('driver_id', effectiveId).select('*').maybeSingle()
       if (error) throw error
       if (!data) throw new Error('Ride changed - refresh and try again')
       setRide(data as Ride)
-      if (status === 'arrived') {
-        const t = Date.now()
-        arrivedAtRef.current = t
-        setArrivedAt(t)
-      }
+      if (status === 'arrived') { const t = Date.now(); arrivedAtRef.current = t; setArrivedAt(t) }
     } catch (e:any) { setRideError(e.message) } finally { setActionBusy(false) }
   }
 
@@ -250,11 +281,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
     if (!ride || !confirm('Passenger did not show after 5 min. Cancel as No-Show?')) return
     setActionBusy(true)
     try {
-      const { error } = await supabase
-        .from('rides')
-        .update({ status: 'cancelled', cancel_reason: 'no_show', cancelled_by: 'driver', cancelled_at: new Date().toISOString() } as any)
-        .eq('id', ride.id)
-        .eq('driver_id', effectiveId)
+      const { error } = await supabase.from('rides').update({ status: 'cancelled', cancel_reason: 'no_show', cancelled_by: 'driver', cancelled_at: new Date().toISOString() } as any).eq('id', ride.id).eq('driver_id', effectiveId)
       if (error) throw error
       onBack()
     } catch (e:any) { setRideError(e.message) } finally { setActionBusy(false) }
@@ -263,20 +290,14 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
   async function sendSos() {
     if (!confirm('Send SOS alert to admin?')) return
     try {
-      const { error } = await supabase.from('sos_reports').insert({ user_id: effectiveId, ride_id: ride?.id, message: 'Driver SOS submitted from navigation.', status: 'open', type: 'driver_sos', latitude: location?.[1] ?? null, longitude: location?.[0] ?? null } as any)
+      const { error } = await supabase.from('sos_reports').insert({ user_id: effectiveId, ride_id: ride?.id, message: 'Driver SOS from navigation.', status: 'open', type: 'driver_sos', latitude: location?.[1] ?? null, longitude: location?.[0] ?? null } as any)
       if (error) throw error
-      alert('SOS report submitted to BuddyRide support. This app cannot guarantee an immediate response. If you are in immediate danger, call 10111 (police) or 10177 (ambulance).')
-    } catch (e:any) {
-      alert(`SOS failed: ${e.message || String(e)}. Call admin directly.`)
-    }
+      alert('SOS sent to BuddyRide support. If in immediate danger, call 10111 (police) or 10177 (ambulance).')
+    } catch (e:any) { alert(`SOS failed: ${e.message || String(e)}.`) }
   }
 
   if (rideLoading) return <main style={{ padding: 24, background: '#0b0b0c', color: 'white', minHeight: '100dvh' }}>Loading navigation…</main>
   if (rideError || !ride) return <main style={{ padding: 24, background: '#0b0b0c', color: 'white', minHeight: '100dvh' }}><button onClick={onBack} style={{ padding: '10px 16px', borderRadius: 12, background: '#222', color: 'white', border: 0 }}>← Back</button><p style={{ color: '#ff5555', marginTop: 20 }}>{rideError || 'Ride not found'}</p></main>
-
-  const steps = (routeData?.steps || []) as any[]
-  const currentStep = steps[Math.min(activeStepIndex, Math.max(steps.length - 1, 0))]
-  const instruction = currentStep?.maneuver?.instruction || 'Continue to destination'
 
   const durationSec = (() => {
     if (!routeData) return 0
@@ -299,7 +320,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
 
   return (
     <main style={{ position: 'fixed', inset: 0, overflow: 'hidden', background: '#dbe4e8', color: '#111827', fontFamily: 'system-ui, sans-serif' }}>
-      <div ref={mapContainerRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+      <div ref={mapContainerRef} style={{ position: 'absolute', inset: 0 }} />
       <button onClick={onBack} style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 14px)', left: 14, zIndex: 5, minWidth: 46, minHeight: 46, border: 0, borderRadius: 14, background: '#111827', color: 'white', fontSize: 18, fontWeight: 700 }}>←</button>
       <button onClick={() => void sendSos()} style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 14px)', right: 14, zIndex: 5, minWidth: 46, minHeight: 46, border: 0, borderRadius: 14, background: '#dc2626', color: 'white', fontSize: 18, fontWeight: 800 }}>SOS</button>
 
@@ -312,10 +333,11 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
       </section>
 
       <div style={{ position: 'absolute', right: 14, bottom: 'calc(42dvh + 24px)', zIndex: 4, display: 'grid', gap: 10 }}>
-        <button onClick={() => { userHasInteractedRef.current = false; setFollowDriver(true); if (location && mapRef.current) { mapRef.current.setCenter(location); mapRef.current.setZoom(17) } }} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: BLUE }}>◎</button>
-        <button onClick={() => { userHasInteractedRef.current = true; mapRef.current?.zoomIn() }} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: BLUE, fontSize: 24 }}>+</button>
-        <button onClick={() => { userHasInteractedRef.current = true; mapRef.current?.zoomOut() }} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: BLUE, fontSize: 24 }}>−</button>
+        <button onClick={() => { userHasInteractedRef.current = false; setFollowDriver(true); if (location && mapRef.current) { try { mapRef.current.easeTo({ center: location, bearing, pitch: threeDimensional ? 60 : 0, duration: 400 }) } catch { mapRef.current.setCenter(location) } } }} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: followDriver ? BLUE : 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: followDriver ? 'white' : BLUE }}>◎</button>
+        <button onClick={() => { userHasInteractedRef.current = true; setFollowDriver(false); mapRef.current?.zoomIn() }} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: BLUE, fontSize: 24 }}>+</button>
+        <button onClick={() => { userHasInteractedRef.current = true; setFollowDriver(false); mapRef.current?.zoomOut() }} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: BLUE, fontSize: 24 }}>−</button>
         <button onClick={() => setThreeDimensional(v => !v)} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: threeDimensional ? BLUE : 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: threeDimensional ? 'white' : BLUE }}>{threeDimensional ? '3D' : '2D'}</button>
+        <button onClick={() => setVoiceOn(v => !v)} style={{ width: 48, height: 48, border: 0, borderRadius: 16, background: voiceOn ? BLUE : 'white', boxShadow: '0 3px 14px #0003', fontWeight: 800, color: voiceOn ? 'white' : BLUE, fontSize: 18 }}>{voiceOn ? '🔊' : '🔇'}</button>
       </div>
 
       <section style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 3, padding: '18px 20px calc(20px + env(safe-area-inset-bottom))', borderRadius: '24px 24px 0 0', background: '#fff', boxShadow: '0 -8px 32px #0002', maxHeight: '42dvh', overflowY: 'auto' }}>
@@ -328,7 +350,7 @@ export function DriverNavigationView({ rideId, profile, onBack }: { rideId: stri
           <div><div style={{ fontWeight: 800 }}>{passenger?.full_name || 'Passenger'}</div><div style={{ fontSize: 12, color: '#6b7280' }}>Fare: R{(ride as any).fare_amount ?? (ride as any).fare ?? '—'} • {isArrived ? `Waiting ${Math.floor(waitedSeconds / 60)}:${String(waitedSeconds % 60).padStart(2,'0')}` : rideStatus}</div></div>
           {passenger?.phone && <a href={`tel:${toTel(passenger.phone)}`} style={{ padding: '10px 14px', borderRadius: 10, background: BLUE, color: 'white', fontWeight: 800, textDecoration: 'none' }}>📞 Call</a>}
         </div>
-        {isArrived && !canNoShow && <p style={{ fontSize: 13, color: '#b45309', background: '#fef3c7', padding: '8px 10px', borderRadius: 8 }}>Waiting for passenger... No-show available in {Math.floor(waitLeft/60)}:{String(waitLeft%60).padStart(2,'0')}</p>}
+        {isArrived && !canNoShow && <p style={{ fontSize: 13, color: '#b45309', background: '#fef3c7', padding: '8px 10px', borderRadius: 8, marginTop: 10 }}>Waiting for passenger... No-show available in {Math.floor(waitLeft/60)}:{String(waitLeft%60).padStart(2,'0')}</p>}
         {canNoShow && <button disabled={actionBusy} onClick={() => void cancelNoShow()} style={{ width: '100%', minHeight: 48, marginTop: 10, border: '1px solid #fecaca', borderRadius: 12, background: '#fef2f2', color: '#b91c1c', fontWeight: 800 }}>Cancel - Passenger No-Show</button>}
         {isOnPickupLeg && !isArrived && (
           <button disabled={actionBusy} onClick={() => void updateRideStatus('arrived')} style={{ width: '100%', minHeight: 50, marginTop: 16, border: 0, borderRadius: 14, background: BLUE, color: 'white', fontSize: 15, fontWeight: 800 }}>{actionBusy ? 'Updating…' : 'I have arrived'}</button>
