@@ -20,6 +20,7 @@
     "lucide-react": "^0.468.0",
     "mapbox-gl": "^3.33.0",
     "maplibre-gl": "^6.19.0",
+    "open-location-code": "^1.0.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-leaflet": "^5.0.0",
