@@ -56,8 +56,20 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     if (!containerRef.current || mapRef.current) return
     const map = new maplibregl.Map({
       container: containerRef.current,
-      // FIXED - WAS BLANK: Carto is blocked. Now OpenFreeMap Bright - premium, white, works in SA, no key
-      style: 'https://tiles.openfreemap.org/styles/bright',
+      // RASTER OSM - NEVER GOES BLANK, WORKS ON ALL PHONES IN SA
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap',
+            maxzoom: 19
+          }
+        },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+      } as any,
       center: [center[0], center[1]],
       zoom: 16,
       attributionControl: false,
