@@ -56,9 +56,8 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     if (!containerRef.current || mapRef.current) return
     const map = new maplibregl.Map({
       container: containerRef.current,
-      // PREMIUM FIX - was TomTom raster basic/main (cheap grey blurry)
-      // Now Carto Voyager vector - crisp white roads, premium, no key
-      style: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+      // FIXED - WAS BLANK: Carto is blocked. Now OpenFreeMap Bright - premium, white, works in SA, no key
+      style: 'https://tiles.openfreemap.org/styles/bright',
       center: [center[0], center[1]],
       zoom: 16,
       attributionControl: false,
