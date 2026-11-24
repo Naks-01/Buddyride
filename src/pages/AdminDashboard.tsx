@@ -26,7 +26,9 @@ function categoryFor(cat: string | null | undefined) {
 type DriverLocation = { driver_id: string, lat: number, lng: number }
 type PendingUser = { id: string, full_name: string, email: string, phone_number: string, verification_status: string, avatar_url: string, created_at: string, role: string, ride_type?: string | null }
 
-type AdminModule = 'admin-dashboard' | 'admin-docs' | 'admin-rides' | 'admin-passengers' | 'admin-finance' | 'admin-support' | 'admin-zones' | 'admin-settings'
+// --- ONLY CHANGE 1: added 'admin-bundles' ---
+type AdminModule = 'admin-dashboard' | 'admin-docs' | 'admin-rides' | 'admin-passengers' | 'admin-finance' | 'admin-support' | 'admin-zones' | 'admin-settings' | 'admin-bundles'
+type BundlePrice = { id: string, name: string, label: string, category: string, trips: number, price: number, active: boolean, popular: boolean }
 
 export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () => void; onDocs: (driverId: string) => void; onAdminModule?: (m: AdminModule) => void }) {
   const [authorization, setAuthorization] = useState<'checking' | 'authorized' | 'unauthorized'>('checking')
@@ -41,6 +43,10 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
   const [filter, setFilter] = useState<'all' | 'drivers' | 'passengers' | 'with-phone'>('all')
   const [ridesByCat, setRidesByCat] = useState<Record<string, number>>({})
   const loadingRef = useRef(false)
+
+  // --- ONLY CHANGE 2: bundles state ---
+  const [bundles, setBundles] = useState<BundlePrice[]>([])
+  const [bundleSaving, setBundleSaving] = useState<string | null>(null)
 
   const bg = '#0e0e10'
   const bgCard = '#121214'
@@ -71,6 +77,20 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
     return () => { active = false; if (redirectTimeout !== undefined) window.clearTimeout(redirectTimeout) }
   }, [])
 
+  // --- ONLY CHANGE 2b: load bundles ---
+  async function loadBundles() {
+    const { data } = await supabase.from('bundle_prices').select('*').order('category').order('trips')
+    if (data) setBundles(data as BundlePrice[])
+  }
+  async function updateBundle(id: string, field: 'price' | 'trips' | 'active' | 'popular', value: number | boolean) {
+    setBundleSaving(id)
+    const { error } = await supabase.from('bundle_prices').update({ [field]: value }).eq('id', id)
+    if (error) setMsg(`Bundle update failed: ${error.message}`)
+    else setMsg('Bundle updated - driver app will see new price instantly.')
+    await loadBundles()
+    setBundleSaving(null)
+  }
+
   async function load() {
     if (loadingRef.current) return
     loadingRef.current = true
@@ -94,8 +114,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
           .eq('verification_status', 'identity_complete')
           .order('created_at', { ascending: true }),
       ])
-      // FIXED: Single source for online location = driver_status ONLY
-      // Removed duplicate fallback to driver_locations
       let locs: DriverLocation[] = []
       const { data: statusLocs, error: statusErr } = await supabase.from('driver_status').select('driver_id,lat,lng').eq('is_online', true)
       if (!statusErr && statusLocs) {
@@ -119,7 +137,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
       setPendingPassengers((pendingPassengerResult.data || []) as PendingUser[])
       setIdentityDrivers((identityResult.data || []) as PendingUser[])
 
-      // Rides today split by category
       try {
         const today = new Date(); today.setHours(0,0,0,0)
         const { data: todayRides } = await supabase.from('rides').select('ride_category, ride_type').gte('created_at', today.toISOString())
@@ -140,20 +157,16 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
   useEffect(() => {
     if (authorization !== 'authorized') return
     void load()
+    void loadBundles()
     const interval = setInterval(() => void load(), 5000)
     const ch = supabase.channel('admin-dashboard-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, () => void load())
-      // FIXED: Removed duplicate driver_locations subscription - driver_status is single source
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_documents' }, () => void load())
       .subscribe()
     return () => { clearInterval(interval); void supabase.removeChannel(ch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authorization])
-
-  // FIXED: REMOVED duplicate approveDriver() that bypassed docs/vehicle/zones check
-  // Driver approval ONLY in AdminDocuments.tsx (approveToDrive)
-  // Dashboard is view-only for drivers - it sends admin to full check page
 
   async function approvePassenger(userId: string, approve: boolean, name: string) {
     if (!confirm(approve ? `Approve passenger ${name}?` : `Reject passenger ${name}?`)) return
@@ -197,7 +210,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
     <button key={key} onClick={() => setFilter(key)} style={{ padding: '8px 14px', borderRadius: 20, background: filter === key ? BLUE : bg2, color: filter === key ? 'white' : subText, border: `1px solid ${border}`, fontWeight: 700, cursor: 'pointer' }}>{label}</button>
   )
 
-  // FIXED: Driver row no longer has Approve/Reject bypass - only "Check Docs & Approve"
   const renderRow = (d: PendingUser, isPassenger: boolean) => {
     const cat = categoryFor((d as any).ride_type)
     return (
@@ -283,6 +295,35 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
       <p style={{ fontSize: '12px', color: subText }}>Showing {locations.length} online driver location(s). Auto-refreshes every 5s. Center: Polokwane [-23.9045, 29.4689] • Bundle Model: Drivers use 1 credit per ride, 2 credits for trips of 100km or longer</p>
     </section>
 
+    {/* --- ONLY CHANGE 3: BUNDLES SECTION - EDIT PRICES HERE --- */}
+    <section style={{ ...card, marginTop: '14px', background: '#0a1a0a', border: '1px solid #14532d' }}>
+      <h2 style={{ marginTop: 0, color: '#bbf7d0' }}>💰 Bundle Prices - Edit Live ({bundles.length} bundles)</h2>
+      <p style={{ fontSize: 12, color: subText }}>Change price → click outside → saved instantly to Supabase. Driver app sees new price.</p>
+      {bundles.length === 0 ? <p style={{ color: subText }}>No bundles found. Check bundle_prices table.</p> : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {CATEGORIES.map(cat => (
+            <div key={cat.id}>
+              <div style={{ fontWeight: 800, margin: '10px 0 6px', color: text }}>{cat.icon} {cat.name}</div>
+              {bundles.filter(b => normalizeCategory(b.category) === cat.id).map(b => (
+                <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: `1px solid ${border}`, flexWrap: 'wrap' }}>
+                  <div><div style={{ fontWeight: 700 }}>{b.label} {b.popular ? '⭐ POPULAR' : ''}</div><div style={{ fontSize: 12, color: subText }}>{b.trips} trips • R{(b.price / b.trips).toFixed(2)} per trip</div></div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ color: subText }}>R</span>
+                    <input type="number" defaultValue={b.price} key={`${b.id}-${b.price}`}
+                      onBlur={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v !== b.price) void updateBundle(b.id, 'price', v) }}
+                      style={{ width: 90, background: '#000', color: 'white', border: `1px solid ${border}`, borderRadius: 8, padding: '8px' }} />
+                    <button disabled={bundleSaving === b.id} onClick={() => void updateBundle(b.id, 'active', !b.active)} style={{ padding: '8px 12px', borderRadius: 8, background: b.active ? '#16a34a' : '#7f1d1d', color: 'white', border: 0, fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>{b.active ? 'Active' : 'Off'}</button>
+                    <button disabled={bundleSaving === b.id} onClick={() => void updateBundle(b.id, 'popular', !b.popular)} style={{ padding: '8px 12px', borderRadius: 8, background: b.popular ? ORANGE : bg2, color: 'white', border: `1px solid ${border}`, fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>{b.popular ? '★ Popular' : 'Make Popular'}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      <button onClick={() => void loadBundles()} style={{ marginTop: 12, padding: '8px 14px', borderRadius: 8, background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 700, cursor: 'pointer' }}>Refresh Bundles</button>
+    </section>
+
     <section style={{ ...card, marginTop: '14px' }}>
       <h3 style={{ color: text, marginTop: 0 }}>Admin Modules</h3>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -294,6 +335,8 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
         <button onClick={() => goModule('admin-support')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>SOS Support</button>
         <button onClick={() => goModule('admin-zones')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>Zones</button>
         <button onClick={() => goModule('admin-settings')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>Settings</button>
+        {/* --- ONLY CHANGE 3b: bundles button --- */}
+        <button onClick={() => goModule('admin-bundles')} style={{ padding: '8px 14px', borderRadius: 8, background: '#16a34a', color: 'white', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>💰 Bundles ({bundles.length})</button>
       </div>
     </section>
   </main>
