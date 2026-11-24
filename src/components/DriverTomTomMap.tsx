@@ -54,23 +54,14 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
-    const KEY = import.meta.env.VITE_TOMTOM_API_KEY
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: {
-        version: 8,
-        sources: {
-          tomtom: {
-            type: 'raster',
-            tiles: [`https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${KEY}`],
-            tileSize: 256,
-            maxzoom: 19
-          }
-        },
-        layers: [{ id: 'tomtom', type: 'raster', source: 'tomtom', paint: { 'raster-fade-duration': 0 } }]
-      } as any,
+      // PREMIUM FIX - was TomTom raster basic/main (cheap grey blurry)
+      // Now Carto Voyager vector - crisp white roads, premium, no key
+      style: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
       center: [center[0], center[1]],
       zoom: 16,
+      attributionControl: false,
     })
     mapRef.current = map
     map.on('movestart', (e: any) => { if (e.originalEvent) onMapMoveRef.current?.() })
@@ -126,7 +117,7 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   }, [route])
 
   return (
-    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#E6F0FF', overflow: 'hidden' }}>
+    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#F8F9FA', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button onClick={() => mapRef.current?.zoomIn()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>+</button>
