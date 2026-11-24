@@ -1,0 +1,40 @@
+{
+  "report": "LAUNCH_REPORT.md",
+  "date": "2026-11-17",
+  "ready_to_launch": false,
+  "assessment_scope": "Source repairs plus TypeScript compilation and existing Node tests. Live Supabase, Twilio, Paystack, Vercel, mobile, and emergency operations were not verified.",
+  "source_fixes_included": [
+    "Passenger profiles are no longer auto-verified by client code",
+    "Passenger booking requires admin-approved identity verification",
+    "Server-side OTP issuance and verification with hashed codes and limits",
+    "Verified mobile number required on profile creation by database trigger",
+    "Server-calculated fare quote used for estimate and ride creation",
+    "Paystack checkout and callback verification connected in passenger flow",
+    "Passenger and driver SOS reports supported by schema",
+    "Expired driver offer recovery function and optional pg_cron schedule",
+    "Driver payout UI accurately describes manual EFT"
+  ],
+  "verification": {
+    "typescript_build": "passed",
+    "automated_tests": "4 passed, 0 failed",
+    "vite_production_build": "not completed: missing @rollup/rollup-linux-x64-gnu in supplied node_modules",
+    "sql_migration_live_execution": "not tested",
+    "edge_function_deployment": "not tested",
+    "sms_delivery": "not tested",
+    "paystack_transactions_and_webhook": "not tested",
+    "gps_and_realtime_trip": "not tested",
+    "android_release": "not tested"
+  },
+  "launch_blockers": [
+    "Apply and validate the new Supabase migration and all prior migrations",
+    "Configure and test Twilio credentials and sender",
+    "Configure and test Paystack secret, callback and webhook",
+    "Configure Mapbox server token and verify fare settings",
+    "Verify pg_cron recovery schedule",
+    "Implement background push notifications if required",
+    "Implement automated driver payouts if required; current process is manual EFT",
+    "Staff and test SOS response process; SOS does not contact emergency services",
+    "Complete end-to-end staging and real-device tests",
+    "Run clean npm ci and Vite production build before deployment"
+  ]
+}
