@@ -122,11 +122,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(90); const [pinTarget, setPinTarget] = useState<'pickup' | 'dropoff'>('pickup')
   const [isMapMoving, setIsMapMoving] = useState(false)
   const [outOfService, setOutOfService] = useState(false); const [outOfServicePlace, setOutOfServicePlace] = useState('')
-  const [customFare, setCustomFare] = useState<number | null>(null); const [searchSec, setSearchSec] = useState(0)
+  const [customFare] = useState<number | null>(null); const [searchSec, setSearchSec] = useState(0)
   const [safetyProfile, setSafetyProfile] = useState({ avatar_url: profile.avatar_url, selfie_url: profile.selfie_url ?? null, id_document_url: profile.id_document_url ?? null, id_number: profile.id_number ?? null, id_verified: profile.id_verified ?? false, is_verified: profile.is_verified ?? false, })
   const [verificationStatus, setVerificationStatus] = useState(profile.verification_status || 'not_started'); const [verificationRejectionReason, setVerificationRejectionReason] = useState(profile.verification_rejection_reason || ''); const [verificationLoaded, setVerificationLoaded] = useState(false); const [verificationError, setVerificationError] = useState(''); const [uploadToast, setUploadToast] = useState(''); const [showSafetyModal, setShowSafetyModal] = useState(false); const [safetyIdNumber, setSafetyIdNumber] = useState(''); const [verificationUploadType, setVerificationUploadType] = useState<string | null>(null); const [cameraDocument, setCameraDocument] = useState<PassengerSafetyCapture | null>(null); const [cameraError, setCameraError] = useState(''); const [cameraReady, setCameraReady] = useState(false)
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null); const cameraStreamRef = useRef<MediaStream | null>(null)
-  // GALLERY FIX: refs for gallery
   const galleryInputRef = useRef<HTMLInputElement | null>(null)
   const galleryDocRef = useRef<PassengerSafetyCapture | null>(null)
   const pickupDebounce = useRef<any>(null); const dropoffDebounce = useRef<any>(null); const pickupAddressRequest = useRef(0); const dropoffAddressRequest = useRef(0); const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null); const cancelledRideTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const uploadToastTimer = useRef<number | null>(null)
@@ -138,9 +137,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const hasRequiredDocs = hasSelfie && hasIdNumber && hasIdDoc
   const isVerified = verificationLoaded && hasRequiredDocs && (safetyProfile.is_verified === true || ['verified', 'approved'].includes(verificationStatus))
   const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
-  const displayPrice = customFare ?? price
+  const displayPrice = price
   const suggestedPrice = price ?? 56
-  const priceMax = Math.round((price ?? 56) * 1.8)
   const selectedCategoryLabel = CATEGORIES.find(c => c.id === normalizeCategory(selectedCat))?.name || 'Buddy Plus'
 
   function checkServiceArea(addr: string, coord?: [number,number] | null) {
@@ -267,10 +265,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
 
-  function onPickupChange(val: string) { setFareQuote(null); setCustomFare(null); setPickup(val); setPickupCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 300) }
-  function onDropoffChange(val: string) { setFareQuote(null); setCustomFare(null); setDropoff(val); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
-  function selectPickupSuggestion(item: any) { setFareQuote(null); setCustomFare(null); setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowPickupSug(false); setPinTarget('dropoff') }
-  function selectDropoffSuggestion(item: any) { setFareQuote(null); setCustomFare(null); setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowDropoffSug(false); setSheetSnap(90); if(!checkServiceArea(item.place_name, [item.center[0], item.center[1]])) return }
+  function onPickupChange(val: string) { setFareQuote(null); setPickup(val); setPickupCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 300) }
+  function onDropoffChange(val: string) { setFareQuote(null); setDropoff(val); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
+  function selectPickupSuggestion(item: any) { setFareQuote(null); setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowPickupSug(false); setPinTarget('dropoff') }
+  function selectDropoffSuggestion(item: any) { setFareQuote(null); setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowDropoffSug(false); setSheetSnap(90); if(!checkServiceArea(item.place_name, [item.center[0], item.center[1]])) return }
   function onMapMove(coords: [number, number]) {
     setIsMapMoving(true)
     if (pinTarget === 'pickup') {
@@ -308,13 +306,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       if (error) throw new Error(error.message || 'Fare service unavailable')
       if (!quote?.quote_id || !Number.isFinite(Number(quote.total_fare))) throw new Error(quote?.error || 'Could not obtain a verified fare quote.')
       setFareQuote({ ...quote, pickup: pCoords, dropoff: dCoords, category: normalizedCat })
-      setRoute(quote.geometry || undefined); setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(Number(quote.total_fare)); setCustomFare(Number(quote.total_fare)); setShowEstimate(true)
+      setRoute(quote.geometry || undefined); setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(Number(quote.total_fare)); setShowEstimate(true)
     } catch (error) { setShowEstimate(false); setFareQuote(null); setRideError('Could not calculate verified fare: ' + errMsg(error)) } finally { setLoading(false) }
   }
   async function useMyLocation() {
     navigator.geolocation.getCurrentPosition(async pos => {
       const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-      setFareQuote(null); setCustomFare(null); setLocation(p); setMapCenter(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup')
+      setFareQuote(null); setLocation(p); setMapCenter(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup')
       try { const real = await reverseTomTom(p); setPickup(real); setRideError('') } catch { setPickup('My Location - Polokwane') }
     }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 10000 })
   }
@@ -351,8 +349,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       if (!quote?.quote_id || !Number.isFinite(Number(quote.total_fare || quote.fare)) || !Number.isFinite(Number(quote.distance_km))) {
         throw new Error(quote?.error || 'The fare service returned an invalid quote. Please try again.')
       }
-      const finalFare = customFare ?? Number(quote.total_fare || quote.fare)
-      setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(finalFare); setCustomFare(finalFare)
+      const finalFare = Number(quote.total_fare || quote.fare)
+      setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(finalFare)
       setRoute(quote.geometry || undefined)
       const initialStatus = 'searching'
       const { data, error } = await supabase.from('rides').insert({
@@ -434,7 +432,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     if (error) { setRideError('Could not cancel: ' + errMsg(error)); return }
     if (!cancelledRide) { setRideError('Ride no longer available to cancel.'); return }
     try { await supabase.from('ride_requests').update({ status: 'cancelled' }).eq('ride_id', rideId).eq('status', 'pending') } catch {}
-    setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(90); setCancelReason(''); setCustomFare(null)
+    setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(90); setCancelReason('')
   }
   async function finishTrip() {
     const finishedRide = completedRide || completedReceipt; if (!finishedRide) return; if (rating === 0 || !finishedRide.driver_id) return
@@ -445,7 +443,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
   const sugStyle = (dark: boolean) => ({ position: 'absolute' as const, top: '48px', left: 0, right: 0, zIndex: 9999, background: dark ? '#2a2a2a' : 'white', border: '1px solid ' + (dark ? '#444' : '#ddd'), borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
   const sugItemStyle = (dark: boolean) => ({ padding: '12px 14px', borderBottom: '1px solid ' + (dark ? '#333' : '#eee'), cursor: 'pointer', fontSize: '14px', color: dark ? 'white' : 'black' })
-  function clearActiveRideState() { setRide(null); setDriverProfile(null); setRoute(undefined); setShowChat(false); setShowCancelReason(false); setCancelReason(''); setPickup(''); setDropoff(''); setPickupCoords(null); setDropoffCoords(null); setDistance(null); setPrice(null); setCustomFare(null); setShowEstimate(false); setRideError(''); setRating(0); setRatingComment(''); setSheetSnap(90); setPinTarget('pickup') }
+  function clearActiveRideState() { setRide(null); setDriverProfile(null); setRoute(undefined); setShowChat(false); setShowCancelReason(false); setCancelReason(''); setPickup(''); setDropoff(''); setPickupCoords(null); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); setRideError(''); setRating(0); setRatingComment(''); setSheetSnap(90); setPinTarget('pickup') }
   function handleRideCompleted(finishedRide: Ride) { setCompletedRide(finishedRide); clearActiveRideState() }
   async function uploadPassengerVerification(document: PassengerSafetyCapture, photo: Blob) {
     setVerificationUploadType(document.type); setVerificationError(''); let uploadedPath: string | null = null; let uploadedBucket = ''
@@ -492,7 +490,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
-    {/* HIDDEN GALLERY INPUT - FIX */}
     <input
       ref={galleryInputRef}
       type="file"
@@ -511,7 +508,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         <h2 style={{ margin: '0 0 12px' }}>{cameraDocument.action}</h2>
         <video ref={cameraVideoRef} autoPlay playsInline muted style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 12, background: '#111', objectFit: 'cover' }} />
         {cameraError && <p role="alert" style={{ color: '#dc2626', fontSize: 13 }}>{cameraError}</p>}
-        {/* FIX: Gallery button added */}
         <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
           <div style={{ display: 'flex', gap: 10 }}>
             <button type="button" onClick={closeVerificationCamera} style={{ flex: 1, padding: 13, borderRadius: 12, border: '1px solid ' + border, background: bg2, color: text }}>Cancel</button>
@@ -527,13 +523,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           >
             🖼️ Choose from Gallery instead
           </button>
-          <p style={{ margin: 0, fontSize: 11, color: muted, textAlign: 'center' }}>You can upload ID photo from gallery - same as camera</p>
         </div>
       </section>
     </div>}
     {outOfService && <div style={{ position:'fixed', inset:0, zIndex:100003, background: bg, display:'grid', placeItems:'center', padding:24, textAlign:'center' }}>
       <div><div style={{fontSize:80}}>😭</div><h2 style={{color: text}}>Out Of Service Area</h2><p style={{color: muted, lineHeight:1.6}}>Apologies! We are currently not serving in <strong style={{color:BLUE}}>{outOfServicePlace}</strong>. Our services are only available in <span style={{color:BLUE, fontWeight:700}}>Polokwane, Tzaneen, Giyani, Thohoyandou, Mankweng, Seshego, Mokopane, Makhado, Lebowakgomo + TSHWANE, Soweto, EastRand, Soshanguve, Vaal, Johannesburg, Klerksdorp, Durban, Pietermaritzburg, Potchefstroom.</span></p>
-      <button onClick={()=>{ setOutOfService(false); setDropoff(''); setDropoffCoords(null); setPrice(null); setCustomFare(null) }} style={{width:'100%', marginTop:12, background:BLUE, color:'#fff', border:0, borderRadius:12, padding:14, fontWeight:800}}>Try other Location</button>
+      <button onClick={()=>{ setOutOfService(false); setDropoff(''); setDropoffCoords(null); setPrice(null) }} style={{width:'100%', marginTop:12, background:BLUE, color:'#fff', border:0, borderRadius:12, padding:14, fontWeight:800}}>Try other Location</button>
       <button onClick={()=>{ setOutOfService(false) }} style={{width:'100%', marginTop:8, background:bg2, color:text, border:'1px solid '+border, borderRadius:12, padding:14, fontWeight:700}}>Back to Home</button></div>
     </div>}
     {ride && rideStatus==='searching' && <div style={{ position:'fixed', inset:0, zIndex:9998, background: bg, display:'grid', placeItems:'start center', paddingTop:60 }}>
@@ -546,7 +541,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         <div style={{ background: bg2, border: '1px solid '+border, borderRadius:12, padding:12, display:'grid', gap:8, fontSize:13, color: text }}>
           <div>● Pickup: <strong>{ride.pickup_address}</strong></div>
           <div>● Destination: <strong>{ride.dropoff_address}</strong></div>
-          <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{color: muted}}>Cash - Your offer (Suggested R{suggestedPrice})</span><strong>R {ride.fare}</strong></div>
+          <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{color: muted}}>Cash - Fixed Fare</span><strong>R {ride.fare}</strong></div>
         </div>
         <button onClick={()=>{ setCancelReason('Changed mind'); void cancelRide() }} style={{ width:'100%', marginTop:16, background:'none', border:0, color:'#FF6B6B', fontWeight:800 }}>Cancel ride</button>
       </div>
@@ -606,19 +601,17 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: 4 }}>
                 {categories.map(cat => {
                   const isSel = selectedCat === cat.id
-                  return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); setFareQuote(null); setPrice(null); setCustomFare(null); setShowEstimate(false) }} style={{ minWidth: '115px', padding: '12px 10px', borderRadius: '16px', border: isSel ? `2px solid ${BLUE}` : '1px solid ' + border, background: isSel ? BLUE : bg2, color: isSel ? 'white' : text, textAlign: 'left', transition: 'all 0.15s' }}><div style={{ fontSize: '20px' }}>{(cat as any).icon}</div><div style={{ fontWeight: '800', fontSize: '13px', marginTop: 6 }}>{(cat as any).name}</div><div style={{ fontSize: '11px', color: isSel ? 'rgba(255,255,255,0.85)' : muted }}>{(cat as any).seats || ''} • {(cat as any).desc || ''}</div>{isSel && showEstimate && displayPrice !== null && <div style={{ fontWeight: '900', color: 'white', fontSize: '13px', marginTop: 4 }}>R {displayPrice}</div>}</button>
+                  return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); setFareQuote(null); setPrice(null); setShowEstimate(false) }} style={{ minWidth: '115px', padding: '12px 10px', borderRadius: '16px', border: isSel ? `2px solid ${BLUE}` : '1px solid ' + border, background: isSel ? BLUE : bg2, color: isSel ? 'white' : text, textAlign: 'left', transition: 'all 0.15s' }}><div style={{ fontSize: '20px' }}>{(cat as any).icon}</div><div style={{ fontWeight: '800', fontSize: '13px', marginTop: 6 }}>{(cat as any).name}</div><div style={{ fontSize: '11px', color: isSel ? 'rgba(255,255,255,0.85)' : muted }}>{(cat as any).seats || ''} • {(cat as any).desc || ''}</div>{isSel && showEstimate && displayPrice !== null && <div style={{ fontWeight: '900', color: 'white', fontSize: '13px', marginTop: 4 }}>R {displayPrice}</div>}</button>
                 })}
               </div>
             </div>
 
             {showEstimate && displayPrice !== null && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, background: bg2, borderRadius: 14, padding: 12, border: '1px solid '+border }}>
-                <button type="button" disabled={displayPrice <= MIN_FARE} onClick={()=>setCustomFare(p=>Math.max(MIN_FARE, (p ?? suggestedPrice) - 2))} style={{ width:36, height:36, borderRadius:18, border:'1px solid '+border, background: bg2, color: text, fontWeight:900 }}>−</button>
                 <div style={{ textAlign:'center' }}>
                   <div style={{ fontWeight:900, fontSize:20, color: text }}>R {displayPrice}</div>
-                  <div style={{ fontSize:11, color: muted }}>Suggested R {suggestedPrice} • {selectedCategoryLabel}</div>
+                  <div style={{ fontSize:11, color: muted }}>Fixed Fare • {selectedCategoryLabel} • No negotiation</div>
                 </div>
-                <button type="button" disabled={displayPrice >= priceMax} onClick={()=>setCustomFare(p=>Math.min(priceMax, (p ?? suggestedPrice) + 2))} style={{ width:36, height:36, borderRadius:18, border:'1px solid '+border, background: bg2, color: text, fontWeight:900 }}>+</button>
               </div>
             )}
 
