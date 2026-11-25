@@ -489,7 +489,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     try { const audio = new Audio(sounds[type]); audio.volume = 1.0; audio.play().catch(() => {}) } catch {}; if ('vibrate' in navigator) { if (type === 'arrived') navigator.vibrate([200, 100, 200, 100, 400]); else if (type === 'cancel') navigator.vibrate([500, 200, 500]); else navigator.vibrate(300) }
   }
 
-  return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg }}>
+  // FIXED TOP - safe-area, no hardcoded 60px
+  return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, paddingTop: 'env(safe-area-inset-top)' }}>
     <input
       ref={galleryInputRef}
       type="file"
@@ -531,7 +532,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <button onClick={()=>{ setOutOfService(false); setDropoff(''); setDropoffCoords(null); setPrice(null) }} style={{width:'100%', marginTop:12, background:BLUE, color:'#fff', border:0, borderRadius:12, padding:14, fontWeight:800}}>Try other Location</button>
       <button onClick={()=>{ setOutOfService(false) }} style={{width:'100%', marginTop:8, background:bg2, color:text, border:'1px solid '+border, borderRadius:12, padding:14, fontWeight:700}}>Back to Home</button></div>
     </div>}
-    {ride && rideStatus==='searching' && <div style={{ position:'fixed', inset:0, zIndex:9998, background: bg, display:'grid', placeItems:'start center', paddingTop:60 }}>
+    {ride && rideStatus==='searching' && <div style={{ position:'fixed', inset:0, zIndex:9998, background: bg, display:'grid', placeItems:'start center', paddingTop:'calc(env(safe-area-inset-top) + 12px)' }}>
       <div style={{ width:'100%', maxWidth:480, padding:16, textAlign:'left' }}>
         <div style={{ height:220, position:'relative', display:'grid', placeItems:'center', background: bg2, borderRadius:20, border: '1px solid '+border }}>
           <div style={{ width:140, height:140, borderRadius:70, background:'rgba(0,102,255,0.15)', animation:'bro-pulse 1.8s infinite', display:'grid', placeItems:'center' }}><div style={{ width:60, height:60, borderRadius:30, background:BLUE, display:'grid', placeItems:'center', fontSize:24 }}>📍</div></div>
@@ -548,7 +549,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <style>{'@keyframes bro-pulse{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}'}</style>
     </div>}
 
-    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: bg, color: text, borderBottom: '1px solid ' + border, minHeight: 56 }}>
+    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: bg, color: text, borderBottom: '1px solid ' + border, minHeight: 56, position: 'relative' }}>
       <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} verificationStatus={verificationStatus} verificationRejectionReason={verificationRejectionReason} onReuploadVerification={() => { setVerificationError(''); setShowSafetyModal(true) }} />
       <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 1 }}>
         <strong style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.2px', lineHeight: 1.1, color: BLUE }}>BuddyRide</strong>
@@ -559,13 +560,13 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}><button type="button" className="sos-btn" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 14px', borderRadius: 20, background: '#dc2626', color: 'white', border: 0, fontWeight: 900, fontSize: 13 }}>SOS</button><button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: '1px solid ' + border, display: 'grid', placeItems: 'center', padding: 0 }}>{isDark ? '☀️' : '🌙'}</button></div>
     </header>
 
-    {cancelledNotification && (<div style={{ position: 'fixed', top: '70px', left: '12px', right: '12px', zIndex: 99999, background: '#ff3b30', borderRadius: '16px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+    {cancelledNotification && (<div style={{ position: 'fixed', top: 'calc(env(safe-area-inset-top) + 70px)', left: '12px', right: '12px', zIndex: 99999, background: '#ff3b30', borderRadius: '16px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
       <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>❌</div>
       <div style={{ flex: 1 }}><div style={{ color: 'white', fontWeight: '900' }}>Driver Cancelled!</div><div style={{ color: 'white', fontSize: '13px' }}>{cancelledNotification}</div></div>
       <button onClick={() => setCancelledNotification(null)} style={{ background: 'white', color: '#ff3b30', border: 'none', borderRadius: '20px', padding: '8px 14px', fontWeight: 'bold' }}>OK</button>
     </div>)}
 
-    <div style={{ position: 'absolute', inset: '60px 0 0 0', zIndex: 1 }}>
+    <div style={{ position: 'absolute', inset: '0 0 0 0', top: 'calc(env(safe-area-inset-top) + 56px)', bottom: 0, zIndex: 1 }}>
       <Suspense fallback={<div aria-label="Loading map" style={{ width: '100%', height: '100%', background: bg2 }} />}>
         <PassengerTomTomMap center={mapCenter} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onMapMove} />
       </Suspense>

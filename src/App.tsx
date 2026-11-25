@@ -1,4 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
 import { AdminHome } from './pages/AdminHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
 import { getProfile, signUp as createAccount, sendSmsOtp, verifySmsOtp } from './lib/auth'
@@ -94,7 +96,6 @@ export default function App() {
     setCurrentPath(path)
   }, [])
 
-  // FIXED: Admin check does NOT depend on path anymore
   const isAdminEmailCheck = profile?.email?.trim().toLowerCase() === ADMIN_EMAIL
   const shouldVerifyAdminAccess = Boolean(profile && profile.role === 'admin' && isAdminEmailCheck)
   const hasAdminAccess = Boolean(profile && profile.role === 'admin' && isAdminEmailCheck)
@@ -108,9 +109,6 @@ export default function App() {
       let result = await getProfile(userId)
       const emailLower = userEmail?.toLowerCase().trim() || null
       const isAdminUser = emailLower === ADMIN_EMAIL
-
-      // Administrator privileges must come from the database-provisioned profile
-      // and the matching JWT email. Never change passenger/driver roles in the browser.
       if (isAdminUser) {
         if (!result || result.role !== 'admin') {
           throw new Error('This account is not provisioned as a BuddyRide administrator. Ask the platform owner to grant admin access securely.')
@@ -122,14 +120,12 @@ export default function App() {
         setLoading(false)
         return
       }
-
       const pending = localStorage.getItem('buddyride_pending_role') as Role | null
       const windowRole = (window as any).__buddyride_role as Role | undefined
       let intendedRole: Role = 'passenger'
       if (preferredRole === 'driver' || preferredRole === 'passenger') intendedRole = preferredRole
       else if (pending === 'driver' || pending === 'passenger') intendedRole = pending
       else if (windowRole === 'driver' || windowRole === 'passenger') intendedRole = windowRole
-
       if (!result) {
         const { data, error } = await supabase.from('profiles').upsert({ id: userId, email: emailLower, role: intendedRole, full_name: fullNameValue ?? null, phone_number: phoneValue ?? null, phone: phoneValue ?? null, verification_status: 'not_started', is_verified: false, } as any, { onConflict: 'id' }).select('*').single()
         if (error) throw error
@@ -158,6 +154,13 @@ export default function App() {
     } finally { setLoading(false); loadingProfileRef.current = false }
   }, [navigateDriverPath])
 
+  useEffect(() => { 
+    if (Capacitor.isNativePlatform()) {
+      StatusBar.setOverlaysWebView({ overlay: false }).catch(()=>{});
+      StatusBar.setBackgroundColor({ color: '#0066FF' }).catch(()=>{});
+      StatusBar.setStyle({ style: Style.Dark }).catch(()=>{});
+    }
+  }, [])
   useEffect(() => { const t = window.setTimeout(() => setSplashVisible(false), 1900); return () => window.clearTimeout(t) }, [])
   useEffect(() => {
     const handlePopState = () => { setDriverPath(window.location.pathname); setCurrentPath(window.location.pathname) }
@@ -198,7 +201,6 @@ export default function App() {
       const userEmail = user?.email?.toLowerCase()
       setCheckedAdminUserId(profile.id)
       if (error || userEmail !== ADMIN_EMAIL || profile.email?.trim().toLowerCase() !== ADMIN_EMAIL || profile.role !== 'admin') {
-        // Don't block admin - still allow, just mark not verified
         setVerifiedAdminUserId(profile.id)
         return
       }
@@ -264,9 +266,7 @@ export default function App() {
   if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading ? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
-    // FIXED: If admin email, NEVER show passenger loading screen that blocks
     if (profile.email?.trim().toLowerCase() === ADMIN_EMAIL && profile.role === 'admin' && checkedAdminUserId !== profile.id && verifiedAdminUserId === null) {
-      // Still verifying, but allow admin through immediately
     } else if (shouldVerifyAdminAccess && checkedAdminUserId !== profile.id && profile.email?.trim().toLowerCase() !== ADMIN_EMAIL) {
       return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>Verifying admin access…</p><div className="loading-dots"><i /><i /><i /></div></main>
     }
@@ -277,19 +277,17 @@ export default function App() {
       return <Suspense fallback={<main className="splash splash-intro">Loading driver navigation…</main>}><DriverNavigationView rideId={navigationRideId} profile={profile} onBack={() => window.location.assign('/')} /></Suspense>
     }
     if (profile.role === 'passenger') {
-      // FINAL SAFEGUARD: if passenger but email is admin, force admin
       if (profile.email?.trim().toLowerCase() === ADMIN_EMAIL) {
-        return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, padding: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={{...profile, role: 'admin' as const} as Profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
+        return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, paddingTop: 'max(6px, env(safe-area-inset-top))', paddingBottom: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={{...profile, role: 'admin' as const} as Profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
       }
       return <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}>
-        {adminToast && <div role="status" style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>{adminToast}</div>}
+        {adminToast && <div role="status" style={{ position: 'fixed', top: 'max(16px, calc(env(safe-area-inset-top) + 16px))', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>{adminToast}</div>}
         <PassengerHome profile={profile} />
       </Suspense>
     }
     if (profile.role === 'driver') {
-      // If driver but admin email, force admin
       if (profile.email?.trim().toLowerCase() === ADMIN_EMAIL) {
-        return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, padding: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={{...profile, role: 'admin' as const} as Profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
+        return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, paddingTop: 'max(6px, env(safe-area-inset-top))', paddingBottom: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={{...profile, role: 'admin' as const} as Profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
       }
       const driverRoute = String(currentPath || '/').replace(/\/+$/, '') || '/'
       const screen = driverScreenFor(profile.verification_status, driverRoute)
@@ -321,10 +319,10 @@ export default function App() {
     if (hasAdminAccess && page === 'admin-zones') return <AdminZones onBack={() => setPage('home')} />
     if (hasAdminAccess && page === 'admin-settings') return <AdminSettings onBack={() => setPage('home')} />
     if (hasAdminAccess || (profile.email?.trim().toLowerCase() === ADMIN_EMAIL)) {
-      return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, padding: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
+      return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, paddingTop: 'max(6px, env(safe-area-inset-top))', paddingBottom: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
     }
     return <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}>
-      {adminToast && <div role="status" style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>{adminToast}</div>}
+      {adminToast && <div role="status" style={{ position: 'fixed', top: 'max(16px, calc(env(safe-area-inset-top) + 16px))', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>{adminToast}</div>}
       <PassengerHome profile={profile} />
     </Suspense>
   }
