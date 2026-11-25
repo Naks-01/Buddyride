@@ -61,6 +61,8 @@ export function PassengerTomTomMap({ center, route, driverLocation, availableCar
       } as any,
       center: [center[0], center[1]], zoom: 15,
     })
+    // FIX: map ends ABOVE bottom sheet, center is above sheet
+    map.setPadding({ top: 0, bottom: 220, left: 0, right: 0 })
     map.on('movestart', (e: any) => { if (e.originalEvent) userHasDraggedRef.current = true })
     map.on('moveend', (e: any) => {
       if (userHasDraggedRef.current && onMapMoveRef.current && e.originalEvent) {
@@ -73,11 +75,15 @@ export function PassengerTomTomMap({ center, route, driverLocation, availableCar
     return () => { map.remove(); mapRef.current = null }
   }, [])
 
+  // FIX: Don't recreate marker every GPS update - move it, no flicker
   useEffect(() => {
     const map = mapRef.current
     if (!map || !driverLocation) return
+    if (driverMarkerRef.current) {
+      driverMarkerRef.current.setLngLat([driverLocation[0], driverLocation[1]])
+      return
+    }
     const el = makeEl(`<div style="width:44px;height:44px;background:#00C853;border:3px solid white;border-radius:22px;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 12px rgba(0,0,0,.4)">🚕</div>`, 44)
-    if (driverMarkerRef.current) driverMarkerRef.current.remove()
     driverMarkerRef.current = new maplibregl.Marker({ element: el }).setLngLat([driverLocation[0], driverLocation[1]]).addTo(map)
   }, [driverLocation])
 
@@ -108,13 +114,16 @@ export function PassengerTomTomMap({ center, route, driverLocation, availableCar
       const pEl = makeEl(`<div style="width:28px;height:28px;background:#00C853;border:3px solid white;border-radius:50%"></div>`, 28)
       const dEl = makeEl(`<div style="width:28px;height:28px;background:#FF3B30;border:3px solid white;border-radius:50%"></div>`, 28)
       routeMarkersRef.current = [new maplibregl.Marker({ element: pEl }).setLngLat(coords[0]).addTo(map), new maplibregl.Marker({ element: dEl }).setLngLat(coords[coords.length - 1]).addTo(map)]
-      const bounds = new maplibregl.LngLatBounds(); coords.forEach(c => bounds.extend(c)); map.fitBounds(bounds, { padding: 60 })
+      const bounds = new maplibregl.LngLatBounds(); coords.forEach(c => bounds.extend(c))
+      // FIX: bottom padding so route is not hidden behind sheet
+      map.fitBounds(bounds, { padding: { top: 80, bottom: 280, left: 40, right: 40 } })
     }
     if (map.isStyleLoaded()) draw(); else map.once('load', draw)
   }, [route])
 
   return (
-    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#E6F0FF', overflow: 'hidden' }}>
+    // FIX: bottom 190 - map stops above banner, same as driver map
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 190, width: '100%', background: '#E6F0FF', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', touchAction: 'none' }} />
       <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button onClick={() => mapRef.current?.zoomIn()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>+</button>

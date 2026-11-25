@@ -6,6 +6,59 @@ import { isSupabaseConfigured } from './lib/supabase'
 
 const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
+const SUPPORT_WA = '27641018991'
+
+// FIX: ONE theme key for whole app - must match styles.css + DriverHome + PassengerHome
+const THEME_KEY = 'buddyride-theme'
+export type BuddyTheme = 'dark' | 'light'
+
+function getSavedTheme(): BuddyTheme {
+  try {
+    const saved = localStorage.getItem(THEME_KEY)
+    if (saved === 'dark' || saved === 'light') return saved
+    // Respect OS if user never chose - Bolt/Bro Cabs default is DARK for battery + night driving
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light'
+  } catch {}
+  return 'dark'
+}
+
+function applyTheme(theme: BuddyTheme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme)
+    document.documentElement.setAttribute('data-theme', theme)
+    document.documentElement.classList.toggle('ride-app--dark', theme === 'dark')
+    document.documentElement.classList.toggle('ride-app--light', theme === 'light')
+    // DO NOT set inline body background or --ride-* here - styles.css owns all colors via var()
+    // This was the bug: inline styles were overriding styles.css and causing 2 darks
+    document.documentElement.style.colorScheme = theme
+  } catch {}
+}
+
+// Expose for settings toggle - any component can call window.__setBuddyTheme('light')
+;(window as any).__setBuddyTheme = (t: string) => {
+  if (t === 'dark' || t === 'light') applyTheme(t)
+}
+;(window as any).__getBuddyTheme = () => getSavedTheme()
+
+// Apply immediately - before React mounts, no flash
+applyTheme(getSavedTheme())
+
+// Keep in sync across tabs + from settings
+window.addEventListener('storage', (e) => {
+  if (e.key === THEME_KEY && (e.newValue === 'dark' || e.newValue === 'light')) {
+    applyTheme(e.newValue)
+  }
+})
+window.addEventListener('buddyride-theme-changed', ((e: CustomEvent) => {
+  if (e.detail === 'dark' || e.detail === 'light') applyTheme(e.detail)
+}) as EventListener)
+// Legacy key - migrate old users who had 'buddy_theme'
+try {
+  const legacy = localStorage.getItem('buddy_theme')
+  if ((legacy === 'dark' || legacy === 'light') && !localStorage.getItem(THEME_KEY)) {
+    applyTheme(legacy)
+  }
+} catch {}
 
 const rootEl = document.getElementById('root')
 if (!rootEl) {
@@ -18,23 +71,19 @@ function isChunkError(msg: string) {
   return msg.includes('ChunkLoadError') || msg.includes('Loading chunk') || msg.includes('Failed to fetch dynamically imported module') || msg.includes('Importing a module script failed') || msg.includes('Failed to fetch')
 }
 
-// FIXED: timestamp guard, not permanent flag - allows reload on NEXT deploy too
 const CHUNK_RELOAD_KEY = 'buddyride_chunk_reloaded_at'
 function shouldReloadForChunk(): boolean {
   try {
     const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0)
-    // If we already reloaded in last 10s, don't loop
     if (Date.now() - last < 10_000) return false
     sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()))
     return true
   } catch { return false }
 }
-// FIXED: clear the guard once app loads successfully, so next deploy can reload again
 function clearChunkReloadGuard() {
   try { sessionStorage.removeItem(CHUNK_RELOAD_KEY) } catch {}
 }
 window.addEventListener('load', () => {
-  // App mounted OK - clear guard after 3s
   setTimeout(clearChunkReloadGuard, 3000)
 })
 
@@ -72,16 +121,21 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
   render() {
     if (this.state.hasError) {
+      const isDark = getSavedTheme() === 'dark'
+      const errBg = isDark ? '#0b1120' : '#f5f5f7'
+      const errText = isDark ? '#f8fafc' : '#111827'
+      const errMuted = isDark ? '#aeb9cb' : '#666'
+      const errCard = isDark ? '#111a2a' : '#ffffff'
       return (
-        <main style={{ maxWidth: 520, margin: '12vh auto', padding: 24, fontFamily: 'system-ui, sans-serif', textAlign: 'center' }}>
+        <main style={{ maxWidth: 520, margin: '12vh auto', padding: 24, fontFamily: 'system-ui, sans-serif', textAlign: 'center', background: errBg, color: errText, minHeight: '100vh' }}>
           <div style={{ fontSize: 48 }}>🚗</div>
-          <h1>Something went wrong</h1>
-          <p style={{ color: '#666' }}>BuddyRide hit an unexpected error. Your trip data is safe in the app.</p>
-          <p style={{ fontSize: 12, color: '#999', wordBreak: 'break-word' }}>{this.state.error?.message}</p>
+          <h1 style={{ color: errText }}>Something went wrong</h1>
+          <p style={{ color: errMuted }}>BuddyRide hit an unexpected error. Your trip data is safe in the app.</p>
+          <p style={{ fontSize: 12, color: errMuted, wordBreak: 'break-word' }}>{this.state.error?.message}</p>
           <button onClick={this.handleReset} style={{ background: BLUE, color: 'white', border: 'none', padding: '14px 28px', borderRadius: 999, fontWeight: 700, cursor: 'pointer', marginTop: 8 }}>Reload BuddyRide</button>
-          <button onClick={this.handleHardReset} style={{ background: 'white', color: BLUE_DARK, border: `2px solid ${BLUE}`, padding: '12px 24px', borderRadius: 999, fontWeight: 700, cursor: 'pointer', marginTop: 10, marginLeft: 8 }}>Clear Cache + Home</button>
+          <button onClick={this.handleHardReset} style={{ background: errCard, color: BLUE_DARK, border: `2px solid ${BLUE}`, padding: '12px 24px', borderRadius: 999, fontWeight: 700, cursor: 'pointer', marginTop: 10, marginLeft: 8 }}>Clear Cache + Home</button>
           <div style={{ marginTop: 12 }}><a href="/" style={{ color: BLUE_DARK, fontSize: 13, fontWeight: 700 }}>Go to home</a></div>
-          <p style={{ fontSize: 12, color: '#999', marginTop: 16 }}>Still stuck? WhatsApp support: <a href="https://wa.me/27641018991" target="_blank" rel="noreferrer" style={{ color: BLUE_DARK, fontWeight: 700 }}>064 101 8991</a></p>
+          <p style={{ fontSize: 12, color: errMuted, marginTop: 16 }}>Still stuck? WhatsApp support: <a href={`https://wa.me/${SUPPORT_WA}`} target="_blank" rel="noreferrer" style={{ color: BLUE_DARK, fontWeight: 700 }}>064 101 8991</a></p>
         </main>
       )
     }

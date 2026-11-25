@@ -130,7 +130,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const galleryDocRef = useRef<PassengerSafetyCapture | null>(null)
   const pickupDebounce = useRef<any>(null); const dropoffDebounce = useRef<any>(null); const pickupAddressRequest = useRef(0); const dropoffAddressRequest = useRef(0); const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null); const cancelledRideTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const uploadToastTimer = useRef<number | null>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null); const prevStatusRef = useRef<string>('')
-  const isDark = theme === 'dark'; const bg = isDark ? '#121212' : '#ffffff'; const bg2 = isDark ? '#1e1e1e' : '#F2F4F7'; const text = isDark ? 'white' : 'black'; const muted = isDark ? '#aaa' : '#667085'; const border = isDark ? '#333' : '#E4E7EC'
+  // FIX: Match Driver colours so theme is consistent across app
+  const isDark = theme === 'dark'; const bg = isDark ? '#0e0e10' : '#f5f5f7'; const bgCard = isDark ? '#121214' : '#ffffff'; const bg2 = isDark ? '#1c1c1e' : '#F2F4F7'; const text = isDark ? 'white' : '#111827'; const muted = isDark ? '#9ca3af' : '#667085'; const border = isDark ? 'rgba(255,255,255,0.08)' : '#E4E7EC'
   const hasIdNumber = !!(safetyProfile.id_number || safetyIdNumber.trim())
   const hasIdDoc = !!safetyProfile.id_document_url
   const hasSelfie = !!safetyProfile.selfie_url
@@ -154,7 +155,20 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) setSheetSnap(50)
     else if (rideStatus === 'completed') setSheetSnap(90)
   }, [rideStatus])
-  useEffect(() => { localStorage.setItem('buddy_theme', theme) }, [theme])
+  // FIX: WHOLE APP THEME - same as Driver, sync body + CSS vars
+  useEffect(() => {
+    try { localStorage.setItem('buddy_theme', theme) } catch {}
+    try {
+      document.documentElement.setAttribute('data-theme', theme)
+      document.body.style.background = theme === 'dark' ? '#0e0e10' : '#f5f5f7'
+      document.body.style.color = theme === 'dark' ? 'white' : '#111827'
+      document.documentElement.style.setProperty('--ride-surface', theme === 'dark' ? 'rgba(17,17,19,.94)' : 'rgba(255,255,255,.94)')
+      document.documentElement.style.setProperty('--ride-subtle', theme === 'dark' ? '#1c1c1e' : '#f5f5f7')
+      document.documentElement.style.setProperty('--ride-text', theme === 'dark' ? '#f8fafc' : '#111827')
+      document.documentElement.style.setProperty('--ride-muted', theme === 'dark' ? '#9ca3af' : '#6b7280')
+      document.documentElement.style.setProperty('--ride-border', theme === 'dark' ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)')
+    } catch {}
+  }, [theme])
   useEffect(() => () => { if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current); cameraStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
   useEffect(() => {
     if (rideStatus !== 'searching') { setSearchSec(0); return }
@@ -490,7 +504,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   }
 
   // FIXED TOP - safe-area, no hardcoded 60px
-  return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, paddingTop: 'env(safe-area-inset-top)' }}>
+  return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, color: text, paddingTop: 'env(safe-area-inset-top)' }}>
     <input
       ref={galleryInputRef}
       type="file"
@@ -505,7 +519,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setCameraDocument(cap)
     }} onSubmit={event => { void verifyAndRequestRide(event) }} onClose={() => setShowSafetyModal(false)} />}
     {cameraDocument && <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 100002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'rgba(0,0,0,.88)' }}>
-      <section style={{ width: '100%', maxWidth: 480, padding: 16, borderRadius: 18, background: bg, color: text }}>
+      <section style={{ width: '100%', maxWidth: 480, padding: 16, borderRadius: 18, background: bgCard, color: text }}>
         <h2 style={{ margin: '0 0 12px' }}>{cameraDocument.action}</h2>
         <video ref={cameraVideoRef} autoPlay playsInline muted style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 12, background: '#111', objectFit: 'cover' }} />
         {cameraError && <p role="alert" style={{ color: '#dc2626', fontSize: 13 }}>{cameraError}</p>}
@@ -520,7 +534,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
               galleryDocRef.current = cameraDocument
               galleryInputRef.current?.click()
             }}
-            style={{ width: '100%', padding: 13, borderRadius: 12, border: `2px solid ${BLUE}`, background: 'white', color: BLUE, fontWeight: 800 }}
+            // FIX: Gallery button was hardcoded white - now theme-aware
+            style={{ width: '100%', padding: 13, borderRadius: 12, border: `2px solid ${BLUE}`, background: bgCard, color: BLUE, fontWeight: 800 }}
           >
             🖼️ Choose from Gallery instead
           </button>
@@ -549,7 +564,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <style>{'@keyframes bro-pulse{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}'}</style>
     </div>}
 
-    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: bg, color: text, borderBottom: '1px solid ' + border, minHeight: 56, position: 'relative' }}>
+    <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: bgCard, color: text, borderBottom: '1px solid ' + border, minHeight: 56, position: 'relative' }}>
       <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} verificationStatus={verificationStatus} verificationRejectionReason={verificationRejectionReason} onReuploadVerification={() => { setVerificationError(''); setShowSafetyModal(true) }} />
       <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 1 }}>
         <strong style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.2px', lineHeight: 1.1, color: BLUE }}>BuddyRide</strong>
@@ -557,7 +572,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
           {formatDisplayName(profile.full_name)} {isVerified && <span style={{ color: '#22c55e' }}>● Verified</span>}
         </span>
       </div>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}><button type="button" className="sos-btn" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 14px', borderRadius: 20, background: '#dc2626', color: 'white', border: 0, fontWeight: 900, fontSize: 13 }}>SOS</button><button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: '1px solid ' + border, display: 'grid', placeItems: 'center', padding: 0 }}>{isDark ? '☀️' : '🌙'}</button></div>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}><button type="button" className="sos-btn" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 14px', borderRadius: 20, background: '#dc2626', color: 'white', border: 0, fontWeight: 900, fontSize: 13 }}>SOS</button><button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: '1px solid ' + border, display: 'grid', placeItems: 'center', padding: 0, color: text }}>{isDark ? '☀️' : '🌙'}</button></div>
     </header>
 
     {cancelledNotification && (<div style={{ position: 'fixed', top: 'calc(env(safe-area-inset-top) + 70px)', left: '12px', right: '12px', zIndex: 99999, background: '#ff3b30', borderRadius: '16px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -620,7 +635,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
 
             {rideError && <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 13, background: '#fee', padding: 8, borderRadius: 8 }}>{rideError}</p>}
 
-            <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: '10px 0 calc(10px + env(safe-area-inset-bottom))', background: bg, borderTop: '1px solid ' + border }}>
+            <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: '10px 0 calc(10px + env(safe-area-inset-bottom))', background: bgCard, borderTop: '1px solid ' + border }}>
               <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '50px', padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
               <button onClick={() => { void requestRide() }} disabled={loading} style={{ flex: 1.5, minHeight: '50px', padding: '14px', borderRadius: '14px', border: 'none', background: loading ? '#555' : BLUE, color: 'white', fontWeight: 'bold', opacity: loading ? 0.6 : 1 }}>
                 {loading ? 'Finding…' : displayPrice ? `Request - R${displayPrice}` : 'Request Ride'}
@@ -661,6 +676,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         )}
       </BottomSheet>
     </div>
-    {showChat && ride && <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'flex-end'}}><div style={{background:bg, width:'100%', borderTopLeftRadius:32, borderTopRightRadius:32, height:'75vh', display:'flex', flexDirection:'column'}}><div style={{padding:16, display:'flex', justifyContent:'space-between', borderBottom:'1px solid '+border}}><b style={{color: text}}>Chat with Driver</b><button onClick={()=>setShowChat(false)} style={{width:36, height:36, borderRadius:18, border:'1px solid '+border, background:bg2, color:text}}>✕</button></div><div style={{flex:1, overflow:'hidden'}}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>}
+    {showChat && ride && <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'flex-end'}}><div style={{background:bgCard, width:'100%', borderTopLeftRadius:32, borderTopRightRadius:32, height:'75vh', display:'flex', flexDirection:'column'}}><div style={{padding:16, display:'flex', justifyContent:'space-between', borderBottom:'1px solid '+border}}><b style={{color: text}}>Chat with Driver</b><button onClick={()=>setShowChat(false)} style={{width:36, height:36, borderRadius:18, border:'1px solid '+border, background:bg2, color:text}}>✕</button></div><div style={{flex:1, overflow:'hidden'}}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>}
   </div>
 }

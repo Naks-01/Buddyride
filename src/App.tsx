@@ -88,6 +88,17 @@ export default function App() {
   const [otpSent, setOtpSent] = useState(false)
   const loadingProfileRef = useRef(false)
   const lastLoadedUserRef = useRef<string | null>(null)
+  // FIX: WHOLE APP THEME - App now owns theme, syncs with Driver/Passenger
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try { return (localStorage.getItem('buddy_theme') as any) || 'light' } catch { return 'light' }
+  })
+  const isDark = theme === 'dark'
+  const appBg = isDark ? '#0e0e10' : '#f5f5f7'
+  const appCard = isDark ? '#121214' : '#ffffff'
+  const appText = isDark ? 'white' : '#111827'
+  const appMuted = isDark ? '#9ca3af' : '#6b7280'
+  const appBorder = isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb'
+  const appInputBg = isDark ? '#1c1c1e' : '#ffffff'
 
   const navigateDriverPath = useCallback((path: string, replace = false) => {
     if (replace) window.history.replaceState(null, '', path)
@@ -154,13 +165,38 @@ export default function App() {
     } finally { setLoading(false); loadingProfileRef.current = false }
   }, [navigateDriverPath])
 
-  useEffect(() => { 
-    if (Capacitor.isNativePlatform()) {
-      StatusBar.setOverlaysWebView({ overlay: false }).catch(()=>{});
-      StatusBar.setBackgroundColor({ color: '#0066FF' }).catch(()=>{});
-      StatusBar.setStyle({ style: Style.Dark }).catch(()=>{});
+  // FIX: Sync theme from localStorage + Driver/Passenger toggles + StatusBar
+  useEffect(() => {
+    const sync = () => {
+      try {
+        const t = localStorage.getItem('buddy_theme')
+        if (t === 'dark' || t === 'light') setTheme(t)
+      } catch {}
+    }
+    const onStorage = (e: StorageEvent) => { if (e.key === 'buddy_theme') sync() }
+    const onCustom = (e: any) => { if (e.detail === 'dark' || e.detail === 'light') setTheme(e.detail) }
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('buddyride-theme-changed', onCustom)
+    window.addEventListener('focus', sync)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('buddyride-theme-changed', onCustom)
+      window.removeEventListener('focus', sync)
     }
   }, [])
+  useEffect(() => {
+    try {
+      document.documentElement.setAttribute('data-theme', theme)
+      document.body.style.background = appBg
+      document.body.style.color = appText
+    } catch {}
+    if (Capacitor.isNativePlatform()) {
+      // FIX: StatusBar now follows theme, not hardcoded #0066FF + Dark
+      StatusBar.setOverlaysWebView({ overlay: false }).catch(()=>{});
+      StatusBar.setBackgroundColor({ color: isDark ? '#0e0e10' : '#f5f5f7' }).catch(()=>{});
+      StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(()=>{});
+    }
+  }, [theme, appBg, appText, isDark])
   useEffect(() => { const t = window.setTimeout(() => setSplashVisible(false), 1900); return () => window.clearTimeout(t) }, [])
   useEffect(() => {
     const handlePopState = () => { setDriverPath(window.location.pathname); setCurrentPath(window.location.pathname) }
@@ -263,24 +299,24 @@ export default function App() {
 
   if (currentPath === '/terms') return <TermsPage />
   if (currentPath === '/privacy') return <PrivacyPage />
-  if (loading || splashVisible) return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>{loading ? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
+  if (loading || splashVisible) return <main className="splash splash-intro" style={{ background: appBg, color: appText }}><div className="splash-orbit"><Brand /></div><h1 className="splash-title" style={{ color: appText }}>BuddyRide</h1><p style={{ color: appMuted }}>{loading ? 'Getting your ride ready…' : 'Your ride. Your way.'}</p><div className="loading-dots"><i /><i /><i /></div></main>
 
   if (profile) {
     if (profile.email?.trim().toLowerCase() === ADMIN_EMAIL && profile.role === 'admin' && checkedAdminUserId !== profile.id && verifiedAdminUserId === null) {
     } else if (shouldVerifyAdminAccess && checkedAdminUserId !== profile.id && profile.email?.trim().toLowerCase() !== ADMIN_EMAIL) {
-      return <main className="splash splash-intro"><div className="splash-orbit"><Brand /></div><h1 className="splash-title">BuddyRide</h1><p>Verifying admin access…</p><div className="loading-dots"><i /><i /><i /></div></main>
+      return <main className="splash splash-intro" style={{ background: appBg, color: appText }}><div className="splash-orbit"><Brand /></div><h1 className="splash-title" style={{ color: appText }}>BuddyRide</h1><p style={{ color: appMuted }}>Verifying admin access…</p><div className="loading-dots"><i /><i /><i /></div></main>
     }
     
     const navigationRideId = currentPath.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {
-      if (profile.role !== 'driver') return <main className="auth-page"><section className="auth-card"><h1>Driver access required</h1><p>This navigation screen is only available to the assigned driver.</p><button className="primary" style={{ background: BLUE }} onClick={() => window.location.assign('/')}>Back to home</button></section></main>
-      return <Suspense fallback={<main className="splash splash-intro">Loading driver navigation…</main>}><DriverNavigationView rideId={navigationRideId} profile={profile} onBack={() => window.location.assign('/')} /></Suspense>
+      if (profile.role !== 'driver') return <main className="auth-page" style={{ background: appBg }}><section className="auth-card" style={{ background: appCard, color: appText }}><h1 style={{ color: appText }}>Driver access required</h1><p style={{ color: appMuted }}>This navigation screen is only available to the assigned driver.</p><button className="primary" style={{ background: BLUE }} onClick={() => window.location.assign('/')}>Back to home</button></section></main>
+      return <Suspense fallback={<main className="splash splash-intro" style={{ background: appBg, color: appText }}>Loading driver navigation…</main>}><DriverNavigationView rideId={navigationRideId} profile={profile} onBack={() => window.location.assign('/')} /></Suspense>
     }
     if (profile.role === 'passenger') {
       if (profile.email?.trim().toLowerCase() === ADMIN_EMAIL) {
         return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, paddingTop: 'max(6px, env(safe-area-inset-top))', paddingBottom: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={{...profile, role: 'admin' as const} as Profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
       }
-      return <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}>
+      return <Suspense fallback={<main className="splash splash-intro" style={{ background: appBg, color: appText }}>Loading passenger tools…</main>}>
         {adminToast && <div role="status" style={{ position: 'fixed', top: 'max(16px, calc(env(safe-area-inset-top) + 16px))', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>{adminToast}</div>}
         <PassengerHome profile={profile} />
       </Suspense>
@@ -303,10 +339,10 @@ export default function App() {
         if (!canBuyBundle) {
           return <DriverOnboarding profile={profile} onDashboard={async () => { await refreshProfile(); navigateDriverPath('/driver', true) }} />
         }
-        return <Suspense fallback={<main className="splash splash-intro">Loading bundles…</main>}><DriverBundlePurchase profile={profile} onBack={() => navigateDriverPath('/driver', true)} /></Suspense>
+        return <Suspense fallback={<main className="splash splash-intro" style={{ background: appBg, color: appText }}>Loading bundles…</main>}><DriverBundlePurchase profile={profile} onBack={() => navigateDriverPath('/driver', true)} /></Suspense>
       }
       return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
-        <Suspense fallback={<main className="splash splash-intro">Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
+        <Suspense fallback={<main className="splash splash-intro" style={{ background: appBg, color: appText }}>Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
       </DriverDashboardGuard>
     }
     if (page === 'driver-docs') return <DriverDocuments driverId={profile.id} onBack={() => setPage('home')} />
@@ -321,7 +357,7 @@ export default function App() {
     if (hasAdminAccess || (profile.email?.trim().toLowerCase() === ADMIN_EMAIL)) {
       return <><div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, paddingTop: 'max(6px, env(safe-area-inset-top))', paddingBottom: 6, background: BLUE, color: 'white', textAlign: 'center', fontSize: 12, fontWeight: 700 }}>Admin: {profile.email}</div><AdminHome profile={profile} onDocs={() => { setSelectedDriverId(null); setPage('admin-docs') }} onAdminModule={(m: any) => setPage(m as any)} /></>
     }
-    return <Suspense fallback={<main className="splash splash-intro">Loading passenger tools…</main>}>
+    return <Suspense fallback={<main className="splash splash-intro" style={{ background: appBg, color: appText }}>Loading passenger tools…</main>}>
       {adminToast && <div role="status" style={{ position: 'fixed', top: 'max(16px, calc(env(safe-area-inset-top) + 16px))', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, padding: '12px 18px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>{adminToast}</div>}
       <PassengerHome profile={profile} />
     </Suspense>
@@ -348,32 +384,35 @@ export default function App() {
     }}
   />
 
-  return <main className="auth-page">
-    <section className="auth-card" style={{ position: 'relative' }}>
+  // FIX: Auth page now theme-aware - was hardcoded white/black
+  return <main className="auth-page" style={{ background: appBg, color: appText }}>
+    <section className="auth-card" style={{ position: 'relative', background: appCard, color: appText, border: `1px solid ${appBorder}` }}>
       <button onClick={() => setShowLanding(true)} style={{ marginBottom: '10px', background: 'none', border: 'none', fontSize: '14px', color: BLUE, fontWeight: 700, cursor: 'pointer' }}>← Back to Home</button>
-      <Brand /><h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+      <Brand /><h1 style={{ color: appText }}>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
       {mode === 'signup' && (
         <>
-          <p style={{ fontSize: '14px', fontWeight: 700, marginBottom: '8px', color: role ? '#111' : '#b91c1c' }}>{role ? `You selected: ${role === 'driver' ? '🚗 Driver' : '👤 Passenger'}` : '⚠️ Step 1: Choose your role'}</p>
+          <p style={{ fontSize: '14px', fontWeight: 700, marginBottom: '8px', color: role ? appText : '#b91c1c' }}>{role ? `You selected: ${role === 'driver' ? '🚗 Driver' : '👤 Passenger'}` : '⚠️ Step 1: Choose your role'}</p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
-            <button type="button" onClick={() => { setRole('passenger'); (window as any).__buddyride_role = 'passenger'; try { localStorage.setItem('buddyride_pending_role', 'passenger') } catch {} }} style={{ padding: '12px', borderRadius: '10px', fontWeight: 700, border: role === 'passenger' ? `2px solid ${BLUE}` : '1px solid #e5e7eb', background: role === 'passenger' ? BLUE : 'white', color: role === 'passenger' ? 'white' : 'black', cursor: 'pointer' }}>👤 Passenger</button>
-            <button type="button" onClick={() => { setRole('driver'); (window as any).__buddyride_role = 'driver'; try { localStorage.setItem('buddyride_pending_role', 'driver') } catch {} }} style={{ padding: '12px', borderRadius: '10px', fontWeight: 700, border: role === 'driver' ? `2px solid ${BLUE}` : '1px solid #e5e7eb', background: role === 'driver' ? BLUE : 'white', color: role === 'driver' ? 'white' : 'black', cursor: 'pointer' }}>🚗 Driver</button>
+            <button type="button" onClick={() => { setRole('passenger'); (window as any).__buddyride_role = 'passenger'; try { localStorage.setItem('buddyride_pending_role', 'passenger') } catch {} }} style={{ padding: '12px', borderRadius: '10px', fontWeight: 700, border: role === 'passenger' ? `2px solid ${BLUE}` : `1px solid ${appBorder}`, background: role === 'passenger' ? BLUE : appInputBg, color: role === 'passenger' ? 'white' : appText, cursor: 'pointer' }}>👤 Passenger</button>
+            <button type="button" onClick={() => { setRole('driver'); (window as any).__buddyride_role = 'driver'; try { localStorage.setItem('buddyride_pending_role', 'driver') } catch {} }} style={{ padding: '12px', borderRadius: '10px', fontWeight: 700, border: role === 'driver' ? `2px solid ${BLUE}` : `1px solid ${appBorder}`, background: role === 'driver' ? BLUE : appInputBg, color: role === 'driver' ? 'white' : appText, cursor: 'pointer' }}>🚗 Driver</button>
           </div>
         </>
       )}
       <form onSubmit={submit}>
-        {mode === 'signup' && <><label>Full name<input value={fullName} onChange={(e: any) => setFullName(e.target.value)} required /></label><label>Phone<input value={phone} onChange={(e: any) => setPhone(e.target.value)} required placeholder="0821234567" /></label></>}
-        <label>Email<input type="email" value={email} onChange={(e: any) => setEmail(e.target.value)} required /></label><label>Password<input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} required /></label>
+        {mode === 'signup' && <><label style={{ color: appText }}>Full name<input value={fullName} onChange={(e: any) => setFullName(e.target.value)} required style={{ background: appInputBg, color: appText, border: `1px solid ${appBorder}` }} /></label><label style={{ color: appText }}>Phone<input value={phone} onChange={(e: any) => setPhone(e.target.value)} required placeholder="0821234567" style={{ background: appInputBg, color: appText, border: `1px solid ${appBorder}` }} /></label></>}
+        <label style={{ color: appText }}>Email<input type="email" value={email} onChange={(e: any) => setEmail(e.target.value)} required style={{ background: appInputBg, color: appText, border: `1px solid ${appBorder}` }} /></label><label style={{ color: appText }}>Password<input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} required style={{ background: appInputBg, color: appText, border: `1px solid ${appBorder}` }} /></label>
         {mode === 'signup' && otpStep === 'otp' && (
           <>
-            <label>6-Digit SMS Code<input value={otpCode} onChange={(e: any) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="123456" inputMode="numeric" required style={{ letterSpacing: '4px', fontSize: '20px', textAlign: 'center', borderColor: BLUE }} /></label>
+            <label style={{ color: appText }}>6-Digit SMS Code<input value={otpCode} onChange={(e: any) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="123456" inputMode="numeric" required style={{ letterSpacing: '4px', fontSize: '20px', textAlign: 'center', borderColor: BLUE, background: appInputBg, color: appText }} /></label>
             <button type="button" onClick={handleSendOtp} disabled={busy} style={{ background: 'none', border: 'none', color: BLUE, fontWeight: 700, cursor: 'pointer' }}>Resend SMS Code</button>
           </>
         )}
         <button className="primary full-width" style={{ background: BLUE }} disabled={busy} type="submit">{busy ? 'Wait…' : mode === 'login' ? 'Log in' : otpStep === 'details' ? 'Send SMS Code 📱' : 'Verify & Create account ✅'}</button>
       </form>
       <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setMessage(''); setOtpStep('details'); setOtpSent(false); setOtpCode('') }} style={{ color: BLUE }}>{mode === 'login' ? 'No account? Sign up' : 'Already registered? Log in'}</button>
-      {message && <div className="notice" style={{ borderColor: BLUE_LIGHT, background: BLUE_LIGHT, color: BLUE_DARK }}>{message}</div>}
+      {message && <div className="notice" style={{ borderColor: BLUE_LIGHT, background: isDark ? '#1e3a5f' : BLUE_LIGHT, color: isDark ? '#93c5fd' : BLUE_DARK }}>{message}</div>}
+      {/* Theme toggle on auth screen too - so user can test whole app */}
+      <button type="button" onClick={() => { const next = isDark ? 'light' : 'dark'; try { localStorage.setItem('buddy_theme', next) } catch {}; setTheme(next); window.dispatchEvent(new CustomEvent('buddyride-theme-changed', { detail: next })) }} style={{ marginTop: 12, width: '100%', padding: 10, borderRadius: 10, border: `1px solid ${appBorder}`, background: appInputBg, color: appText, fontWeight: 700 }}>{isDark ? '☀️ Switch to Light' : '🌙 Switch to Dark'}</button>
     </section>
   </main>
 }

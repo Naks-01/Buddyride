@@ -1,272 +1,147 @@
-import { useEffect, useState, useRef } from 'react'
-import { BottomSheet, type BottomSheetSnapPoint } from '../components/BottomSheet'
-import { NavigationMenu } from '../components/NavigationMenu'
+import { useState, useRef, useEffect } from 'react'
+import { BottomSheet } from '../components/BottomSheet'
+import { DriverTomTomMap } from '../components/DriverTomTomMap'
 import { RideChat } from '../components/RideChat'
 import { getTomTomRoute as getRoute } from '../lib/tomtom'
-import { DriverTomTomMap } from '../components/DriverTomTomMap'
 import { createRealtimeChannel } from '../lib/realtime'
 import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
-import { REQUIRED_DOCS, normalizeDocType } from '../lib/driverDocuments'
-import { Geolocation } from '@capacitor/geolocation'
+import { NavigationMenu } from '../components/NavigationMenu'
+import { useDriverLocation } from '../hooks/useDriverLocation'
+import { useBundle } from '../hooks/useBundle'
+import { useVehicleCheck } from '../hooks/useVehicleCheck'
+import { useDocsCheck } from '../hooks/useDocsCheck'
+import { PanicButton } from '../hooks/PanicButton'
+import { IncomingRideSheet } from '../hooks/IncomingRideSheet'
 
-const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
-const EXPIRE_SECONDS = 15
-const RIDE_CATEGORIES: Record<string, { label: string, seats: string, icon: string }> = {
-  buddy_lite: { label: 'Buddy Lite', seats: '2 seats', icon: '🛺' },
-  buddy_plus: { label: 'Buddy Plus', seats: '3 seats', icon: '🚗' },
-  buddy_max: { label: 'Buddy Max', seats: '7 seats', icon: '🚐' },
-  economy: { label: 'Buddy Lite', seats: '2 seats', icon: '🛺' },
-  comfort: { label: 'Buddy Plus', seats: '3 seats', icon: '🚗' },
-  xl: { label: 'Buddy Max', seats: '7 seats', icon: '🚐' },
-}
-function categoryLabel(ride: any) {
-  const key = String(ride?.ride_type || ride?.category || ride?.vehicle_type || ride?.ride_category || 'buddy_plus').toLowerCase()
-  return RIDE_CATEGORIES[key] || RIDE_CATEGORIES.buddy_plus
-}
-function errMsg(e: any) { return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e)) }
-function canonicalType(raw: string | null | undefined) {
-  const t = String(raw || '').toLowerCase().trim()
-  if (t.includes('prdp') || t.includes('pdp') || t === 'professional_driving_permit' || t.includes('pr_dp')) return 'prdp'
-  return normalizeDocType(raw || '')
-}
-function distanceBetweenCoordinates(from: [number, number], to: [number, number]) { const radians = (d: number) => d * Math.PI / 180; const [fromLng, fromLat] = from.map(radians); const [toLng, toLat] = to.map(radians); const deltaLat = toLat - fromLat; const deltaLng = toLng - fromLng; const a = Math.sin(deltaLat / 2) ** 2 + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(deltaLng / 2) ** 2; return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
-type PassengerBadge = { is_verified: boolean, verification_status: string | null, ride_count: number, full_name: string | null, rating: number | null }
-function badgeFromProfile(p: any, rideCount: number): PassengerBadge { return { is_verified: p?.is_verified === true || ['verified','approved'].includes(String(p?.verification_status || '')), verification_status: p?.verification_status || null, ride_count: rideCount, full_name: p?.full_name || null, rating: p?.rating != null ? Number(p.rating) : null } }
-function creditsForRide(distanceKm: number | null | undefined) { if (!distanceKm) return 1; if (distanceKm >= 100) return 2; return 1 }
+const EXPIRE = 15
+const BLUE = '#0066FF'
+const BG = '#FFFFFF'
+const BORDER = '#E2E8F0'
 
 export function DriverHome({ profile }: { profile: Profile }) {
-  const [effectiveId, setEffectiveId] = useState(profile.id)
-  useEffect(() => { supabase.auth.getUser().then(({ data }) => { if (data.user?.id) setEffectiveId(data.user.id) }) }, [profile.id])
-  const pendingRatingStorageKey = `buddyride_pending_rating_${effectiveId}`
-  const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [ride, setRide] = useState<Ride | null>(null)
-  const [pendingRating, setPendingRating] = useState<Ride | null>(() => { try { const stored = localStorage.getItem(`buddyride_pending_rating_${profile.id}`); if (!stored) return null; const parsed = JSON.parse(stored) as Ride; if (parsed?.id && parsed.driver_id === profile.id && parsed.status === 'completed') return parsed } catch {} try { localStorage.removeItem(`buddyride_pending_rating_${profile.id}`) } catch {}; return null })
-  const [incomingRide, setIncomingRide] = useState<Ride | null>(null)
-  const [searchingRides, setSearchingRides] = useState<Ride[]>([])
+  const [incoming, setIncoming] = useState<Ride | null>(null)
   const [route, setRoute] = useState<any>()
-  const [routeData, setRouteData] = useState<any>(null)
-  const routeDataRef = useRef<any>(null)
-  const activeStepIndexRef = useRef(0)
-  const [activeStepIndex, setActiveStepIndex] = useState(0)
-  const [nextTurnDistance, setNextTurnDistance] = useState<number | null>(null)
-  const [isNavigating, setIsNavigating] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
-  const [bundleCredits, setBundleCredits] = useState<number | null>(null)
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => { try { return (localStorage.getItem('buddy_theme') as any) || 'light' } catch { return 'light' } })
-  const [preferredNavigation, setPreferredNavigation] = useState(() => { try { return localStorage.getItem('buddy_driver_navigation') || 'BuddyRide Navigation' } catch { return 'BuddyRide Navigation' } })
-  const [zoom, setZoom] = useState(13)
-  const [bearing, setBearing] = useState(0)
-  const [speedKmh, setSpeedKmh] = useState(0)
-  const [followDriver, setFollowDriver] = useState(true)
-  const bearingRef = useRef(0)
-  useEffect(() => { bearingRef.current = bearing }, [bearing])
-  const watchIdRef = useRef<string | null>(null)
-  const lastSupabaseUpdate = useRef<number>(0)
-  const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
-
-  const [documentsLoaded, setDocumentsLoaded] = useState(false)
-  const [documentsError, setDocumentsError] = useState('')
-  const [profileVerified, setProfileVerified] = useState(false)
-  const [verificationStatus, setVerificationStatus] = useState('not_started')
-  const [hasRejectedDocuments, setHasRejectedDocuments] = useState(false)
-  const [hasAllDocs, setHasAllDocs] = useState(false)
-  const [docsUploaded, setDocsUploaded] = useState(0)
-  const [identityUploaded, setIdentityUploaded] = useState(0)
-  const [docsApprovedCount, setDocsApprovedCount] = useState(0)
-  const TOTAL_DOCS = REQUIRED_DOCS.length
-  const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_license'])
-  const [expiryWarnings, setExpiryWarnings] = useState<string[]>([])
-  const [showDriverCancelReason, setShowDriverCancelReason] = useState(false)
-  const [driverCancelReason, setDriverCancelReason] = useState('')
-  const [rideToCancel, setRideToCancel] = useState<Ride | null>(null)
-  const [showCollected, setShowCollected] = useState<number | null>(null)
+  const [countdown, setCountdown] = useState(EXPIRE)
   const [showChat, setShowChat] = useState(false)
-  const [declinedIds, setDeclinedIds] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('declined_rides') || '[]') } catch { return [] } })
-  const [cancelledNotification, setCancelledNotification] = useState<{msg: string, fare: number} | null>(null)
-  const cancelledNotificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const collectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [driverRating, setDriverRating] = useState(0)
-  const [driverRatingComment, setDriverRatingComment] = useState('')
-  const [showDriverRating, setShowDriverRating] = useState(false)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const prevRideCountRef = useRef(0)
-  const beepIntervalRef = useRef<any>(null)
-  const [passengerProfile, setPassengerProfile] = useState<any>(null)
-  const [incomingPassengerProfile, setIncomingPassengerProfile] = useState<any>(null)
-  const [incomingBadge, setIncomingBadge] = useState<PassengerBadge | null>(null)
-  const [activeBadge, setActiveBadge] = useState<PassengerBadge | null>(null)
-  const [countdown, setCountdown] = useState(EXPIRE_SECONDS)
-  const requestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [isMinimized, setIsMinimized] = useState(false)
-  const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(50)
-  const isDark = theme === 'dark'
-  const bg = isDark? '#0e0e10' : '#f5f5f7'
-  const bgCard = isDark? '#121214' : '#ffffff'
-  const bg2 = isDark? '#242428' : '#eeeeef'
-  const text = isDark? 'white' : '#111827'
-  const subText = isDark? '#9ca3af' : '#6b7280'
-  const border = isDark? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
-  const BR_GREEN = '#0066FF'
-  const BLUE = '#0066FF'
-  const BLUE_LIGHT = '#E6F0FF'
-  function goToOnboarding() { window.location.assign('/driver/onboarding') }
-  async function safeUpsertDriverStatus(payload: any): Promise<boolean> { try { const { error } = await supabase.from('driver_status').upsert(payload, { onConflict: 'driver_id' }); if (error) return false; return true } catch { return false } }
-  async function safeUpsertDriverLocation(payload: any): Promise<boolean> { try { const { error } = await supabase.from('driver_locations').upsert(payload, { onConflict: 'driver_id' }); if (error) return false; return true } catch { return false } }
-  const getEarnings = (fare: number) => { return { driverGets: Number(fare||0), platformGets: 0 } }
-  const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
-  routeDataRef.current = routeData
-  function updateNavigationProgress(position: [number, number]) { const steps = routeDataRef.current?.steps; if (!steps?.length) { setNextTurnDistance(null); return }; let index = Math.min(activeStepIndexRef.current, steps.length - 1); while (index < steps.length - 1) { const maneuverLocation = steps[index]?.maneuver?.location as [number, number] | undefined; if (!maneuverLocation || distanceBetweenCoordinates(position, maneuverLocation) > 30) break; index += 1 }; activeStepIndexRef.current = index; setActiveStepIndex(index); const target = steps[index]?.maneuver?.location as [number, number] | undefined; if (target) setNextTurnDistance(distanceBetweenCoordinates(position, target)) }
-  function clearRequestTimer() { if (requestTimerRef.current) { clearInterval(requestTimerRef.current); requestTimerRef.current = null } }
-  function clearDriverRideState() { setRide(null); setRoute(undefined); setRouteData(null); routeDataRef.current = null; activeStepIndexRef.current = 0; setActiveStepIndex(0); setNextTurnDistance(null); setIsNavigating(false); setZoom(13); setSearchingRides([]); setIncomingRide(null); setIncomingBadge(null); setActiveBadge(null); setShowChat(false); setIsMinimized(false); setSheetSnap(50) }
-  function handleDriverRideCompleted(finishedRide: Ride) { setPendingRating(finishedRide); try { localStorage.setItem(pendingRatingStorageKey, JSON.stringify(finishedRide)) } catch {}; clearDriverRideState(); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(Number(finishedRide.fare || 0)); if (collectedTimerRef.current) clearTimeout(collectedTimerRef.current); collectedTimerRef.current = setTimeout(() => { setShowCollected(null); setShowDriverRating(true); collectedTimerRef.current = null }, 1200) }
-  async function fetchPassengerBadge(passengerId: string): Promise<PassengerBadge | null> { try { const [{ data: p }, { count }] = await Promise.all([ supabase.from('profiles').select('full_name,is_verified,verification_status,rating').eq('id', passengerId).maybeSingle(), supabase.from('rides').select('id', { count: 'exact', head: true }).eq('passenger_id', passengerId).eq('status', 'completed'), ]); return badgeFromProfile(p, count || 0) } catch { return null } }
-  async function loadBundleCredits() { try { const { data, error } = await supabase.from('driver_bundles').select('trips_remaining,expires_at').eq('driver_id', effectiveId).eq('status', 'active').gt('trips_remaining', 0).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: true }); if (error) { setBundleCredits(null); return }; const total = (data || []).reduce((s: number, b: any) => s + Number(b.trips_remaining || 0), 0); setBundleCredits(total) } catch { setBundleCredits(null) } }
-  useEffect(() => { try { localStorage.setItem('buddy_theme', theme) } catch {} }, [theme])
-  useEffect(() => { const syncPreference = () => { try { setPreferredNavigation(localStorage.getItem('buddy_driver_navigation') || 'BuddyRide Navigation') } catch {} }; window.addEventListener('buddyride-navigation-preference', syncPreference); return () => window.removeEventListener('buddyride-navigation-preference', syncPreference) }, [])
-  useEffect(() => { if (!ride &&!showDriverRating) { setRoute(undefined); setRouteData(null); setIsNavigating(false); setZoom(13); setShowChat(false); setIsMinimized(false); setSheetSnap(50) } }, [ride, showDriverRating])
-  useEffect(() => { if (rideStatus === 'searching' || rideStatus === 'finding') { setSheetSnap(25); setIsMinimized(true) } else if (['driver_assigned', 'accepted', 'driver_arriving'].includes(rideStatus)) { setSheetSnap(50); setIsMinimized(false) } else if (['arrived', 'passenger_in', 'i_have_arrived'].includes(rideStatus)) { setSheetSnap(80); setIsMinimized(false) } else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) { setSheetSnap(50); setIsMinimized(false) } else if (rideStatus === 'completed') { setSheetSnap(90); setIsMinimized(false) } }, [rideStatus])
-  useEffect(() => { if (!ride?.passenger_id) { setPassengerProfile(null); setActiveBadge(null); return }; let active = true; supabase.rpc('get_ride_counterpart_profile', { p_ride_id: ride.id }).maybeSingle().then(({ data }) => { if (active) setPassengerProfile(data) }); void fetchPassengerBadge(ride.passenger_id).then(b => { if (active) setActiveBadge(b) }); return () => { active = false } }, [ride?.id, ride?.passenger_id])
-  useEffect(() => { if (!incomingRide?.passenger_id) { setIncomingPassengerProfile(null); setIncomingBadge(null); return }; let active = true; supabase.rpc('get_ride_counterpart_profile', { p_ride_id: incomingRide.id }).maybeSingle().then(({ data }) => { if (active) setIncomingPassengerProfile(data) }); void fetchPassengerBadge(incomingRide.passenger_id).then(b => { if (active) setIncomingBadge(b) }); return () => { active = false } }, [incomingRide?.id, incomingRide?.passenger_id])
-  useEffect(() => { audioRef.current = new Audio('https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3'); audioRef.current.volume = 1.0; audioRef.current.preload = 'auto'; if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission(); return () => { if (beepIntervalRef.current) clearInterval(beepIntervalRef.current); if (cancelledNotificationTimerRef.current) clearTimeout(cancelledNotificationTimerRef.current); if (collectedTimerRef.current) clearTimeout(collectedTimerRef.current); clearRequestTimer() } }, [])
-  function playBeep() { if (audioRef.current) { audioRef.current.currentTime = 0; audioRef.current.play().catch(() => {}) } if ('vibrate' in navigator) navigator.vibrate([300, 100, 300, 100, 500]) }
-  useEffect(() => { if (searchingRides.length > prevRideCountRef.current && searchingRides.length > 0 && isOnline &&!ride) { playBeep(); if (beepIntervalRef.current) clearInterval(beepIntervalRef.current); beepIntervalRef.current = setInterval(() => { playBeep() }, 3500) } if (searchingRides.length === 0 && beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null } prevRideCountRef.current = searchingRides.length }, [searchingRides, isOnline, ride])
-  
-  useEffect(() => { 
-    async function loadStatus() { 
-      const { data: prof } = await supabase.from('profiles').select('is_verified,verification_status').eq('id', effectiveId).single(); 
-      const approved = prof?.is_verified === true && ['verified','approved'].includes(String(prof?.verification_status || '').toLowerCase()); 
-      if (!approved) { 
-        setIsOnline(false); 
-        try { await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); } catch {} 
-      } else { 
-        const { data } = await supabase.from('profiles').select('is_online').eq('id', effectiveId).single(); 
-        if (data) setIsOnline((data as any).is_online || false); 
-        try { const { data: statusData } = await supabase.from('driver_status').select('is_online').eq('driver_id', effectiveId).single(); if (statusData) setIsOnline((statusData as any).is_online) } catch {}; 
-      } 
-      void loadBundleCredits() 
-    }; 
-    void loadStatus(); 
-    const initGPS = async () => {
-      try {
-        const perm = await Geolocation.requestPermissions();
-        const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 });
-        const pos: [number, number] = [p.coords.longitude, p.coords.latitude];
-        setLocation(pos);
-        lastLocation.current = pos;
-        setFollowDriver(true);
-      } catch (e) {
-        console.log("GPS init error", e);
-      }
-    };
-    void initGPS();
-  }, [effectiveId])
+  const timer = useRef<any>(null)
 
-  useEffect(() => { let active = true; async function checkDocs() { setDocumentsLoaded(false); setDocumentsError(''); try { const [docsResult, profileResult] = await Promise.all([ supabase.from('driver_documents').select('doc_type,document_type,status,expiry_date,file_url,document_url,storage_path,file_path').eq('driver_id', effectiveId), supabase.from('profiles').select('is_verified,verification_status').eq('id', effectiveId).single(), ]); if (!active) return; const isApprovedProfile = !profileResult.error && profileResult.data?.is_verified === true && ['approved','verified'].includes(String(profileResult.data?.verification_status || '').toLowerCase()); setProfileVerified(isApprovedProfile); setVerificationStatus(profileResult.data?.verification_status || 'not_started'); const docsList = docsResult.data || []; const latestByType = new Map<string, any>(); for (const document of docsList) { const type = canonicalType(document.doc_type || document.document_type); if (type && !latestByType.has(type)) latestByType.set(type, document) } let uploaded = 0; let identity = 0; let approved = 0; for (const [t, d] of latestByType) { const hasFile = Boolean(d.file_url || (d as any).document_url || (d as any).storage_path || (d as any).file_path); if (hasFile) { uploaded++; if (IDENTITY_TYPES.has(t)) identity++; } if (String(d.status||'').toUpperCase() === 'APPROVED') approved++; } setDocsUploaded(uploaded); setIdentityUploaded(identity); setDocsApprovedCount(approved); const today = new Date(); today.setHours(0, 0, 0, 0); const allRequiredApproved = REQUIRED_DOCS.every(requirement => { const document = latestByType.get(canonicalType(requirement.type)); if (!document || String(document.status || '').toUpperCase() !== 'APPROVED' || !(document.file_url || document.document_url || document.storage_path || document.file_path)) return false; if (requirement.expiryRequired) { if (!document.expiry_date) return false; const expiry = new Date(`${document.expiry_date}T00:00:00`); if (Number.isNaN(expiry.getTime()) || expiry < today) return false } return true }); setHasAllDocs(allRequiredApproved); if (docsResult.error) { setHasRejectedDocuments(true); setExpiryWarnings([]) } else { const documents = docsResult.data || []; setHasRejectedDocuments(documents.some(document => (document.status || '').toUpperCase() === 'REJECTED')); } } catch (error) { if (!active) return; setProfileVerified(false); setHasRejectedDocuments(true); setHasAllDocs(false); setDocumentsError(`Could not verify: ${errMsg(error)}`) } finally { if (active) setDocumentsLoaded(true) } }; void checkDocs(); const refresh = window.setInterval(() => { if (!ride) void checkDocs() }, 30000); return () => { active = false; window.clearInterval(refresh) } }, [effectiveId, ride?.id])
-  useEffect(() => { async function loadRide() { const { data, error: activeRideError } = await supabase.from('rides').select('*').eq('driver_id', effectiveId).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).maybeSingle(); if (activeRideError) { alert(`Could not restore: ${errMsg(activeRideError)}`); return } if (data) { setRide(data); setIsNavigating(true); setZoom(17); setIsMinimized(false); await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); setIsOnline(false); return } let completedRide = pendingRating; if (!completedRide) { const { data: latestCompletedRide } = await supabase.from('rides').select('*').eq('driver_id', effectiveId).eq('status', 'completed').is('driver_rating', null).order('created_at', { ascending: false }).limit(1).maybeSingle(); completedRide = latestCompletedRide as Ride | null } if (completedRide) { setPendingRating(completedRide); try { localStorage.setItem(pendingRatingStorageKey, JSON.stringify(completedRide)) } catch {}; setShowDriverRating(true); setIsNavigating(false); setZoom(13) } }; void loadRide() }, [effectiveId])
-  useEffect(() => { const ch = createRealtimeChannel(`driver-${effectiveId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `driver_id=eq.${effectiveId}` }, p => { const newRide = p.new as Ride; if (!newRide) return; const cancelledBy = (newRide as any).cancelled_by; const reason = (newRide as any).cancel_reason; if (newRide.status === 'cancelled' && cancelledBy === 'passenger') { setCancelledNotification({ msg: `Passenger cancelled: ${reason || 'No reason'}`, fare: newRide.fare }); playBeep(); if (cancelledNotificationTimerRef.current) clearTimeout(cancelledNotificationTimerRef.current); cancelledNotificationTimerRef.current = setTimeout(() => { setCancelledNotification(null); cancelledNotificationTimerRef.current = null }, 5000); setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); return } if (['completed','rated'].includes(newRide.status as any) && newRide.driver_rating != null) { clearPendingRating(); clearDriverRideState(); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null); return } if (newRide.status === 'completed') { handleDriverRideCompleted(newRide); return } if (newRide.status === 'rated') { setRide(newRide); setIsNavigating(false); setZoom(13); setRoute(undefined); setRouteData(null); setShowDriverRating(true); return } if (['cancelled'].includes(newRide.status as any)) { setIsNavigating(false); setZoom(13); setRide(null); setRoute(undefined); setRouteData(null); setSearchingRides([]); setShowChat(false); return } setRide(newRide); if (['driver_assigned','accepted','arrived','picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(newRide.status as any)) { setIsNavigating(true); setZoom(17) } if (['driver_assigned','accepted','arrived','picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(newRide.status as any)) { void safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); setIsOnline(false) } }).subscribe(); return () => { supabase.removeChannel(ch) } }, [effectiveId])
-  useEffect(() => { if (!isOnline || ride) { setSearchingRides([]); return } async function loadSearching() { try { const { data: activeCheck } = await supabase.from('rides').select('id').eq('driver_id', effectiveId).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).limit(1).maybeSingle(); if (activeCheck) { setSearchingRides([]); setIsOnline(false); return } const { data: myRequests } = await supabase.from('ride_requests').select('ride_id').eq('driver_id', effectiveId).eq('status', 'pending'); if (!myRequests || myRequests.length === 0) { setSearchingRides([]); setIncomingRide(null); return } const rideIds = (myRequests as any[]).map(r => r.ride_id); const { data } = await supabase.from('rides').select('*').in('id', rideIds).eq('status','searching').order('created_at',{ascending:false}); const filtered = (data || []).filter((r:any) => !declinedIds.includes(r.id)); setSearchingRides(filtered as Ride[]); if (filtered.length > 0) setIncomingRide(current => current || filtered[0] as Ride); else setIncomingRide(null) } catch(e) { console.log(e) } }; void loadSearching(); const ch2 = createRealtimeChannel(`offers-${effectiveId}-real`).on('postgres_changes', { event: '*', schema: 'public', table: 'ride_requests', filter: `driver_id=eq.${effectiveId}` }, (p) => { const r = p.new as any; if (!r) return; if (r.status === 'pending') void loadSearching(); if (['accepted','rejected','cancelled','declined','expired'].includes(r.status)) { setSearchingRides(prev => prev.filter(x => x.id !== r.ride_id)); setIncomingRide(cur => cur?.id === r.ride_id ? null : cur) } }).subscribe(); const interval = setInterval(() => void loadSearching(), 3000); return () => { supabase.removeChannel(ch2); clearInterval(interval) } }, [isOnline, ride, effectiveId, declinedIds])
-  useEffect(() => { clearRequestTimer(); if (!incomingRide || incomingRide.status !== 'searching' || ride) return; const expiresAt = incomingRide.offer_expires_at; let seconds = expiresAt ? Math.max(0, Math.min(EXPIRE_SECONDS, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))) : EXPIRE_SECONDS; setCountdown(seconds); if (seconds === 0) { void dismissIncomingRide(incomingRide.id); return } const rideId = incomingRide.id; requestTimerRef.current = setInterval(() => { seconds -= 1; setCountdown(seconds); if (seconds <= 0) { clearRequestTimer(); void dismissIncomingRide(rideId) } }, 1000); return clearRequestTimer }, [incomingRide?.id, ride?.id])
+  const { bundleCredits, bundleCount, reloadBundle } = useBundle(profile.id)
+  const { missingFields, vehicleOk } = useVehicleCheck(profile.id)
+  const { docsOk, verified } = useDocsCheck(profile.id)
+  const { location, lastLoc } = useDriverLocation(profile.id, isOnline, !!ride)
 
-  // FIXED GPS WATCH - NO BEARING IN DEPS, NO STUCK ON DROP
+  const canGoOnline = docsOk && verified && vehicleOk && (bundleCredits ?? 0) > 0
+
+  async function toggleOnline() {
+    if (!isOnline) {
+      if (missingFields.length > 0) { window.location.assign('/driver/onboarding'); return }
+      if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundles'); return }
+      if (!docsOk || !verified) { alert('Waiting admin approval'); return }
+    }
+    const next = !isOnline
+    await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: next, updated_at: new Date().toISOString() }, { onConflict: 'driver_id' })
+    setIsOnline(next)
+  }
+
+  async function accept(id: string) {
+    clearInterval(timer.current)
+    const { error } = await supabase.rpc('accept_ride_with_bundle', { p_ride_id: id })
+    if (error) { if (error.message.includes('NO_CREDITS')) window.location.href = '/driver/bundles'; alert(error.message); return }
+    const { data } = await supabase.from('rides').select('*').eq('id', id).single()
+    if (data) {
+      setRide(data as Ride)
+      try { const dest: [number, number] = [Number((data as any).pickup_lng), Number((data as any).pickup_lat)]; const r = await getRoute(lastLoc.current, dest); setRoute(r.geometry) } catch {}
+    }
+    reloadBundle(); setIncoming(null); setIsOnline(false)
+  }
+
+  async function decline(id: string) {
+    clearInterval(timer.current)
+    await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', id).eq('driver_id', profile.id)
+    setIncoming(null)
+  }
+
   useEffect(() => {
-    let cancelled = false
-    const startWatch = async () => {
-      try {
-        const id = await Geolocation.watchPosition(
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-          (pos, err) => {
-            if (cancelled) return
-            if (err) { console.log('GPS watch error:', err); return }
-            if (!pos) return
-            const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-            updateNavigationProgress(p)
-            setSpeedKmh((pos.coords.speed ?? 0) * 3.6)
-            setLocation(p)
-            const previousLocation = lastLocation.current
-            let newBearing = bearingRef.current
-            if (pos.coords.heading != null && !isNaN(pos.coords.heading) && (pos.coords.speed ?? 0) > 1) {
-              newBearing = pos.coords.heading
-            } else {
-              const dLng = p[0] - previousLocation[0]
-              const dLat = p[1] - previousLocation[1]
-              if (Math.abs(dLng) > 0.000005 || Math.abs(dLat) > 0.000005) {
-                newBearing = (Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360
-              }
-            }
-            setBearing(newBearing)
-            bearingRef.current = newBearing
-            lastLocation.current = p
-            const nowTs = Date.now()
-            if (nowTs - lastSupabaseUpdate.current > 2000) {
-              lastSupabaseUpdate.current = nowTs
-              if (isOnline || ride) {
-                if (ride) void updateRide(ride.id, { driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude })
-                void safeUpsertDriverLocation({ driver_id: effectiveId, lat: pos.coords.latitude, lng: pos.coords.longitude, heading: newBearing, speed: pos.coords.speed ?? 0, is_online: true, updated_at: new Date().toISOString() })
-                void safeUpsertDriverStatus({ driver_id: effectiveId, is_online: true, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() })
-              }
-            }
-          }
-        )
-        watchIdRef.current = id
-      } catch (e) { console.log('Failed to start watch', e) }
-    }
-    void startWatch()
-    return () => {
-      cancelled = true
-      if (watchIdRef.current) void Geolocation.clearWatch({ id: watchIdRef.current })
-    }
-  }, [isOnline, ride?.id, effectiveId])
+    if (!incoming) return
+    setCountdown(EXPIRE)
+    timer.current = setInterval(() => setCountdown(s => { if (s <= 1) { void decline(incoming.id); return 0 } return s - 1 }), 1000)
+    return () => clearInterval(timer.current)
+  }, [incoming?.id])
 
-  useEffect(() => { let interval: any; let active = true; let routeRequestActive = false; async function buildRoute() { if (!ride || routeRequestActive) return; const from = lastLocation.current; const target: [number, number] = ['accepted','driver_assigned','arrived'].includes(String(ride.status)) ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]; routeRequestActive = true; try { const r = await getRoute(from, target); if (!active) return; activeStepIndexRef.current = 0; setActiveStepIndex(0); routeDataRef.current = r; setRoute(r.geometry); setRouteData(r); updateNavigationProgress(from) } catch (routeError) { console.error('Could not refresh driver route', routeError) } finally { routeRequestActive = false } }; void buildRoute(); if (isNavigating) { interval = setInterval(() => void buildRoute(), 15000) } return () => { active = false; clearInterval(interval) } }, [ride?.id, ride?.status, isNavigating])
-  async function toggleOnline() { if (!isOnline) { const { data: prof, error: profileCheckError } = await supabase.from('profiles').select('is_verified,verification_status').eq('id', effectiveId).single(); if (profileCheckError) { alert(`Could not check your approval status: ${errMsg(profileCheckError)}`); return }; const liveApproved = prof?.is_verified === true && ['approved', 'verified'].includes(String(prof?.verification_status || '').toLowerCase()); const liveStatus = String(prof?.verification_status || '').toLowerCase(); const { data: freshDocs } = await supabase.from('driver_documents').select('doc_type,document_type,status,expiry_date,file_url,document_url,storage_path,file_path').eq('driver_id', effectiveId); const latest = new Map<string, any>(); for (const d of (freshDocs || [])) { const t = canonicalType((d as any).doc_type || (d as any).document_type); if (t && !latest.has(t)) latest.set(t, d) } const today = new Date(); today.setHours(0,0,0,0); const freshAllApproved = REQUIRED_DOCS.every(req => { const doc: any = latest.get(canonicalType(req.type)); if (!doc || String(doc.status || '').toUpperCase() !== 'APPROVED') return false; if (!(doc.file_url || doc.document_url || doc.storage_path || doc.file_path)) return false; if (req.expiryRequired) { if (!doc.expiry_date) return false; if (new Date(`${doc.expiry_date}T00:00:00`) < today) return false } return true }); const freshRejected = (freshDocs || []).some((d: any) => String(d.status || '').toUpperCase() === 'REJECTED'); if (!liveApproved || !freshAllApproved || freshRejected) { if (liveStatus === 'pending' || liveStatus === 'pending_verification') alert('Waiting for Admin Approval - You cannot go online yet'); else if (liveStatus === 'identity_complete') alert(`Identity done! You uploaded ${docsUploaded}/${TOTAL_DOCS}. Finish the remaining ${TOTAL_DOCS - docsUploaded} documents to go online.`); else if (freshRejected) alert('One of your documents was rejected. Fix it in onboarding to go online.'); else alert(`Complete onboarding to go online - ${TOTAL_DOCS - docsUploaded} documents left.`); setIsOnline(false); return } await loadBundleCredits(); if (bundleCredits !== null && bundleCredits <= 0) { alert('No bundle trips left! Buy a bundle to go online and receive rides. 1 credit = <100km, 2 credits = 100km+ long trip.'); setIsOnline(false); return } } const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('driver_id', effectiveId).in('status', ['driver_assigned', 'accepted', 'arrived', 'picked_up', 'en_route', 'in_progress', 'on_trip', 'driving_to_destination'] as any).limit(1).maybeSingle(); if (activeRideError) { alert(`Could not check active rides: ${errMsg(activeRideError)}`); return } if (activeRide) { if (!ride || ride.id !== activeRide.id) setRide(activeRide as Ride); const statusSaved = await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); const { error: profileError } = await supabase.from('profiles').update({ is_online: false } as any).eq('id', effectiveId); setIsOnline(false); if (!statusSaved || profileError) alert(`You have an active trip, but availability could not be fully synchronized.`); return } const next = !isOnline; const pos = lastLocation.current; try { const statusSaved = await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: next, lat: pos[1], lng: pos[0], updated_at: new Date().toISOString() }); if (!statusSaved) throw new Error('Could not save your availability to the dispatch system'); const { error: profileError } = await supabase.from('profiles').update({ is_online: next } as any).eq('id', effectiveId); if (profileError) { if (next) await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); throw profileError } setIsOnline(next) } catch (error: any) { alert(`Could not change your availability: ${errMsg(error)}`) } }
-  async function acceptRide(rideId: string) { clearRequestTimer(); if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }; const { data: acceptedRide, error } = await supabase.rpc('accept_ride_with_bundle', { p_ride_id: rideId }); if (error || !acceptedRide) { alert(`Could not accept trip: ${error?.message || 'The offer is no longer available.'}`); await loadBundleCredits(); setIncomingRide(null); return } try { await supabase.from('ride_requests').update({ status: 'accepted' }).eq('ride_id', rideId).eq('driver_id', effectiveId) } catch {} try { await supabase.from('ride_requests').update({ status: 'rejected' }).eq('ride_id', rideId).neq('driver_id', effectiveId) } catch {}; setIncomingRide(null); setRide(acceptedRide as Ride); await loadBundleCredits(); setIsOnline(false); setSearchingRides([]); try { const from = lastLocation.current[0] !== 0 ? lastLocation.current : location; const routeResult = await getRoute(from, [acceptedRide.pickup_lng, acceptedRide.pickup_lat]); setRoute(routeResult.geometry); setRouteData(routeResult) } catch (routeError) { setRoute(undefined); setRouteData(null); alert(`Trip accepted, but pickup directions could not be loaded: ${errMsg(routeError)}`) } setIsNavigating(true); setZoom(17); setIsMinimized(false); setFollowDriver(true) }
-  async function declineRide(rideId: string) { clearRequestTimer(); if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }; try { await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', rideId).eq('driver_id', effectiveId) } catch {}; await supabase.rpc('decline_ride', { p_ride_id: rideId }); const newDeclined = [...declinedIds, rideId]; setDeclinedIds(newDeclined); try { localStorage.setItem('declined_rides', JSON.stringify(newDeclined)) } catch {}; setIncomingRide(null); setSearchingRides(prev => prev.filter(r => r.id!== rideId)) }
-  async function dismissIncomingRide(rideId: string) { if (!incomingRide || incomingRide.id !== rideId) return; clearRequestTimer(); try { await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', rideId).eq('driver_id', effectiveId) } catch {}; try { await supabase.rpc('decline_ride', { p_ride_id: rideId }) } catch {} setIncomingRide(null); setSearchingRides(prev => prev.filter(r => r.id !== rideId)); if (!declinedIds.includes(rideId)) { const newDeclined = [...declinedIds, rideId]; setDeclinedIds(newDeclined); try { localStorage.setItem('declined_rides', JSON.stringify(newDeclined)) } catch {} } }
-  async function completeRide() { if (!ride) return; const activeRide = ride; const { data, error } = await supabase.rpc('complete_ride', { p_ride_id: activeRide.id }); if (error) { if (error.message.includes('Insufficient bundle credits') || error.message.includes('No bundle credits')) { alert(`Not enough bundle credits! This ride needs ${creditsForRide((activeRide as any).distance_km)} credit(s) for ${(activeRide as any).distance_km || 0}km. Buy a bundle first.`); return } const { data: reloadedRide, error: reloadError } = await supabase.from('rides').select('*').eq('id', activeRide.id).maybeSingle(); if (reloadError || !reloadedRide) { alert(`Could not complete: ${errMsg(error)}`); return } if (reloadedRide.status === 'completed') { handleDriverRideCompleted(reloadedRide as Ride); void loadBundleCredits(); return } alert(`Could not complete: ${errMsg(error)}`); return } const { data: reloadedRide } = await supabase.from('rides').select('*').eq('id', activeRide.id).maybeSingle(); if (!reloadedRide) { alert('Trip completed but could not reload. Please refresh.'); return } handleDriverRideCompleted(reloadedRide as Ride); void loadBundleCredits() }
-  async function markArrived() { if (!ride) return; const { data, error } = await updateRide(ride.id, { status: 'arrived' }).eq('status', ride.status).select('*').maybeSingle(); if (error) { alert(`Could not mark arrival: ${errMsg(error)}`); return }; if (!data) { alert('This ride changed before arrival could be confirmed. Refresh and try again.'); return }; setRide(data as Ride) }
-  async function startTrip() { if (!ride) return; const currentRide = ride; const { data, error } = await updateRide(currentRide.id, { status: 'in_progress' }).eq('status', currentRide.status).select('*').maybeSingle(); if (error) { alert(`Could not start this trip: ${errMsg(error)}`); return }; if (!data) { alert('This ride changed before it could start. Refresh and try again.'); return }; setRide(currentRide as any); setRide(data as Ride); try { const from = lastLocation.current[0] !== 0 ? lastLocation.current : location; const routeResult = await getRoute(from, [currentRide.dropoff_lng, currentRide.dropoff_lat]); setRoute(routeResult.geometry); setRouteData(routeResult) } catch (routeError) { setRoute(undefined); setRouteData(null); alert(`Trip started, but destination directions could not be loaded: ${errMsg(routeError)}`) } }
-  async function submitDriverRating() { const ratingRide = pendingRating || ride; if (!ratingRide || driverRating === 0) return; const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: ratingRide.id, p_rating: driverRating, p_comment: driverRatingComment.trim() || null }); const alreadyRated = error && (error.code === '23505' || /already rated/i.test(error.message || '')); if (error && !alreadyRated) { alert(`Could not submit rating: ${errMsg(error)}`); return }; if (alreadyRated) alert('Already rated'); clearPendingRating(); clearDriverRideState(); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null) }
-  async function skipRating() { if (!ride && !pendingRating) return; clearPendingRating(); clearDriverRideState(); setShowDriverRating(false); setDriverRating(0); setDriverRatingComment(''); setShowCollected(null) }
-  function openDriverCancel(targetRide: Ride | null) { if (!targetRide &&!ride) return; setRideToCancel(targetRide || ride); setDriverCancelReason(''); setShowDriverCancelReason(true) }
-  async function executeDriverCancel() { if (!driverCancelReason) { alert('Please select a reason'); return }; const target = rideToCancel || ride; if (!target) return; const rideId = target.id; const { data: cancelledRide, error } = await updateRide(rideId, { status: 'cancelled', cancel_reason: driverCancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'driver' }).select('id').maybeSingle(); if (error) { alert(`Could not cancel: ${errMsg(error)}`); return }; if (!cancelledRide) { alert('This trip is no longer available to cancel.'); return }; try { await supabase.from('ride_requests').update({ status: 'cancelled' }).eq('ride_id', rideId).eq('status', 'pending') } catch {}; setShowDriverCancelReason(false); setRoute(undefined); setRouteData(null); setIsNavigating(false); setRide(null); setZoom(13); setRideToCancel(null); setShowChat(false); if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }; setDriverCancelReason('') }
-  const curStep = (() => { if (!routeData?.steps?.length) return null; return routeData.steps[activeStepIndex] || routeData.steps[0] })()
-  const instruction = curStep?.maneuver?.instruction || routeData?.steps?.[0]?.maneuver?.instruction || 'Head straight'
-  const distText = nextTurnDistance !== null ? `${nextTurnDistance >= 1000 ? `${(nextTurnDistance / 1000).toFixed(1)}km` : `${Math.ceil(nextTurnDistance / 10) * 10}m`} • ${curStep ? `${Math.ceil(curStep.duration / 60)} min` : ''}` : routeData ? `${routeData.distanceKm.toFixed(1)}km • ${Math.ceil(routeData.durationMin)} min` : '0.0km • 0 min'
-  const canGoOnline = documentsLoaded && profileVerified && ['approved','verified'].includes((verificationStatus || '').toLowerCase()) && !hasRejectedDocuments && hasAllDocs
-  useEffect(() => { if (!documentsLoaded || canGoOnline || !isOnline) return; setIsOnline(false); setSearchingRides([]); void (async () => { await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); await supabase.from('profiles').update({ is_online: false } as any).eq('id', effectiveId) })() }, [documentsLoaded, canGoOnline, isOnline, effectiveId])
-  const completedRideForDisplay = ride?.status === 'completed' ? ride : pendingRating
-  function clearPendingRating() { setPendingRating(null); try { localStorage.removeItem(pendingRatingStorageKey) } catch {} }
-  const renderPassengerBadge = (badge: PassengerBadge | null) => { if (!badge) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#334155', color: '#cbd5e1', fontWeight: 800 }}>CHECKING RIDER…</span>; if (badge.is_verified) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: BLUE_LIGHT, color: BLUE, fontWeight: 800 }}>✅ VERIFIED • {badge.ride_count} rides</span>; if (badge.verification_status === 'pending_verification') return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#78350f', color: '#fcd34d', fontWeight: 800 }}>⏳ PENDING ID • {badge.ride_count} rides</span>; if (badge.ride_count === 0) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#7c2d12', color: '#fdba74', fontWeight: 800 }}>⚠️ NEW RIDER • First ride</span>; return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#334155', color: '#fcd34d', fontWeight: 800 }}>⚠️ UNVERIFIED • {badge.ride_count} rides</span> }
-  
-  return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, paddingTop: 'env(safe-area-inset-top)' }}>
-    <div style={{ position: 'absolute', inset: 0, top: 0, zIndex: 0 }}><DriverTomTomMap center={POLOKWANE_CENTER} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={followDriver} onMapMove={() => setFollowDriver(false)} theme={theme} /></div>
-    
-    <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 12px 10px 12px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative', marginTop: 0 }}><NavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} /><button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, maxWidth: 220, margin: '0 auto', background: '#121214', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '6px 14px', textAlign: 'center', cursor: 'pointer' }}><div style={{ color: 'white', fontWeight: 800, fontSize: 14, lineHeight: 1.1 }}>R 0.00</div><div style={{ color: '#9ca3af', fontSize: 10, marginTop: 2 }}>Today • {bundleCredits ?? 0} trips left</div></button><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></header>
-    
-    {!followDriver && (<button onClick={() => setFollowDriver(true)} style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 70px)', left: '12px', zIndex: 80, background: '#0066FF', color: 'white', border: 'none', borderRadius: '24px', padding: '10px 16px', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>📍 Back to Me</button>)}
-    {isNavigating && ride && (<div style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 70px)', left: '12px', right: '12px', zIndex: 70, background: 'white', borderRadius: '16px', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}><div style={{ width: '44px', height: '44px', borderRadius: '22px', background: BR_GREEN, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '22px' }}>↑</div><div><div style={{ fontWeight: '800', color: '#111', fontSize: '16px' }}>{instruction}</div><div style={{ color: '#666', fontSize: '13px' }}>{distText} • {categoryLabel(ride).icon} {categoryLabel(ride).label} • {categoryLabel(ride).seats}</div></div></div>)}
-    <div style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 62px)', left: '50%', transform: 'translateX(-50%)', zIndex: 90, padding: '7px 12px', borderRadius: '999px', color: 'white', background: 'rgba(28,28,30,.88)', fontSize: '13px', fontWeight: 700 }}>{Math.round(speedKmh)} km/h</div>
-    {cancelledNotification && (<div style={{position:'fixed', top:'calc(env(safe-area-inset-top) + 70px)', left:'12px', right:'12px', zIndex:99999, background:'#ff3b30', borderRadius:'16px', padding:'16px', display:'flex', gap:'12px', alignItems:'center', boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}><div style={{width:'48px', height:'48px', borderRadius:'24px', background:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px'}}>❌</div><div style={{flex:1}}><div style={{color:'white', fontWeight:'900', fontSize:'15px'}}>Trip Cancelled by Passenger!</div><div style={{color:'white', fontSize:'13px', opacity:0.9}}>{cancelledNotification.msg} • R{cancelledNotification.fare}</div></div><button onClick={() => setCancelledNotification(null)} style={{background:'white', color:'#ff3b30', border:'none', borderRadius:'20px', padding:'8px 14px', fontWeight:'bold'}}>OK</button></div>)}
-    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, pointerEvents: 'none' }}>
-    <BottomSheet snapPoint={sheetSnap} onSnapChange={point => { setSheetSnap(point); setIsMinimized(point === 25) }}>
-      {ride && ['driver_assigned','accepted'].includes(String(ride.status)) && (<>
-          {!isMinimized && passengerProfile && (<div className="ride-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', background: bg2, borderRadius: '24px', padding: '10px 12px' }}><div style={{ width: '44px', height: '44px', borderRadius: '22px', background: BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900', color: 'white' }}>{passengerProfile.full_name?.[0] || 'P'}</div><div style={{ flex: 1 }}><div style={{ fontWeight: '900', fontSize: '16px' }}>{passengerProfile.full_name || 'Passenger'}{passengerProfile.rating ? ` • ${passengerProfile.rating.toFixed(1)}★` : ''}</div><div style={{ color: subText, fontSize: '12px' }}>Passenger • {ride.pickup_address?.split(',')[0]} • {categoryLabel(ride).icon} {categoryLabel(ride).label} • {categoryLabel(ride).seats}</div><div style={{ marginTop: 4 }}>{renderPassengerBadge(activeBadge)}</div></div><button onClick={() => setShowChat(true)} style={{ width: '40px', height: '40px', borderRadius: '20px', background: BR_GREEN, border: 'none', fontSize: '18px' }}>💬</button></div>)}
-          {!isMinimized && (<div className="ride-card" style={{background:bg2, border:`1px solid ${border}`, borderRadius:'24px', padding:'12px', marginBottom:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}><div><div style={{color:subText, fontSize:'12px', fontWeight:'bold'}}>CASH FARE • {categoryLabel(ride).label}</div><div style={{color:text, fontSize:'20px', fontWeight:'900'}}>R {ride.fare}</div><div style={{color:subText, fontSize:'13px', fontWeight:'bold'}}>YOU KEEP R {getEarnings(ride.fare).driverGets} (100%)</div></div><div style={{background: BLUE, color:'white', padding:'6px 10px', borderRadius:'12px', fontSize:'12px', fontWeight:'bold'}}>CASH DUE</div></div>)}
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}><h3 style={{ margin: '0 0 4px' }}>Go to Pickup • You keep R {getEarnings(ride.fare).driverGets}</h3><button onClick={() => setShowChat(true)} style={{ width: '48px', height: '48px', borderRadius: '24px', background: BR_GREEN, border: 'none', fontSize: '22px' }}>💬</button></div>
-          <p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>{ride.pickup_address}</p>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}><a href={`/driver/navigation/${encodeURIComponent(ride.id)}`} style={{ flex: 1, display: 'grid', placeItems: 'center', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold', textDecoration: 'none' }}>{isNavigating ? 'Open navigation' : 'Navigate'}</a><button onClick={() => void markArrived()} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: BR_GREEN, color: 'white', border: 'none', fontWeight: 'bold' }}>I Have Arrived</button></div>
-          <div style={{ display: 'flex', gap: '8px' }}><button onClick={() => { if (preferredNavigation === 'Waze') window.open(`https://waze.com/ul?ll=${ride.pickup_lat},${ride.pickup_lng}&navigate=yes`, '_blank', 'noopener,noreferrer'); else window.location.assign(`/driver/navigation/${encodeURIComponent(ride.id)}`) }} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: BLUE, color: 'white', border: 'none', fontWeight: 'bold' }}>{preferredNavigation === 'Waze' ? '🚗 Open Waze' : '🧭 BuddyRide Navigation'}</button><button onClick={() => openDriverCancel(ride)} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 'bold' }}>Cancel</button></div>
-        </>)}
-      {ride && (ride.status as any) === 'arrived' && (<><div className="ride-card" style={{background:bg2, border:`1px solid ${border}`, borderRadius:'24px', padding:'12px', marginBottom:'12px', textAlign:'center'}}><div style={{color:subText, fontSize:'12px', fontWeight:'bold'}}>PASSENGER IN CAR? START TRIP</div><div style={{color:text, fontSize:'20px', fontWeight:'900'}}>Passenger R {ride.fare} • You keep R {getEarnings(ride.fare).driverGets}</div></div><h3 style={{ margin: '0 0 4px' }}>You Have Arrived • You keep R {getEarnings(ride.fare).driverGets}</h3><p style={{ margin: '0 0 12px', fontSize: '13px', color: subText }}>Waiting at {ride.pickup_address}</p><div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}><button onClick={() => void startTrip()} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: BR_GREEN, color: 'white', border: 'none', fontWeight: 'bold', fontSize: '16px' }}>Start Trip → Passenger In</button></div></>)}
-      {ride && ['picked_up','in_progress','en_route','on_trip','driving_to_destination'].includes(String(ride.status)) &&!showDriverRating && (<><h3 style={{ margin: '0 0 6px' }}>Drive to {ride.dropoff_address?.split(',')[0]} • You keep R {getEarnings(ride.fare).driverGets}</h3><p style={{margin:'0 0 10px', fontSize:'12px', color:subText}}>Passenger in car • R{ride.fare} • {ride.status} • {categoryLabel(ride).label} {categoryLabel(ride).seats}</p><div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}><a href={preferredNavigation === 'Waze' ? `https://waze.com/ul?ll=${ride.dropoff_lat},${ride.dropoff_lng}&navigate=yes` : `/driver/navigation/${encodeURIComponent(ride.id)}`} target={preferredNavigation === 'Waze' ? '_blank' : undefined} rel={preferredNavigation === 'Waze' ? 'noreferrer' : undefined} style={{ flex: 1, display: 'grid', placeItems: 'center', padding: '14px', borderRadius: '12px', background: bg2, color: text, border: `1px solid ${border}`, textDecoration: 'none' }}>{preferredNavigation === 'Waze' ? 'Open Waze' : 'Open navigation'}</a><button onClick={() => void completeRide()} style={{ flex: 1.5, padding: '14px', borderRadius: '12px', background: BLUE, color: 'white', border: 'none', fontWeight: 'bold' }}>Complete Trip ✓ You keep R {getEarnings(ride.fare).driverGets}</button></div></>)}
-      {completedRideForDisplay && !showDriverRating && showCollected === null && (<div style={{ textAlign: 'center' }}><div style={{ fontSize: '48px' }}>✅</div><h2 style={{ margin: '8px 0' }}>Trip Completed!</h2><h1 style={{ color: BR_GREEN, margin: '4px 0' }}>R {completedRideForDisplay.fare} CASH DUE</h1><div style={{color:BR_GREEN, fontWeight:'bold'}}>You keep R {getEarnings(completedRideForDisplay.fare).driverGets} (100%) • Bundle already paid</div><button onClick={() => setShowDriverRating(true)} style={{ width: '100%', marginTop: '16px', padding: '16px', borderRadius: '14px', background: BLUE, color: 'white', border: 'none', fontWeight: 'bold' }}>Rate Passenger ⭐</button></div>)}
-      {showDriverRating && (pendingRating || ride) && (<div style={{ textAlign: 'center' }}><h2>Rate Passenger</h2><div style={{ display: 'flex', gap: '4px', justifyContent: 'center', margin: '16px 0' }}>{[1,2,3,4,5].map(s => (<button key={s} onClick={() => setDriverRating(s)} style={{ fontSize: '48px', background: 'none', border: 'none', color: driverRating >= s? BLUE : '#444' }}>{driverRating >= s? '★' : '☆'}</button>))}</div><textarea value={driverRatingComment} onChange={e => setDriverRatingComment(e.target.value)} placeholder="Add comment (optional)" rows={3} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1px solid ${border}`, background: bg2, color: text }} /><div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}><button onClick={() => void skipRating()} style={{ flex: 1, padding: '16px', borderRadius: '14px', background: bg2, color: text, border: `1px solid ${border}` }}>Skip</button><button onClick={() => void submitDriverRating()} disabled={driverRating === 0} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', background: driverRating === 0? '#666' : BLUE, color: 'white', border: 'none', fontWeight: 'bold' }}>{driverRating === 0? 'Select Stars' : `Rate ${driverRating}★`}</button></div></div>)}
-      {!ride &&!showDriverRating && (<div style={{ textAlign: 'center' }}>{!hasAllDocs && documentsLoaded && <button onClick={goToOnboarding} style={{ margin: '0 0 8px', padding: 10, borderRadius: 10, background: '#7f1d1d', color: '#fee2e2', fontSize: 12, fontWeight: 700, width: '100%', border: 'none' }}>Missing docs - {TOTAL_DOCS-docsUploaded} left - Tap to continue</button>}{bundleCredits !== null && bundleCredits <= 0 && canGoOnline && <button onClick={() => window.location.href = '/driver/bundle'} style={{ margin: '0 0 8px', padding: 10, borderRadius: 10, background: '#7f1d1d', color: '#fee2e2', fontSize: 12, fontWeight: 700, width: '100%', border: 'none' }}>🎫 No bundle trips left! 1 credit = less than 100km, 2 credits = 100km+. Tap to buy</button>}{!canGoOnline && (<button onClick={goToOnboarding} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: BR_GREEN, color: 'white', fontWeight: 'bold', fontSize: '16px', marginBottom: 8 }}>Finish Onboarding →</button>)}{canGoOnline && bundleCredits !== null && bundleCredits <= 0 && (<button onClick={() => window.location.href = '/driver/bundle'} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: `1px solid ${BR_GREEN}`, background: 'white', color: BR_GREEN, fontWeight: 'bold', fontSize: '15px', marginBottom: 8 }}>🎫 0 trips left - Buy Bundle →</button>)}<button onClick={() => void toggleOnline()} disabled={!isOnline && !canGoOnline} style={{ width: '100%', padding: '16px', borderRadius: '14px', border: 'none', background: canGoOnline ? (isOnline ? '#B42318' : BR_GREEN) : '#98A2B3', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE 🔊') : 'Waiting for Admin Approval'}</button></div>)}
-    </BottomSheet></div>
-    {incomingRide && !ride && isOnline && (<div role="dialog" style={{ position: 'fixed', inset: 0, zIndex: 20000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', background: 'rgba(0,0,0,0.88)', color: 'white' }}><div style={{ width: '100%', maxWidth: '440px', textAlign: 'center' }}><div style={{ fontSize: '16px', fontWeight: 800, color: BR_GREEN }}>NEW RIDE REQUEST</div><div style={{ marginTop: 10, display: 'inline-block', padding: '8px 16px', borderRadius: 999, background: '#0066FF', color: 'white', fontWeight: 800, fontSize: 15 }}>{categoryLabel(incomingRide).icon} {categoryLabel(incomingRide).label} • {categoryLabel(incomingRide).seats}</div><h1 style={{ margin: '18px 0 8px', fontSize: '56px' }}>R {incomingRide.fare}</h1><p style={{ margin: '0 0 12px', color: '#cbd5e1', fontSize: '16px' }}>You keep R {getEarnings(incomingRide.fare).driverGets} (100%) • Uses {creditsForRide((incomingRide as any).distance_km)} credit{creditsForRide((incomingRide as any).distance_km) > 1 ? 's' : ''} • {incomingRide.distance_km ? `${incomingRide.distance_km.toFixed(1)} km` : ''}</p><div style={{ padding: '18px', borderRadius: '16px', background: '#1e293b', textAlign: 'left' }}><div><strong>Pickup</strong><br />{incomingRide.pickup_address}</div><div style={{ margin: '12px 0', color: BR_GREEN }}>↓</div><div><strong>Drop-off</strong><br />{incomingRide.dropoff_address}</div></div><div style={{ margin: '24px 0', fontSize: '48px', fontWeight: 900, color: countdown <= 3 ? '#ef4444' : BR_GREEN }}>{countdown}</div><div style={{ display: 'flex', gap: '12px' }}><button onClick={() => void dismissIncomingRide(incomingRide.id)} style={{ flex: 1, padding: '16px', borderRadius: '14px', border: '1px solid #64748b', background: '#1e293b', color: 'white', fontWeight: 800 }}>DECLINE</button><button onClick={() => void acceptRide(incomingRide.id)} style={{ flex: 1.5, padding: '16px', borderRadius: '14px', border: 'none', background: BR_GREEN, color: '#fff', fontWeight: 900, fontSize: '17px' }}>ACCEPT</button></div></div></div>)}
-    {showChat && ride && (<div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}><div style={{ background: bgCard, width: '100%', borderTopLeftRadius: '32px', borderTopRightRadius: '32px', height: '75vh', display: 'flex', flexDirection: 'column' }}><div style={{ padding: '16px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><div style={{ fontWeight: 'bold', color: text }}>Chat with Passenger</div></div><button onClick={() => setShowChat(false)} style={{ background: bg2, border: 'none', borderRadius: '20px', padding: '8px 14px' }}>Close</button></div><div style={{ flex: 1, overflow: 'hidden' }}><RideChat rideId={ride.id} myId={effectiveId} /></div></div></div>)}
-    {showDriverCancelReason && (<div style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}><div style={{ background: bgCard, width: '100%', maxWidth: '360px', borderRadius: '20px', padding: '20px' }}><h3 style={{ margin: '0 0 12px', color: text }}>Cancel Ride</h3><select value={driverCancelReason} onChange={e => setDriverCancelReason(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `1px solid ${border}`, background: bg2, color: text, marginBottom: '12px' }}><option value="">Select reason</option><option value="Passenger no-show">Passenger no-show</option><option value="Wrong address">Wrong address</option><option value="Passenger asked to cancel">Passenger asked to cancel</option><option value="Vehicle issue">Vehicle issue</option><option value="Other">Other</option></select><div style={{ display: 'flex', gap: '8px' }}><button onClick={() => setShowDriverCancelReason(false)} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: `1px solid ${border}`, background: bg2, color: text }}>Back</button><button onClick={() => void executeDriverCancel()} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: '#B42318', color: 'white', fontWeight: 'bold' }}>Confirm Cancel</button></div></div></div>)}
-    {showCollected !== null && (<div style={{ position: 'fixed', inset: 0, zIndex: 10001, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ background: 'white', borderRadius: '24px', padding: '32px', textAlign: 'center' }}><div style={{ fontSize: '64px' }}>💰</div><h2 style={{ color: '#111' }}>R {showCollected} Collected!</h2><p style={{ color: '#666' }}>You keep 100% - Bundle already paid</p></div></div>)}
-  </div>
+  useEffect(() => {
+    if (!isOnline || ride) return
+    const ch = createRealtimeChannel(`offers-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'ride_requests', filter: `driver_id=eq.${profile.id}` }, async (p: any) => {
+      if (p.new?.status === 'pending') {
+        const { data } = await supabase.from('rides').select('*').eq('id', p.new.ride_id).eq('status', 'searching').single()
+        if (data) setIncoming(data as Ride)
+      }
+    }).subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [isOnline, ride])
+
+  return (
+    <div style={{ height: '100dvh', position: 'relative', overflow: 'hidden', background: BG }}>
+      <div style={{ position: 'absolute', inset: 0 }}><DriverTomTomMap center={location} driverLocation={location} route={route} theme="light" /></div>
+
+      <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: BG, borderBottom: `1px solid ${BORDER}` }}>
+        <NavigationMenu profile={profile} theme="light" onThemeChange={() => {}} onSignOut={() => supabase.auth.signOut()} />
+        <button onClick={() => window.location.href = '/driver/bundles'} style={{ flex: 1, borderRadius: 999, padding: '8px 12px', border: '1px solid #DBEAFE', background: '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 12 }}>
+          {bundleCredits ?? 0} trips • {bundleCount} bundles
+        </button>
+      </header>
+
+      {missingFields.length > 0 && (
+        <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 10, borderRadius: 12, background: '#FEF2F2', color: '#B42318', fontSize: 12, fontWeight: 800, border: '1px solid #FECACA' }}>
+          ⚠️ Missing: {missingFields.join(', ')} <button onClick={() => window.location.assign('/driver/onboarding')} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button>
+        </div>
+      )}
+
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60 }}>
+        <BottomSheet snapPoint={50} onSnapChange={() => {}}>
+          {!ride ? (
+            <div style={{ textAlign: 'center' }}>
+              <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ width: '100%', padding: 16, borderRadius: 14, background: canGoOnline ? (isOnline ? '#B42318' : BLUE) : '#94A3B8', color: 'white', border: 0, fontWeight: 900 }}>
+                {canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE • BLUE') : 'Waiting Approval'}
+              </button>
+              <div style={{ marginTop: 8, fontSize: 11, color: '#64748B' }}>POPIA: Trip data kept 6 months • Compliant</div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><h3 style={{ margin: 0, color: '#0F172A' }}>R{ride.fare} • Cash | Card</h3><span style={{ fontSize: 10, background: '#DBEAFE', color: BLUE, padding: '4px 8px', borderRadius: 999, fontWeight: 800 }}>YOU KEEP R{ride.fare}</span></div>
+              <p style={{ fontSize: 12, opacity: 0.7, margin: '6px 0' }}>{ride.pickup_address}</p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button onClick={() => setShowChat(true)} style={{ padding: 12, borderRadius: 10, background: '#F8FAFF', border: `1px solid ${BORDER}` }}>💬</button>
+                <button onClick={() => {
+                  const s = String(ride.status)
+                  if (s === 'arrived') updateRide(ride.id, { status: 'in_progress' }).then(({ data }) => data && setRide(data as any))
+                  else if (s.includes('progress')) { supabase.rpc('complete_ride', { p_ride_id: ride.id }).then(() => supabase.from('rides').select('*').eq('id', ride.id).single().then(({ data }) => data && setRide(data as any))) }
+                  else updateRide(ride.id, { status: 'arrived' }).then(({ data }) => data && setRide(data as any))
+                }} style={{ flex: 1, padding: 14, borderRadius: 12, background: BLUE, color: 'white', border: 0, fontWeight: 800 }}>
+                  {String(ride.status) === 'arrived' ? 'Start Trip →' : String(ride.status).includes('progress') ? 'Complete ✓ • Receipt' : 'I Have Arrived'}
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Track my BuddyRide ${ride.id} https://www.google.com/maps?q=${location[1]},${location[0]}`)}`, '_blank')} style={{ flex: 1, padding: 10, borderRadius: 10, background: '#EFF6FF', color: BLUE, border: '1px solid #DBEAFE', fontWeight: 700, fontSize: 12 }}>📤 Share Trip</button>
+                <button onClick={() => { const r = prompt('Report reason?'); if (r) supabase.from('complaints').insert({ ride_id: ride.id, driver_id: profile.id, reason: r }) }} style={{ flex: 1, padding: 10, borderRadius: 10, background: '#F8FAFF', border: `1px solid ${BORDER}`, fontWeight: 700, fontSize: 12 }}>⚠️ Report</button>
+              </div>
+              <div style={{ marginTop: 10 }}><PanicButton rideId={ride.id} lat={location[1]} lng={location[0]} /></div>
+              <div style={{ marginTop: 8, textAlign: 'center', fontSize: 11, color: '#64748B' }}>Receipt auto on Complete • Cash or Card • Gov Compliant</div>
+            </div>
+          )}
+        </BottomSheet>
+      </div>
+
+      {incoming && <IncomingRideSheet ride={incoming} countdown={countdown} onAccept={accept} onDecline={decline} />}
+      
+      {showChat && ride && (
+        <div style={{position:'fixed',inset:0,zIndex:5000,background:'white'}}>
+          <button onClick={() => setShowChat(false)} style={{position:'absolute',top:12,right:12,zIndex:5001,padding:'8px 12px',borderRadius:999,border:`1px solid ${BORDER}`,background:'white',fontWeight:800}}>✕ Close</button>
+          <RideChat rideId={ride.id} myId={profile.id} />
+        </div>
+      )}
+    </div>
+  )
 }
