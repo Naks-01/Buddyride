@@ -38,7 +38,7 @@ function lerpAngle(a: number, b: number, t: number) {
   return a + diff * t
 }
 
-export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = false, onMapMove }: Props) {
+export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, onMapMove }: Props) {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const markerRef = useRef<maplibregl.Marker | null>(null)
@@ -56,7 +56,6 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     if (!containerRef.current || mapRef.current) return
     const map = new maplibregl.Map({
       container: containerRef.current,
-      // RASTER OSM - NEVER GOES BLANK, WORKS ON ALL PHONES IN SA
       style: {
         version: 8,
         sources: {
@@ -75,6 +74,8 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       attributionControl: false,
     })
     mapRef.current = map
+    // FIX: Add bottom padding so center is above banner
+    map.setPadding({ top: 0, bottom: 190, left: 0, right: 0 })
     map.on('movestart', (e: any) => { if (e.originalEvent) onMapMoveRef.current?.() })
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); map.remove(); mapRef.current = null }
   }, [])
@@ -128,12 +129,12 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   }, [route])
 
   return (
-    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#F8F9FA', overflow: 'hidden' }}>
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 190, width: '100%', background: '#F8F9FA', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button onClick={() => mapRef.current?.zoomIn()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>+</button>
         <button onClick={() => mapRef.current?.zoomOut()} style={{ width: 44, height: 44, borderRadius: 12, background: '#ffffff', color: '#111111', border: '1px solid #ddd', fontSize: 22, fontWeight: 900, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>−</button>
-        <button onClick={() => { if (mapRef.current && driverLocation) { mapRef.current.setCenter([driverLocation[0], driverLocation[1]]); mapRef.current.setZoom(16) } }} style={{ width: 44, height: 44, borderRadius: 12, background: '#0066FF', color: 'white', border: 'none', fontSize: 18, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>📍</button>
+        <button onClick={() => { if (mapRef.current && driverLocation) { followRef.current = true; mapRef.current.setCenter([driverLocation[0], driverLocation[1]]); mapRef.current.setZoom(16) } else if (mapRef.current) { mapRef.current.setCenter([center[0], center[1]]) } }} style={{ width: 44, height: 44, borderRadius: 12, background: '#0066FF', color: 'white', border: 'none', fontSize: 18, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)', cursor: 'pointer' }}>📍</button>
       </div>
     </div>
   )

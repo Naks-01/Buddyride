@@ -58,10 +58,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [zoom, setZoom] = useState(13)
   const [bearing, setBearing] = useState(0)
   const [speedKmh, setSpeedKmh] = useState(0)
-  const [followDriver, setFollowDriver] = useState(false)
+  const [followDriver, setFollowDriver] = useState(true)
+  const bearingRef = useRef(0)
+  useEffect(() => { bearingRef.current = bearing }, [bearing])
   const watchIdRef = useRef<string | null>(null)
   const lastSupabaseUpdate = useRef<number>(0)
   const lastLocation = useRef<[number, number]>(POLOKWANE_CENTER)
+
   const [documentsLoaded, setDocumentsLoaded] = useState(false)
   const [documentsError, setDocumentsError] = useState('')
   const [profileVerified, setProfileVerified] = useState(false)
@@ -144,17 +147,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
       void loadBundleCredits() 
     }; 
     void loadStatus(); 
-    
     const initGPS = async () => {
       try {
         const perm = await Geolocation.requestPermissions();
-        if (perm.location !== 'granted') {
-          console.log("GPS NOT GRANTED", perm.location);
-          return;
-        }
         const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 });
         const pos: [number, number] = [p.coords.longitude, p.coords.latitude];
-        console.log("REAL GPS:", pos);
         setLocation(pos);
         lastLocation.current = pos;
         setFollowDriver(true);
@@ -171,61 +168,60 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => { if (!isOnline || ride) { setSearchingRides([]); return } async function loadSearching() { try { const { data: activeCheck } = await supabase.from('rides').select('id').eq('driver_id', effectiveId).in('status', ['driver_assigned','accepted','arrived','picked_up','en_route','in_progress','on_trip','driving_to_destination'] as any).limit(1).maybeSingle(); if (activeCheck) { setSearchingRides([]); setIsOnline(false); return } const { data: myRequests } = await supabase.from('ride_requests').select('ride_id').eq('driver_id', effectiveId).eq('status', 'pending'); if (!myRequests || myRequests.length === 0) { setSearchingRides([]); setIncomingRide(null); return } const rideIds = (myRequests as any[]).map(r => r.ride_id); const { data } = await supabase.from('rides').select('*').in('id', rideIds).eq('status','searching').order('created_at',{ascending:false}); const filtered = (data || []).filter((r:any) => !declinedIds.includes(r.id)); setSearchingRides(filtered as Ride[]); if (filtered.length > 0) setIncomingRide(current => current || filtered[0] as Ride); else setIncomingRide(null) } catch(e) { console.log(e) } }; void loadSearching(); const ch2 = createRealtimeChannel(`offers-${effectiveId}-real`).on('postgres_changes', { event: '*', schema: 'public', table: 'ride_requests', filter: `driver_id=eq.${effectiveId}` }, (p) => { const r = p.new as any; if (!r) return; if (r.status === 'pending') void loadSearching(); if (['accepted','rejected','cancelled','declined','expired'].includes(r.status)) { setSearchingRides(prev => prev.filter(x => x.id !== r.ride_id)); setIncomingRide(cur => cur?.id === r.ride_id ? null : cur) } }).subscribe(); const interval = setInterval(() => void loadSearching(), 3000); return () => { supabase.removeChannel(ch2); clearInterval(interval) } }, [isOnline, ride, effectiveId, declinedIds])
   useEffect(() => { clearRequestTimer(); if (!incomingRide || incomingRide.status !== 'searching' || ride) return; const expiresAt = incomingRide.offer_expires_at; let seconds = expiresAt ? Math.max(0, Math.min(EXPIRE_SECONDS, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))) : EXPIRE_SECONDS; setCountdown(seconds); if (seconds === 0) { void dismissIncomingRide(incomingRide.id); return } const rideId = incomingRide.id; requestTimerRef.current = setInterval(() => { seconds -= 1; setCountdown(seconds); if (seconds <= 0) { clearRequestTimer(); void dismissIncomingRide(rideId) } }, 1000); return clearRequestTimer }, [incomingRide?.id, ride?.id])
 
+  // FIXED GPS WATCH - NO BEARING IN DEPS, NO STUCK ON DROP
   useEffect(() => {
-    let watchId: string | null = null;
+    let cancelled = false
     const startWatch = async () => {
       try {
         const id = await Geolocation.watchPosition(
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
           (pos, err) => {
-            if (err) { console.log('GPS watch error:', err); return; }
-            if (!pos) return;
-            const p: [number, number] = [pos.coords.longitude, pos.coords.latitude];
-            updateNavigationProgress(p);
-            setSpeedKmh((pos.coords.speed ?? 0) * 3.6);
-            setLocation(p);
-            const previousLocation = lastLocation.current;
-            let newBearing = bearing;
+            if (cancelled) return
+            if (err) { console.log('GPS watch error:', err); return }
+            if (!pos) return
+            const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
+            updateNavigationProgress(p)
+            setSpeedKmh((pos.coords.speed ?? 0) * 3.6)
+            setLocation(p)
+            const previousLocation = lastLocation.current
+            let newBearing = bearingRef.current
             if (pos.coords.heading != null && !isNaN(pos.coords.heading) && (pos.coords.speed ?? 0) > 1) {
               newBearing = pos.coords.heading
             } else {
-              const dLng = p[0] - previousLocation[0];
-              const dLat = p[1] - previousLocation[1];
+              const dLng = p[0] - previousLocation[0]
+              const dLat = p[1] - previousLocation[1]
               if (Math.abs(dLng) > 0.000005 || Math.abs(dLat) > 0.000005) {
                 newBearing = (Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360
               }
             }
-            setBearing(newBearing);
-            lastLocation.current = p;
-            const nowTs = Date.now();
+            setBearing(newBearing)
+            bearingRef.current = newBearing
+            lastLocation.current = p
+            const nowTs = Date.now()
             if (nowTs - lastSupabaseUpdate.current > 2000) {
-              lastSupabaseUpdate.current = nowTs;
+              lastSupabaseUpdate.current = nowTs
               if (isOnline || ride) {
-                if (ride) void updateRide(ride.id, { driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude }).then(()=>{});
-                void safeUpsertDriverLocation({ driver_id: effectiveId, lat: pos.coords.latitude, lng: pos.coords.longitude, heading: newBearing, speed: pos.coords.speed ?? 0, is_online: true, updated_at: new Date().toISOString() });
+                if (ride) void updateRide(ride.id, { driver_lat: pos.coords.latitude, driver_lng: pos.coords.longitude })
+                void safeUpsertDriverLocation({ driver_id: effectiveId, lat: pos.coords.latitude, lng: pos.coords.longitude, heading: newBearing, speed: pos.coords.speed ?? 0, is_online: true, updated_at: new Date().toISOString() })
                 void safeUpsertDriverStatus({ driver_id: effectiveId, is_online: true, lat: pos.coords.latitude, lng: pos.coords.longitude, updated_at: new Date().toISOString() })
               }
             }
           }
-        );
-        watchId = id;
-        watchIdRef.current = id;
-      } catch (e) {
-        console.log('Failed to start watch', e);
-      }
-    };
-    void startWatch();
-    return () => {
-      if (watchIdRef.current) {
-        void Geolocation.clearWatch({ id: watchIdRef.current });
-      }
+        )
+        watchIdRef.current = id
+      } catch (e) { console.log('Failed to start watch', e) }
     }
-  }, [isOnline, ride?.id, effectiveId, bearing, ride])
+    void startWatch()
+    return () => {
+      cancelled = true
+      if (watchIdRef.current) void Geolocation.clearWatch({ id: watchIdRef.current })
+    }
+  }, [isOnline, ride?.id, effectiveId])
 
   useEffect(() => { let interval: any; let active = true; let routeRequestActive = false; async function buildRoute() { if (!ride || routeRequestActive) return; const from = lastLocation.current; const target: [number, number] = ['accepted','driver_assigned','arrived'].includes(String(ride.status)) ? [ride.pickup_lng, ride.pickup_lat] : [ride.dropoff_lng, ride.dropoff_lat]; routeRequestActive = true; try { const r = await getRoute(from, target); if (!active) return; activeStepIndexRef.current = 0; setActiveStepIndex(0); routeDataRef.current = r; setRoute(r.geometry); setRouteData(r); updateNavigationProgress(from) } catch (routeError) { console.error('Could not refresh driver route', routeError) } finally { routeRequestActive = false } }; void buildRoute(); if (isNavigating) { interval = setInterval(() => void buildRoute(), 15000) } return () => { active = false; clearInterval(interval) } }, [ride?.id, ride?.status, isNavigating])
   async function toggleOnline() { if (!isOnline) { const { data: prof, error: profileCheckError } = await supabase.from('profiles').select('is_verified,verification_status').eq('id', effectiveId).single(); if (profileCheckError) { alert(`Could not check your approval status: ${errMsg(profileCheckError)}`); return }; const liveApproved = prof?.is_verified === true && ['approved', 'verified'].includes(String(prof?.verification_status || '').toLowerCase()); const liveStatus = String(prof?.verification_status || '').toLowerCase(); const { data: freshDocs } = await supabase.from('driver_documents').select('doc_type,document_type,status,expiry_date,file_url,document_url,storage_path,file_path').eq('driver_id', effectiveId); const latest = new Map<string, any>(); for (const d of (freshDocs || [])) { const t = canonicalType((d as any).doc_type || (d as any).document_type); if (t && !latest.has(t)) latest.set(t, d) } const today = new Date(); today.setHours(0,0,0,0); const freshAllApproved = REQUIRED_DOCS.every(req => { const doc: any = latest.get(canonicalType(req.type)); if (!doc || String(doc.status || '').toUpperCase() !== 'APPROVED') return false; if (!(doc.file_url || doc.document_url || doc.storage_path || doc.file_path)) return false; if (req.expiryRequired) { if (!doc.expiry_date) return false; if (new Date(`${doc.expiry_date}T00:00:00`) < today) return false } return true }); const freshRejected = (freshDocs || []).some((d: any) => String(d.status || '').toUpperCase() === 'REJECTED'); if (!liveApproved || !freshAllApproved || freshRejected) { if (liveStatus === 'pending' || liveStatus === 'pending_verification') alert('Waiting for Admin Approval - You cannot go online yet'); else if (liveStatus === 'identity_complete') alert(`Identity done! You uploaded ${docsUploaded}/${TOTAL_DOCS}. Finish the remaining ${TOTAL_DOCS - docsUploaded} documents to go online.`); else if (freshRejected) alert('One of your documents was rejected. Fix it in onboarding to go online.'); else alert(`Complete onboarding to go online - ${TOTAL_DOCS - docsUploaded} documents left.`); setIsOnline(false); return } await loadBundleCredits(); if (bundleCredits !== null && bundleCredits <= 0) { alert('No bundle trips left! Buy a bundle to go online and receive rides. 1 credit = <100km, 2 credits = 100km+ long trip.'); setIsOnline(false); return } } const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('driver_id', effectiveId).in('status', ['driver_assigned', 'accepted', 'arrived', 'picked_up', 'en_route', 'in_progress', 'on_trip', 'driving_to_destination'] as any).limit(1).maybeSingle(); if (activeRideError) { alert(`Could not check active rides: ${errMsg(activeRideError)}`); return } if (activeRide) { if (!ride || ride.id !== activeRide.id) setRide(activeRide as Ride); const statusSaved = await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); const { error: profileError } = await supabase.from('profiles').update({ is_online: false } as any).eq('id', effectiveId); setIsOnline(false); if (!statusSaved || profileError) alert(`You have an active trip, but availability could not be fully synchronized.`); return } const next = !isOnline; const pos = lastLocation.current; try { const statusSaved = await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: next, lat: pos[1], lng: pos[0], updated_at: new Date().toISOString() }); if (!statusSaved) throw new Error('Could not save your availability to the dispatch system'); const { error: profileError } = await supabase.from('profiles').update({ is_online: next } as any).eq('id', effectiveId); if (profileError) { if (next) await safeUpsertDriverStatus({ driver_id: effectiveId, is_online: false, updated_at: new Date().toISOString() }); throw profileError } setIsOnline(next) } catch (error: any) { alert(`Could not change your availability: ${errMsg(error)}`) } }
   async function acceptRide(rideId: string) { clearRequestTimer(); if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }; const { data: acceptedRide, error } = await supabase.rpc('accept_ride_with_bundle', { p_ride_id: rideId }); if (error || !acceptedRide) { alert(`Could not accept trip: ${error?.message || 'The offer is no longer available.'}`); await loadBundleCredits(); setIncomingRide(null); return } try { await supabase.from('ride_requests').update({ status: 'accepted' }).eq('ride_id', rideId).eq('driver_id', effectiveId) } catch {} try { await supabase.from('ride_requests').update({ status: 'rejected' }).eq('ride_id', rideId).neq('driver_id', effectiveId) } catch {}; setIncomingRide(null); setRide(acceptedRide as Ride); await loadBundleCredits(); setIsOnline(false); setSearchingRides([]); try { const from = lastLocation.current[0] !== 0 ? lastLocation.current : location; const routeResult = await getRoute(from, [acceptedRide.pickup_lng, acceptedRide.pickup_lat]); setRoute(routeResult.geometry); setRouteData(routeResult) } catch (routeError) { setRoute(undefined); setRouteData(null); alert(`Trip accepted, but pickup directions could not be loaded: ${errMsg(routeError)}`) } setIsNavigating(true); setZoom(17); setIsMinimized(false); setFollowDriver(true) }
-  async function declineRide(rideId: string) { clearRequestTimer(); if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }; try { await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', rideId).eq('driver_id', effectiveId) } catch {}; const { error } = await supabase.rpc('decline_ride', { p_ride_id: rideId }); const newDeclined = [...declinedIds, rideId]; setDeclinedIds(newDeclined); try { localStorage.setItem('declined_rides', JSON.stringify(newDeclined)) } catch {}; setIncomingRide(null); setSearchingRides(prev => prev.filter(r => r.id!== rideId)) }
+  async function declineRide(rideId: string) { clearRequestTimer(); if (beepIntervalRef.current) { clearInterval(beepIntervalRef.current); beepIntervalRef.current = null }; try { await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', rideId).eq('driver_id', effectiveId) } catch {}; await supabase.rpc('decline_ride', { p_ride_id: rideId }); const newDeclined = [...declinedIds, rideId]; setDeclinedIds(newDeclined); try { localStorage.setItem('declined_rides', JSON.stringify(newDeclined)) } catch {}; setIncomingRide(null); setSearchingRides(prev => prev.filter(r => r.id!== rideId)) }
   async function dismissIncomingRide(rideId: string) { if (!incomingRide || incomingRide.id !== rideId) return; clearRequestTimer(); try { await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', rideId).eq('driver_id', effectiveId) } catch {}; try { await supabase.rpc('decline_ride', { p_ride_id: rideId }) } catch {} setIncomingRide(null); setSearchingRides(prev => prev.filter(r => r.id !== rideId)); if (!declinedIds.includes(rideId)) { const newDeclined = [...declinedIds, rideId]; setDeclinedIds(newDeclined); try { localStorage.setItem('declined_rides', JSON.stringify(newDeclined)) } catch {} } }
   async function completeRide() { if (!ride) return; const activeRide = ride; const { data, error } = await supabase.rpc('complete_ride', { p_ride_id: activeRide.id }); if (error) { if (error.message.includes('Insufficient bundle credits') || error.message.includes('No bundle credits')) { alert(`Not enough bundle credits! This ride needs ${creditsForRide((activeRide as any).distance_km)} credit(s) for ${(activeRide as any).distance_km || 0}km. Buy a bundle first.`); return } const { data: reloadedRide, error: reloadError } = await supabase.from('rides').select('*').eq('id', activeRide.id).maybeSingle(); if (reloadError || !reloadedRide) { alert(`Could not complete: ${errMsg(error)}`); return } if (reloadedRide.status === 'completed') { handleDriverRideCompleted(reloadedRide as Ride); void loadBundleCredits(); return } alert(`Could not complete: ${errMsg(error)}`); return } const { data: reloadedRide } = await supabase.from('rides').select('*').eq('id', activeRide.id).maybeSingle(); if (!reloadedRide) { alert('Trip completed but could not reload. Please refresh.'); return } handleDriverRideCompleted(reloadedRide as Ride); void loadBundleCredits() }
   async function markArrived() { if (!ride) return; const { data, error } = await updateRide(ride.id, { status: 'arrived' }).eq('status', ride.status).select('*').maybeSingle(); if (error) { alert(`Could not mark arrival: ${errMsg(error)}`); return }; if (!data) { alert('This ride changed before arrival could be confirmed. Refresh and try again.'); return }; setRide(data as Ride) }
@@ -243,9 +239,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   function clearPendingRating() { setPendingRating(null); try { localStorage.removeItem(pendingRatingStorageKey) } catch {} }
   const renderPassengerBadge = (badge: PassengerBadge | null) => { if (!badge) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#334155', color: '#cbd5e1', fontWeight: 800 }}>CHECKING RIDER…</span>; if (badge.is_verified) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: BLUE_LIGHT, color: BLUE, fontWeight: 800 }}>✅ VERIFIED • {badge.ride_count} rides</span>; if (badge.verification_status === 'pending_verification') return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#78350f', color: '#fcd34d', fontWeight: 800 }}>⏳ PENDING ID • {badge.ride_count} rides</span>; if (badge.ride_count === 0) return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#7c2d12', color: '#fdba74', fontWeight: 800 }}>⚠️ NEW RIDER • First ride</span>; return <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, background: '#334155', color: '#fcd34d', fontWeight: 800 }}>⚠️ UNVERIFIED • {badge.ride_count} rides</span> }
   
-  // FIXED TOP - no more 35px hacks, uses safe-area
   return <div className={`ride-app ride-app--${theme}`} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, paddingTop: 'env(safe-area-inset-top)' }}>
-    <div style={{ position: 'absolute', inset: 0, top: 0, zIndex: 0 }}><DriverTomTomMap center={location} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={followDriver} onMapMove={() => setFollowDriver(false)} theme={theme} /></div>
+    <div style={{ position: 'absolute', inset: 0, top: 0, zIndex: 0 }}><DriverTomTomMap center={POLOKWANE_CENTER} driverLocation={location} route={route} bearing={bearing} speedKmh={speedKmh} isNavigating={isNavigating} followDriver={followDriver} onMapMove={() => setFollowDriver(false)} theme={theme} /></div>
     
     <header className="ride-header" style={{ zIndex: 300, display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 12px 10px 12px', background: bgCard, color: text, borderBottom: `1px solid ${border}`, position: 'relative', marginTop: 0 }}><NavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} /><button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, maxWidth: 220, margin: '0 auto', background: '#121214', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '6px 14px', textAlign: 'center', cursor: 'pointer' }}><div style={{ color: 'white', fontWeight: 800, fontSize: 14, lineHeight: 1.1 }}>R 0.00</div><div style={{ color: '#9ca3af', fontSize: 10, marginTop: 2 }}>Today • {bundleCredits ?? 0} trips left</div></button><button onClick={() => setTheme(isDark? 'light' : 'dark')} style={{ width: '42px', height: '36px', borderRadius: '18px', background: bg2, border: `1px solid ${border}` }}>{isDark? '☀️' : '🌙'}</button></header>
     
