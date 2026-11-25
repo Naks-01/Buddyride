@@ -2,10 +2,11 @@ const sectionStyle = { margin: '28px 0', scrollMarginTop: 20 } as const
 
 export default function TermsPage() {
   const handlePrint = () => { window.print() }
-  const handleBack = () => { if (window.history.length > 1) window.history.back(); else window.location.href = '/' }
+  const handleBack = () => { window.location.href = '/' }
 
   return <main style={{ maxWidth: 880, margin: '0 auto', padding: '32px 20px 56px', color: '#182230', fontFamily: 'Arial, sans-serif', lineHeight: 1.65 }}>
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+    <style>{`@media print { .no-print { display: none !important } }`}</style>
+    <div className="no-print" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
       <button onClick={handleBack} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid #D0D5DD', background: '#fff', fontWeight: 700, cursor: 'pointer' }}>← Back</button>
       <a href="/" style={{ padding: '10px 16px', borderRadius: 10, background: '#F2F4F7', color: '#182230', fontWeight: 700, textDecoration: 'none', display: 'grid', placeItems: 'center' }}>BuddyRide home</a>
       <button onClick={handlePrint} style={{ padding: '10px 16px', borderRadius: 10, border: 0, background: '#0066FF', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>🖨️ Print Terms</button>
@@ -16,7 +17,7 @@ export default function TermsPage() {
     <p>These terms govern your use of the BuddyRide website and ride-booking service in South Africa. BuddyRide is BuddyRide (Pty) Ltd (“BuddyRide”, “we”, “us”). Our service base is Polokwane, Limpopo, South Africa. Service is currently available in Polokwane, Mankweng, Seshego, and surrounding Limpopo areas as shown in the app.</p>
     <p>By creating an account or using BuddyRide you agree to these terms. If you do not agree, do not use the service. These terms do not remove rights that cannot be limited under South African law, including applicable consumer-protection rights.</p>
 
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0' }}>
+    <div className="no-print" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0' }}>
       <a href="mailto:buddyride@outlook.com?subject=Question%20about%20BuddyRide%20Terms" style={{ padding: '10px 14px', borderRadius: 10, background: '#E6F0FF', color: '#0052CC', fontWeight: 800, textDecoration: 'none' }}>✉️ Email Us</a>
       <a href="tel:+27641018991" style={{ padding: '10px 14px', borderRadius: 10, background: '#E6F0FF', color: '#0052CC', fontWeight: 800, textDecoration: 'none' }}>📞 Call 064 101 8991</a>
       <a href="https://wa.me/27641018991?text=Hi%20BuddyRide%2C%20I%20have%20a%20question%20about%20the%20Terms" target="_blank" rel="noreferrer" style={{ padding: '10px 14px', borderRadius: 10, background: '#ECFDF3', color: '#067647', fontWeight: 800, textDecoration: 'none' }}>💬 WhatsApp Us</a>
@@ -46,7 +47,8 @@ export default function TermsPage() {
     <section id="responsibilities" style={sectionStyle}>
       <h2>2. Passenger and driver responsibilities</h2>
       <p>Passengers must be at the agreed pickup point, treat drivers and property respectfully, follow reasonable safety instructions, and not use the service for unlawful, dangerous, or abusive conduct. Do not request a ride for more passengers or items than the selected vehicle can lawfully carry.</p>
-      <p>Drivers must hold and maintain the authorisations and vehicle documents required for their trips, keep their profile and payout details accurate, comply with road and safety laws, and only accept trips they can safely complete. BuddyRide may request documents and conduct manual review before allowing a driver to go online. Approval is not a guarantee of future eligibility or a representation that every identity document has been independently verified.</p>
+      {/* FIX: No payout details - Bundle model, drivers paid cash by rider */}
+      <p>Drivers must hold and maintain the authorisations and vehicle documents required for their trips, keep their profile and vehicle details accurate, comply with road and safety laws, and only accept trips they can safely complete. BuddyRide may request documents and conduct manual review before allowing a driver to go online. Approval is not a guarantee of future eligibility or a representation that every identity document has been independently verified.</p>
     </section>
 
     <section id="fares" style={sectionStyle}>
@@ -58,8 +60,9 @@ export default function TermsPage() {
     <section id="refunds" style={sectionStyle}>
       <h2>4. Cancellations, refunds, and fare disputes</h2>
       <p>A passenger may cancel through the app before or during a trip where the app allows it. A driver may cancel only for a legitimate safety, availability, or operational reason and should use the in-app process. Any cancellation fee, eligibility, or exception must be displayed to the passenger before it is charged. BuddyRide will not impose an undisclosed cancellation fee.</p>
-      <p>If a card payment is taken for a trip that is cancelled, not provided, duplicated, or incorrectly charged, contact <a href="mailto:buddyride@outlook.com">buddyride@outlook.com</a> with your registered contact details, trip ID, date, and payment reference. We will investigate and, where a refund is due, return the relevant amount through the original payment method where practicable. Bank/provider processing times may apply. Cash refunds must be resolved through support; do not share banking passwords, PINs, or one-time codes. Disputes are assessed fairly under applicable consumer law and the disclosed fare rules; this section does not limit statutory rights.</p>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+      {/* FIX: Cash fares are between rider and driver - BuddyRide cannot refund cash it never held */}
+      <p>If a bundle purchase via Paystack is duplicated or incorrectly charged, contact <a href="mailto:buddyride@outlook.com">buddyride@outlook.com</a> with your registered contact details, trip ID, date, and payment reference. We will investigate and, where a refund is due, return the relevant amount through the original payment method where practicable. Bank/provider processing times may apply. Cash fares are paid directly to the driver - cash fare disputes must be resolved between rider and driver, with BuddyRide support mediating where possible. Do not share banking passwords, PINs, or one-time codes. Disputes are assessed fairly under applicable consumer law and the disclosed fare rules; this section does not limit statutory rights.</p>
+      <div className="no-print" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
         <a href="mailto:buddyride@outlook.com?subject=Refund%20Request%20-%20Trip%20ID%3A%20&body=Hi%20BuddyRide%2C%0A%0AMy%20Trip%20ID%3A%20%0ADate%20of%20trip%3A%20%0APayment%20reference%3A%20%0AAmount%3A%20R%0AReason%3A%20" style={{ padding: '10px 14px', borderRadius: 10, background: '#0066FF', color: '#fff', fontWeight: 800, textDecoration: 'none' }}>Request Refund</a>
         <a href="mailto:buddyride@outlook.com?subject=Fare%20Dispute%20-%20Trip%20ID%3A%20&body=Hi%20BuddyRide%2C%0A%0AMy%20Trip%20ID%3A%20%0AQuoted%20fare%3A%20R%0ACharged%20fare%3A%20R%0AWhat%20happened%3A%20" style={{ padding: '10px 14px', borderRadius: 10, background: '#fff', border: '1px solid #D0D5DD', color: '#182230', fontWeight: 800, textDecoration: 'none' }}>Dispute Fare</a>
       </div>
@@ -69,7 +72,7 @@ export default function TermsPage() {
       <h2>5. Safety and emergencies</h2>
       <p>Confirm the vehicle and driver details in the app before getting in, wear a seat belt, and do not share your account or verification codes. Use any in-app safety or trip-sharing tools that are available, and report incidents to BuddyRide as soon as it is safe to do so. Tool availability may vary; the app is not a substitute for emergency services.</p>
       <p>For immediate danger, contact the appropriate South African emergency services directly (e.g. 10111 for police, 10177 for ambulance). BuddyRide support is available at <a href="mailto:buddyride@outlook.com">buddyride@outlook.com</a>, <a href="tel:+27641018991">064 101 8991</a>, and WhatsApp <a href="https://wa.me/27641018991" target="_blank" rel="noreferrer">064 101 8991</a> during published support hours 8am to 8pm daily. Telephone or WhatsApp contact does not guarantee an emergency response or continuous monitoring. Do not use the service if you reasonably believe a trip is unsafe.</p>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+      <div className="no-print" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
         <a href="tel:10111" style={{ padding: '10px 14px', borderRadius: 10, background: '#DC2626', color: '#fff', fontWeight: 800, textDecoration: 'none' }}>🚨 Call Police 10111</a>
         <a href="tel:10177" style={{ padding: '10px 14px', borderRadius: 10, background: '#fff', border: '1px solid #FECACA', color: '#B91C1C', fontWeight: 800, textDecoration: 'none' }}>🚑 Call Ambulance 10177</a>
         <a href="mailto:buddyride@outlook.com?subject=Safety%20Incident%20Report%20-%20Trip%20ID%3A%20&body=Hi%20BuddyRide%2C%0A%0AMy%20Trip%20ID%3A%20%0ADate%20and%20time%3A%20%0AWhat%20happened%3A%20%0AAre%20you%20safe%20now%3A%20" style={{ padding: '10px 14px', borderRadius: 10, background: '#FEF3C7', color: '#92400E', fontWeight: 800, textDecoration: 'none' }}>Report Safety Issue</a>
@@ -96,11 +99,11 @@ export default function TermsPage() {
     <section id="complaints" style={sectionStyle}>
       <h2>9. Complaints and governing law</h2>
       <p>Send service complaints to <a href="mailto:buddyride@outlook.com">buddyride@outlook.com</a>, including your trip ID and a description of the issue. We aim to acknowledge complaints within five business days and provide a substantive response as soon as reasonably practicable. These terms are governed by the laws of the Republic of South Africa, subject to mandatory consumer protections and the jurisdiction of competent South African courts.</p>
-      <div style={{ marginTop: 12 }}>
+      <div className="no-print" style={{ marginTop: 12 }}>
         <a href="mailto:buddyride@outlook.com?subject=Complaint%20-%20Trip%20ID%3A%20&body=Hi%20BuddyRide%2C%0A%0AMy%20Trip%20ID%3A%20%0AWhat%20happened%3A%20%0AWhat%20would%20you%20like%20us%20to%20do%3A%20" style={{ display: 'inline-block', padding: '10px 14px', borderRadius: 10, background: '#0066FF', color: '#fff', fontWeight: 800, textDecoration: 'none' }}>Lodge a Complaint</a>
       </div>
     </section>
 
-    <p><a href="/privacy">Read the Privacy Policy</a> · <a href="/">Return to BuddyRide</a></p>
+    <p className="no-print"><a href="/privacy">Read the Privacy Policy</a> · <a href="/">Return to BuddyRide</a></p>
   </main>
 }

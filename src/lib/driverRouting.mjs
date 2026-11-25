@@ -12,6 +12,9 @@ export function getDriverEntryPath(role, verificationStatus, currentPath) {
   const path = String(currentPath || '/').replace(/\/+$/, '') || '/'
   if (path.startsWith('/driver/navigation/') || path === '/driver/navigation') return null
 
+  // FIX: Never kick driver out of bundle purchase - they paid to get in
+  if (path === '/driver/bundle' || path === '/driver/bundles' || path === '/driver/buy-bundle') return null
+
   const status = String(verificationStatus || 'not_started').toLowerCase().trim()
 
   // FIXED: identity_complete = INSIDE APP - /driver Home - finish rest inside
@@ -23,7 +26,7 @@ export function getDriverEntryPath(role, verificationStatus, currentPath) {
   }
 
   // Approved / verified -> /driver Home
-  if (status === 'approved' || status === 'verified') {
+  if (status === 'approved' || status === 'verified' || status === 'active') {
     if (path === '/' || path === '/driver/onboarding' || path === '/driver/pending' || path === '/driver-pending' || path === '/driver/dashboard') {
       return '/driver'
     }

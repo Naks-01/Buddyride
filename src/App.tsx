@@ -88,17 +88,15 @@ export default function App() {
   const [otpSent, setOtpSent] = useState(false)
   const loadingProfileRef = useRef(false)
   const lastLoadedUserRef = useRef<string | null>(null)
-  // FIX: WHOLE APP THEME - App now owns theme, syncs with Driver/Passenger
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    try { return (localStorage.getItem('buddy_theme') as any) || 'light' } catch { return 'light' }
-  })
-  const isDark = theme === 'dark'
-  const appBg = isDark ? '#0e0e10' : '#f5f5f7'
-  const appCard = isDark ? '#121214' : '#ffffff'
-  const appText = isDark ? 'white' : '#111827'
-  const appMuted = isDark ? '#9ca3af' : '#6b7280'
-  const appBorder = isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb'
-  const appInputBg = isDark ? '#1c1c1e' : '#ffffff'
+  // FIX PRODUCTION: BLUE LITE ONLY - no dark mode, matches main.tsx + DriverHome + PassengerHome
+  const theme = 'light' as const
+  const isDark = false
+  const appBg = '#f5f5f7'
+  const appCard = '#ffffff'
+  const appText = '#111827'
+  const appMuted = '#6b7280'
+  const appBorder = '#e5e7eb'
+  const appInputBg = '#ffffff'
 
   const navigateDriverPath = useCallback((path: string, replace = false) => {
     if (replace) window.history.replaceState(null, '', path)
@@ -165,38 +163,23 @@ export default function App() {
     } finally { setLoading(false); loadingProfileRef.current = false }
   }, [navigateDriverPath])
 
-  // FIX: Sync theme from localStorage + Driver/Passenger toggles + StatusBar
-  useEffect(() => {
-    const sync = () => {
-      try {
-        const t = localStorage.getItem('buddy_theme')
-        if (t === 'dark' || t === 'light') setTheme(t)
-      } catch {}
-    }
-    const onStorage = (e: StorageEvent) => { if (e.key === 'buddy_theme') sync() }
-    const onCustom = (e: any) => { if (e.detail === 'dark' || e.detail === 'light') setTheme(e.detail) }
-    window.addEventListener('storage', onStorage)
-    window.addEventListener('buddyride-theme-changed', onCustom)
-    window.addEventListener('focus', sync)
-    return () => {
-      window.removeEventListener('storage', onStorage)
-      window.removeEventListener('buddyride-theme-changed', onCustom)
-      window.removeEventListener('focus', sync)
-    }
-  }, [])
+  // FIX: Force Lite theme + StatusBar Light for production
   useEffect(() => {
     try {
-      document.documentElement.setAttribute('data-theme', theme)
+      document.documentElement.setAttribute('data-theme', 'light')
+      document.documentElement.classList.remove('ride-app--dark')
+      document.documentElement.classList.add('ride-app--light')
+      document.documentElement.style.colorScheme = 'light'
       document.body.style.background = appBg
       document.body.style.color = appText
+      localStorage.setItem('buddyride-theme', 'light')
     } catch {}
     if (Capacitor.isNativePlatform()) {
-      // FIX: StatusBar now follows theme, not hardcoded #0066FF + Dark
       StatusBar.setOverlaysWebView({ overlay: false }).catch(()=>{});
-      StatusBar.setBackgroundColor({ color: isDark ? '#0e0e10' : '#f5f5f7' }).catch(()=>{});
-      StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(()=>{});
+      StatusBar.setBackgroundColor({ color: '#f5f5f7' }).catch(()=>{});
+      StatusBar.setStyle({ style: Style.Light }).catch(()=>{});
     }
-  }, [theme, appBg, appText, isDark])
+  }, [appBg, appText])
   useEffect(() => { const t = window.setTimeout(() => setSplashVisible(false), 1900); return () => window.clearTimeout(t) }, [])
   useEffect(() => {
     const handlePopState = () => { setDriverPath(window.location.pathname); setCurrentPath(window.location.pathname) }
@@ -306,7 +289,6 @@ export default function App() {
     } else if (shouldVerifyAdminAccess && checkedAdminUserId !== profile.id && profile.email?.trim().toLowerCase() !== ADMIN_EMAIL) {
       return <main className="splash splash-intro" style={{ background: appBg, color: appText }}><div className="splash-orbit"><Brand /></div><h1 className="splash-title" style={{ color: appText }}>BuddyRide</h1><p style={{ color: appMuted }}>Verifying admin access…</p><div className="loading-dots"><i /><i /><i /></div></main>
     }
-    
     const navigationRideId = currentPath.match(/^\/driver\/navigation\/([^/]+)\/?$/)?.[1]
     if (navigationRideId) {
       if (profile.role !== 'driver') return <main className="auth-page" style={{ background: appBg }}><section className="auth-card" style={{ background: appCard, color: appText }}><h1 style={{ color: appText }}>Driver access required</h1><p style={{ color: appMuted }}>This navigation screen is only available to the assigned driver.</p><button className="primary" style={{ background: BLUE }} onClick={() => window.location.assign('/')}>Back to home</button></section></main>
@@ -384,7 +366,6 @@ export default function App() {
     }}
   />
 
-  // FIX: Auth page now theme-aware - was hardcoded white/black
   return <main className="auth-page" style={{ background: appBg, color: appText }}>
     <section className="auth-card" style={{ position: 'relative', background: appCard, color: appText, border: `1px solid ${appBorder}` }}>
       <button onClick={() => setShowLanding(true)} style={{ marginBottom: '10px', background: 'none', border: 'none', fontSize: '14px', color: BLUE, fontWeight: 700, cursor: 'pointer' }}>← Back to Home</button>
@@ -410,9 +391,8 @@ export default function App() {
         <button className="primary full-width" style={{ background: BLUE }} disabled={busy} type="submit">{busy ? 'Wait…' : mode === 'login' ? 'Log in' : otpStep === 'details' ? 'Send SMS Code 📱' : 'Verify & Create account ✅'}</button>
       </form>
       <button className="text-button full-width" type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setMessage(''); setOtpStep('details'); setOtpSent(false); setOtpCode('') }} style={{ color: BLUE }}>{mode === 'login' ? 'No account? Sign up' : 'Already registered? Log in'}</button>
-      {message && <div className="notice" style={{ borderColor: BLUE_LIGHT, background: isDark ? '#1e3a5f' : BLUE_LIGHT, color: isDark ? '#93c5fd' : BLUE_DARK }}>{message}</div>}
-      {/* Theme toggle on auth screen too - so user can test whole app */}
-      <button type="button" onClick={() => { const next = isDark ? 'light' : 'dark'; try { localStorage.setItem('buddy_theme', next) } catch {}; setTheme(next); window.dispatchEvent(new CustomEvent('buddyride-theme-changed', { detail: next })) }} style={{ marginTop: 12, width: '100%', padding: 10, borderRadius: 10, border: `1px solid ${appBorder}`, background: appInputBg, color: appText, fontWeight: 700 }}>{isDark ? '☀️ Switch to Light' : '🌙 Switch to Dark'}</button>
+      {message && <div className="notice" style={{ borderColor: BLUE_LIGHT, background: BLUE_LIGHT, color: BLUE_DARK }}>{message}</div>}
+      <p style={{ marginTop: 12, fontSize: 11, color: appMuted, textAlign: 'center' }}>By continuing you agree to our <a href="/terms" style={{ color: BLUE, fontWeight: 700 }}>Terms</a> &amp; <a href="/privacy" style={{ color: BLUE, fontWeight: 700 }}>Privacy Policy (POPIA)</a>. Trip data kept 6 months.</p>
     </section>
   </main>
 }

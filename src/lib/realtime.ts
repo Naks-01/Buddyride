@@ -1,24 +1,17 @@
 import { supabase } from './supabase'
 
-// FIX: Never reuse a subscribed channel. Supabase throws:
-// "tried to join multiple times, join can only be called a single time per channel instance"
-// So we always remove the old one first, then create a fresh one.
 const channels = new Map<string, ReturnType<typeof supabase.channel>>()
 
 export function createRealtimeChannel(name: string) {
-  // 1. Remove old cached one if exists
   const old = channels.get(name)
   if (old) {
-    try { supabase.removeChannel(old) } catch {}
+    try { void supabase.removeChannel(old) } catch {}
     channels.delete(name)
   }
-  // 2. Also remove any Supabase-internal channel with same topic
   try {
     const existing = (supabase as any).getChannels?.()?.find((c: any) => c.topic === `realtime:${name}` || c.topic === name)
-    if (existing) supabase.removeChannel(existing)
+    if (existing) void supabase.removeChannel(existing)
   } catch {}
-
-  // 3. Create fresh channel every time
   const channel = supabase.channel(name)
   channels.set(name, channel)
   return channel
@@ -27,23 +20,29 @@ export function createRealtimeChannel(name: string) {
 export function removeRealtimeChannel(name: string) {
   const channel = channels.get(name)
   if (channel) {
-    try { supabase.removeChannel(channel) } catch {}
+    try { void supabase.removeChannel(channel) } catch {}
     channels.delete(name)
   }
+  // FIX: Also remove Supabase-internal channel with same topic - was leaking on fast unmount/remount
+  try {
+    const existing = (supabase as any).getChannels?.()?.find((c: any) => c.topic === `realtime:${name}` || c.topic === name)
+    if (existing) void supabase.removeChannel(existing)
+  } catch {}
 }
 
 export function removeAllRealtimeChannels() {
   for (const [name, channel] of [...channels]) {
-    try { supabase.removeChannel(channel) } catch {}
+    try { void supabase.removeChannel(channel) } catch {}
     channels.delete(name)
   }
 }
 
-// Helper: Subscribe to one ride's status changes
 export function subscribeToRide(
   rideId: string,
   onUpdate: (payload: any) => void,
 ) {
+  // FIX: Empty rideId guard - was subscribing to "id=eq." and getting every ride update
+  if (!rideId) return () => {}
   const name = `ride-${rideId}`
   removeRealtimeChannel(name)
   const channel = createRealtimeChannel(name)
@@ -53,22 +52,44 @@ export function subscribeToRide(
     onUpdate,
   )
   channel.subscribe()
-  return () => removeRealtimeChannel(name)
+  let cleaned = false
+  return () => { if (!cleaned) { cleaned = true; removeRealtimeChannel(name) } }
 }
 
-// Helper: Subscribe to driver location for a ride
 export function subscribeToDriverLocation(
   driverId: string,
   onUpdate: (payload: any) => void,
 ) {
+  if (!driverId) return () => {}
   const name = `driver-location-${driverId}`
   removeRealtimeChannel(name)
   const channel = createRealtimeChannel(name)
   channel.on(
     'postgres_changes',
-    { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${driverId}` },
+    // FIX: Was listening to `profiles` - driver location lives in `driver_locations`, so map never moved
+    { event: '*', schema: 'public', table: 'driver_locations', filter: `driver_id=eq.${driverId}` },
     onUpdate,
   )
   channel.subscribe()
-  return () => removeRealtimeChannel(name)
+  let cleaned = false
+  return () => { if (!cleaned) { cleaned = true; removeRealtimeChannel(name) } }
+}
+
+// FIX: New helper - was no way to listen for new ride requests, driver had to poll
+export function subscribeToDriverRequests(
+  driverId: string,
+  onInsert: (payload: any) => void,
+) {
+  if (!driverId) return () => {}
+  const name = `driver-requests-${driverId}`
+  removeRealtimeChannel(name)
+  const channel = createRealtimeChannel(name)
+  channel.on(
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'rides', filter: `driver_id=eq.${driverId}` },
+    onInsert,
+  )
+  channel.subscribe()
+  let cleaned = false
+  return () => { if (!cleaned) { cleaned = true; removeRealtimeChannel(name) } }
 }

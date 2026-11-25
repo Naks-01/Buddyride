@@ -1,9 +1,9 @@
-"use client"
 import { useEffect, useState } from 'react'
 import { supabase, type Profile } from '../lib/supabase'
 
-const BRAND = '#ff6b00'
-const BRAND_DARK = '#e65f00'
+// FIX: Blue Lite only - was orange #ff6b00, fought whole app Blue #0066FF
+const BRAND = '#0066FF'
+const BRAND_DARK = '#0052CC'
 const SUPPORT_WA = '27641018991'
 
 const CATEGORIES = [
@@ -94,7 +94,6 @@ export function DriverBundlePurchase({ profile, onBack }: { profile: Profile; on
     let active = true
     setMsg('Confirming your Paystack payment securely…')
     setIsError(false)
-    // Clean URL FIRST - prevents double verify on refresh
     const clean = new URL(window.location.href)
     clean.searchParams.delete('bundle_payment'); clean.searchParams.delete('reference')
     window.history.replaceState({}, '', clean.toString())
@@ -137,15 +136,15 @@ export function DriverBundlePurchase({ profile, onBack }: { profile: Profile; on
   const selectedCatInfo = CATEGORIES.find(c => c.id === normalizeCategory(selectedCategory)) || CATEGORIES[1]
 
   return (
-    <main style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--text)', padding: '20px 16px 32px', fontFamily: 'Inter, sans-serif' }}>
+    <main style={{ minHeight: '100dvh', background: '#f5f5f7', color: '#111827', padding: '20px 16px 32px', fontFamily: 'Inter, sans-serif' }}>
       <section style={{ maxWidth: 480, margin: '0 auto' }}>
-        <button onClick={onBack} style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 14px', borderRadius: 10, marginBottom: 12, fontWeight: 700, cursor: 'pointer' }}>← Back to Driver Home</button>
+        <button onClick={onBack} style={{ background: '#fff', border: '1px solid #E4E7EC', color: '#111827', padding: '8px 14px', borderRadius: 10, marginBottom: 12, fontWeight: 700, cursor: 'pointer' }}>← Back to Driver Home</button>
 
         <div style={{ background: BRAND, color: 'white', borderRadius: 16, padding: 20, marginBottom: 16 }}>
           <p style={{ margin: 0, fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', opacity: 0.9 }}>Bundle Model - You keep 100%</p>
           <h1 style={{ margin: '6px 0 0', fontSize: 26, fontWeight: 800 }}>Buy trips to Go Online</h1>
           <p style={{ margin: '8px 0 0', fontSize: 14, opacity: 0.9, lineHeight: 1.5 }}>
-            Riders pay you directly in cash. Platform revenue comes from bundle purchases, not your trip fares.
+            Riders pay you directly in Cash or Card. Platform revenue comes from bundle purchases, not your trip fares.
           </p>
           <div style={{ marginTop: 14, background: 'rgba(255,255,255,.15)', borderRadius: 12, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 700 }}>Trips left:</span>
@@ -156,60 +155,62 @@ export function DriverBundlePurchase({ profile, onBack }: { profile: Profile; on
               ⚠️ 0 trips = You cannot Go Online. Buy a bundle below.
             </p>
           )}
-          <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-            <span style={{ background: 'rgba(255,255,255,.2)', padding: '6px 10px', borderRadius: 99, fontSize: 12, fontWeight: 800 }}>💵 CASH FRIENDLY</span>
+          <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ background: 'rgba(255,255,255,.2)', padding: '6px 10px', borderRadius: 99, fontSize: 12, fontWeight: 800 }}>💵 CASH + CARD</span>
             <span style={{ background: 'rgba(255,255,255,.2)', padding: '6px 10px', borderRadius: 99, fontSize: 12, fontWeight: 800 }}>🇿🇦 LIMPOPO OWN</span>
+            <span style={{ background: 'rgba(255,255,255,.2)', padding: '6px 10px', borderRadius: 99, fontSize: 12, fontWeight: 800 }}>⏳ EXPIRES 31 DAYS</span>
           </div>
         </div>
 
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 14, marginBottom: 16 }}>
+        <div style={{ background: '#fff', border: '1px solid #E4E7EC', borderRadius: 16, padding: 14, marginBottom: 16 }}>
           <strong style={{ fontSize: 14 }}>1. Choose your category</strong>
-          <p style={{ margin: '4px 0 10px', fontSize: 12, color: 'var(--muted)' }}>Must match your car + what passenger books.</p>
+          <p style={{ margin: '4px 0 10px', fontSize: 12, color: '#667085' }}>Must match your car + what passenger books.</p>
           <div style={{ display: 'grid', gap: 8 }}>
             {CATEGORIES.map(c => {
               const isSel = normalizeCategory(selectedCategory) === c.id
               return (
-                <button key={c.id} onClick={() => setSelectedCategory(c.id)} style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left', padding: 12, borderRadius: 12, border: isSel ? `2px solid ${BRAND}` : '1px solid var(--border)', background: isSel ? 'rgba(255,107,0,.12)' : 'var(--surface-2)', cursor: 'pointer', color: 'var(--text)' }}>
+                <button key={c.id} onClick={() => setSelectedCategory(c.id)} style={{ display: 'flex', gap: 10, alignItems: 'center', textAlign: 'left', padding: 12, borderRadius: 12, border: isSel ? `2px solid ${BRAND}` : '1px solid #E4E7EC', background: isSel ? '#E6F0FF' : '#F2F4F7', cursor: 'pointer', color: '#111827' }}>
                   <span style={{ fontSize: 22 }}>{c.icon}</span>
                   <span style={{ flex: 1 }}>
-                    <strong style={{ display: 'block', fontSize: 14, color: 'var(--text)' }}>{c.name} • {c.seats}</strong>
-                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>{c.desc}</span>
+                    <strong style={{ display: 'block', fontSize: 14, color: '#111827' }}>{c.name} • {c.seats}</strong>
+                    <span style={{ fontSize: 12, color: '#667085' }}>{c.desc}</span>
                   </span>
                   {isSel && <span style={{ fontSize: 18, color: BRAND }}>✓</span>}
                 </button>
               )
             })}
           </div>
-          <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--muted)' }}>Buying for: <strong style={{ color: 'var(--text)' }}>{selectedCatInfo.icon} {selectedCatInfo.name} • {selectedCatInfo.seats}</strong></p>
+          <p style={{ margin: '10px 0 0', fontSize: 12, color: '#667085' }}>Buying for: <strong style={{ color: '#111827' }}>{selectedCatInfo.icon} {selectedCatInfo.name} • {selectedCatInfo.seats}</strong></p>
         </div>
 
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 14, marginBottom: 16 }}>
+        <div style={{ background: '#fff', border: '1px solid #E4E7EC', borderRadius: 16, padding: 14, marginBottom: 16 }}>
           <strong style={{ fontSize: 14 }}>How credits work:</strong>
-          <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
-            <li><strong style={{ color: 'var(--text)' }}>1 credit = Normal ride</strong> - Trips under 100km</li>
-            <li><strong style={{ color: 'var(--text)' }}>2 credits = Long distance</strong> - Trips of 100km or longer</li>
+          <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13, color: '#667085', lineHeight: 1.6 }}>
+            <li><strong style={{ color: '#111827' }}>1 credit = Normal ride</strong> - Trips under 100km</li>
+            <li><strong style={{ color: '#111827' }}>2 credits = Long distance</strong> - Trips of 100km or longer</li>
             <li>Rider pays YOU directly. No hidden fees.</li>
+            <li><strong style={{ color: '#111827' }}>All bundles expire 31 days after purchase</strong> - use them before they expire. No refunds after expiry.</li>
           </ul>
         </div>
 
         {msg && (
-          <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: isError ? '#FEF3F2' : 'rgba(255,107,0,.12)', color: isError ? '#B42318' : BRAND_DARK, fontSize: 13, border: `1px solid ${isError ? '#FECDCA' : 'rgba(255,107,0,.3)'}` }}>
+          <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: isError ? '#FEF3F2' : '#E6F0FF', color: isError ? '#B42318' : BRAND_DARK, fontSize: 13, border: `1px solid ${isError ? '#FECDCA' : '#B2CCFF'}` }}>
             {msg}
           </div>
         )}
 
         <strong style={{ fontSize: 14, display: 'block', marginBottom: 10 }}>2. Choose bundle for {selectedCatInfo.name}</strong>
-        {loadingBundles ? <p style={{ fontSize: 13, color: 'var(--muted)' }}>Loading bundles for {selectedCatInfo.name}...</p> : bundles.length === 0 ? <p style={{fontSize:13,color:'#B42318'}}>No active bundles are configured for this vehicle category. Please contact BuddyRide support.</p> : (
+        {loadingBundles ? <p style={{ fontSize: 13, color: '#667085' }}>Loading bundles for {selectedCatInfo.name}...</p> : bundles.length === 0 ? <p style={{fontSize:13,color:'#B42318'}}>No active bundles are configured for this vehicle category. Please contact BuddyRide support.</p> : (
         <div style={{ display: 'grid', gap: 12 }}>
           {bundles.map(bundle => {
             const isBuying = buying === bundle.id
             return (
-              <div key={bundle.id} style={{ padding: 16, borderRadius: 16, background: 'var(--surface)', border: bundle.popular ? `2px solid ${BRAND}` : '1px solid var(--border)', boxShadow: bundle.popular ? `0 0 0 4px rgba(255,107,0,.12)` : '0 5px 18px rgba(0,0,0,.08)', position: 'relative' }}>
+              <div key={bundle.id} style={{ padding: 16, borderRadius: 16, background: '#fff', border: bundle.popular ? `2px solid ${BRAND}` : '1px solid #E4E7EC', boxShadow: bundle.popular ? `0 0 0 4px rgba(0,102,255,.12)` : '0 5px 18px rgba(0,0,0,.08)', position: 'relative' }}>
                 {bundle.popular && <span style={{ position: 'absolute', top: -10, left: 16, background: BRAND, color: 'white', fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 99 }}>MOST POPULAR</span>}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <strong style={{ fontSize: 16 }}>{bundle.name} - {bundle.trips} trips</strong>
-                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{bundle.saving} • {selectedCatInfo.name}</div>
+                    <div style={{ fontSize: 12, color: '#667085', marginTop: 2 }}>{bundle.saving} • {selectedCatInfo.name} • Expires 31 days</div>
                   </div>
                   <strong style={{ fontSize: 20 }}>R{bundle.price}</strong>
                 </div>
@@ -226,10 +227,10 @@ export function DriverBundlePurchase({ profile, onBack }: { profile: Profile; on
         </div>
         )}
 
-        <div style={{ marginTop: 20, padding: 14, borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+        <div style={{ marginTop: 20, padding: 14, borderRadius: 12, background: '#fff', border: '1px solid #E4E7EC' }}>
           <strong style={{ fontSize: 13 }}>Need help?</strong>
-          <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--muted)' }}>
-            After payment trips are added instantly. WhatsApp Support: <a href={`https://wa.me/${SUPPORT_WA}`} target="_blank" rel="noreferrer" style={{ color: BRAND_DARK, fontWeight: 700 }}>064 101 8991</a>
+          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#667085' }}>
+            After payment trips are added instantly. Secure Paystack checkout - Card / EFT. WhatsApp Support: <a href={`https://wa.me/${SUPPORT_WA}`} target="_blank" rel="noreferrer" style={{ color: BRAND_DARK, fontWeight: 700 }}>064 101 8991</a>
           </p>
         </div>
       </section>

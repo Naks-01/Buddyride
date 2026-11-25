@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from './supabase'
 
 type DriverLocationRow = {
@@ -13,11 +13,13 @@ type DriverLiveLocation = {
   coordinates: [number, number]
   bearing: number
   updatedAt: string
+  isStale: boolean
 }
 
 export function useDriverLiveLocation(driverId: string | null) {
   const [location, setLocation] = useState<DriverLiveLocation | null>(null)
   const [error, setError] = useState('')
+  const lastUpdatedRef = useRef(0)
 
   useEffect(() => {
     if (!driverId) { setLocation(null); setError(''); return }
@@ -27,14 +29,20 @@ export function useDriverLiveLocation(driverId: string | null) {
     const applyLocation = (row: DriverLocationRow | null) => {
       if (!active) return
       if (!row || !Number.isFinite(row.lng) || !Number.isFinite(row.lat)) { setLocation(null); return }
-      setLocation({ 
-        coordinates: [row.lng, row.lat], 
-        bearing: row.heading ?? 0, // BOLT: need heading to rotate car
-        updatedAt: row.updated_at 
+      const ts = new Date(row.updated_at).getTime()
+      if (Number.isFinite(ts) && ts < lastUpdatedRef.current) return
+      if (Number.isFinite(ts)) lastUpdatedRef.current = ts
+      if (row.lat === 0 && row.lng === 0) return
+      if (row.lat < -90 || row.lat > 90 || row.lng < -180 || row.lng > 180) return
+      setLocation({
+        coordinates: [row.lng, row.lat],
+        bearing: Number.isFinite(row.heading) ? (row.heading ?? 0) : 0,
+        updatedAt: row.updated_at,
+        isStale: Date.now() - ts > 30000,
       })
     }
 
-    const channel = supabase.channel(`passenger-driver-location-${driverId}-${Date.now()}`)
+    const channel = supabase.channel(`passenger-driver-location-${driverId}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'driver_locations',
         filter: `driver_id=eq.${driverId}`,
@@ -60,9 +68,8 @@ export function useDriverLiveLocation(driverId: string | null) {
         applyLocation(data as DriverLocationRow | null)
       })
 
-    // BOLT: 3s not 8s - 8s = jump, 3s + smooth animation = glide
     const poll = setInterval(async () => {
-      if (!active) return
+      if (!active || receivedRealtimeUpdate) return
       const { data } = await supabase.from('driver_locations')
         .select('driver_id,lat,lng,heading,updated_at')
         .eq('driver_id', driverId).maybeSingle()
@@ -74,3 +81,4 @@ export function useDriverLiveLocation(driverId: string | null) {
 
   return { location, error }
 }
+export default useDriverLiveLocation

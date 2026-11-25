@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-// BUNDLE MODEL: Driver keeps 100% of fare. Your profit = Bundle sales, NOT fee per ride.
-// Credits: 1 credit = trip under 100km, 2 credits = 100km or longer
-
-// ===== YOUR 3 CATEGORIES =====
 const CATEGORIES = [
   { id: 'buddy_lite', name: 'Buddy Lite', icon: '🛺', seats: '2 seats' },
   { id: 'buddy_plus', name: 'Buddy Plus', icon: '🚗', seats: '3 seats' },
@@ -28,6 +24,7 @@ type RideRow = {
   dropoff_address: string
   driver_id: string | null
   passenger_id: string
+  rider_id?: string | null
   fare: number
   status: string
   created_at: string
@@ -39,37 +36,21 @@ type RideRow = {
   ride_category?: string | null
   ride_type?: string | null
 }
-
 type UserInfo = { full_name: string | null, email: string | null }
 
 const STATUS_COLORS: Record<string, string> = {
-  searching: '#eab308',
-  awaiting_payment: '#f59e0b',
-  driver_assigned: '#0ea5e9',
-  accepted: '#0ea5e9',
-  driver_arriving: '#a855f7',
-  driver_arrived: '#a855f7',
-  arrived: '#a855f7',
-  picked_up: '#f59e0b',
-  en_route: '#f59e0b',
-  in_progress: '#f59e0b',
-  on_trip: '#f59e0b',
-  driving_to_destination: '#f59e0b',
-  completed: '#22c55e',
-  rated: '#22c55e',
-  cancelled: '#ef4444',
-  rejected: '#ef4444',
-  requested: '#eab308',
+  searching: '#eab308', awaiting_payment: '#f59e0b', driver_assigned: '#0ea5e9', accepted: '#0ea5e9',
+  driver_arriving: '#a855f7', driver_arrived: '#a855f7', arrived: '#a855f7', picked_up: '#f59e0b',
+  en_route: '#f59e0b', in_progress: '#f59e0b', on_trip: '#f59e0b', driving_to_destination: '#f59e0b',
+  completed: '#22c55e', rated: '#22c55e', cancelled: '#ef4444', rejected: '#ef4444', requested: '#eab308',
 }
-
 const ACTIVE_STATUSES = ['searching', 'awaiting_payment', 'driver_assigned', 'accepted', 'driver_arriving', 'driver_arrived', 'arrived', 'picked_up', 'en_route', 'in_progress', 'on_trip', 'driving_to_destination', 'requested']
 const COMPLETED_STATUSES = ['completed', 'rated']
 
+// FIX: Single rule - 2 credits if >=100km, else 1. Was 150-300 = 2, >300 = 2, but UI said 100km - admin + driver disagreed
 function creditsForRide(distanceKm: number | null | undefined) {
-  if (!distanceKm) return 1
-  if (distanceKm >= 150 && distanceKm <= 300) return 2
-  if (distanceKm > 300) return 2
-  return 1
+  if (!distanceKm || distanceKm < 100) return 1
+  return 2
 }
 
 export function AdminRides({ onBack }: { onBack: () => void }) {
@@ -80,7 +61,6 @@ export function AdminRides({ onBack }: { onBack: () => void }) {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
-  const commission = 0
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loadingRef = useRef(false)
 
@@ -89,21 +69,18 @@ export function AdminRides({ onBack }: { onBack: () => void }) {
     loadingRef.current = true
     if (!isBackground) setLoading(true)
     try {
-      const { data, error: ridesError } = await supabase.from('rides').select('id,pickup_address,dropoff_address,driver_id,passenger_id,fare,status,created_at,payment_method,cancel_reason,cancelled_by,distance_km,duration_min,ride_category,ride_type').order('created_at', { ascending:false }).limit(500)
+      // FIX: Select rider_id too - rides table uses rider_id, not passenger_id. Was passenger_id always null, passenger column showed ID
+      const { data, error: ridesError } = await supabase.from('rides').select('id,pickup_address,dropoff_address,driver_id,passenger_id,rider_id,fare,status,created_at,payment_method,cancel_reason,cancelled_by,distance_km,duration_min,ride_category,ride_type').order('created_at', { ascending: false }).limit(500)
       if (ridesError) { setError(ridesError.message); return }
-      const rows = (data || []) as RideRow[]
-      setRides(rows)
-      setError('')
+      const rows = (data || []).map((r: any) => ({ ...r, passenger_id: r.passenger_id || r.rider_id || '' })) as RideRow[]
+      setRides(rows); setError('')
       const ids = [...new Set(rows.flatMap(ride => [ride.driver_id, ride.passenger_id].filter((id): id is string => Boolean(id))))]
       if (ids.length) {
         const { data: profiles, error: profilesError } = await supabase.from('profiles').select('id,full_name,email').in('id', ids)
         if (profilesError) { setError(profilesError.message); return }
-        setUsers(Object.fromEntries((profiles || []).map(user => [user.id, { full_name:user.full_name, email:user.email }])))
+        setUsers(Object.fromEntries((profiles || []).map(user => [user.id, { full_name: user.full_name, email: user.email }])))
       }
-    } finally {
-      loadingRef.current = false
-      setLoading(false)
-    }
+    } finally { loadingRef.current = false; setLoading(false) }
   }
 
   function scheduleLoad() {
@@ -116,8 +93,8 @@ export function AdminRides({ onBack }: { onBack: () => void }) {
     const ch = supabase.channel('admin-rides-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, () => scheduleLoad())
       .subscribe()
-    const timer = setInterval(() => void load(true), 20000)
-    return () => { supabase.removeChannel(ch); clearInterval(timer); if (loadTimer.current) clearTimeout(loadTimer.current) }
+    // FIX: Removed 20s poll - was realtime + poll + manual = triple load, hit Supabase limits
+    return () => { void supabase.removeChannel(ch); if (loadTimer.current) clearTimeout(loadTimer.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -135,24 +112,22 @@ export function AdminRides({ onBack }: { onBack: () => void }) {
     total: rides.length,
     completed: rides.filter(r => COMPLETED_STATUSES.includes(r.status.toLowerCase())).length,
     active: rides.filter(r => ACTIVE_STATUSES.includes(r.status.toLowerCase())).length,
-    cancelled: rides.filter(r => ['cancelled','rejected'].includes(r.status.toLowerCase())).length,
+    cancelled: rides.filter(r => ['cancelled', 'rejected'].includes(r.status.toLowerCase())).length,
   }
   const completedRides = rides.filter(r => COMPLETED_STATUSES.includes(r.status.toLowerCase()))
   const revenue = completedRides.reduce((s, r) => s + Number(r.fare ?? 0), 0)
   const yourFee = 0
   const driversPaid = revenue
   const cashRevenue = completedRides.filter(r => (r.payment_method || 'cash') === 'cash').reduce((s, r) => s + Number(r.fare ?? 0), 0)
-  const driverKeeps = 100
   const totalCreditsUsed = completedRides.reduce((s, r) => s + creditsForRide(r.distance_km), 0)
   const ridesByCat = CATEGORIES.map(c => ({ ...c, count: rides.filter(r => normalizeCategory(r.ride_category || (r as any).ride_type) === c.id).length }))
-
   const statuses = ['all', ...new Set(rides.map(r => r.status.toLowerCase()))]
 
-  return <main style={{minHeight:'100vh', background:'#0f172a', color:'white', padding:'16px'}}>
-    <button onClick={onBack} style={{background:'#1e293b', color:'white', border:'1px solid #334155', padding:'8px 14px', borderRadius:8, cursor:'pointer'}}>← Admin home</button>
+  return <main style={{ minHeight: '100vh', background: '#0f172a', color: 'white', padding: '16px' }}>
+    <button onClick={onBack} style={{ background: '#1e293b', color: 'white', border: '1px solid #334155', padding: '8px 14px', borderRadius: 8, cursor: 'pointer' }}>← Admin home</button>
     <h1>Rides - Bundle Model ({filtered.length} / {rides.length})</h1>
-    <p style={{ color: '#86efac', fontSize: 13 }}>Driver keeps 100% • Your profit = Bundle sales • Credits used: {totalCreditsUsed} (1/ride, 2 for 100km or longer) • {ridesByCat.map(c=>`${c.icon} ${c.name}: ${c.count}`).join(' • ')}</p>
-    {error && <p role="alert" style={{color:'#fca5a5'}}>{error}</p>}
+    <p style={{ color: '#86efac', fontSize: 13 }}>Driver keeps 100% • Your profit = Bundle sales • Credits used: {totalCreditsUsed} (1/ride, 2 for 100km or longer) • {ridesByCat.map(c => `${c.icon} ${c.name}: ${c.count}`).join(' • ')}</p>
+    {error && <p role="alert" style={{ color: '#fca5a5' }}>{error}</p>}
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 8, margin: '12px 0' }}>
       <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Total</div><strong style={{ fontSize: 20 }}>{counts.total}</strong></div>
       <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Active Now</div><strong style={{ fontSize: 20, color: '#f59e0b' }}>{counts.active}</strong></div>
@@ -160,7 +135,7 @@ export function AdminRides({ onBack }: { onBack: () => void }) {
       <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Cancelled</div><strong style={{ fontSize: 20, color: '#ef4444' }}>{counts.cancelled}</strong></div>
       <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Total Fares (Driver Kept)</div><strong style={{ fontSize: 20 }}>R{revenue.toFixed(2)}</strong></div>
       <div style={{ background: '#14532d', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#bbf7d0' }}>YOUR FEE FROM RIDES (0%)</div><strong style={{ fontSize: 20 }}>R{yourFee.toFixed(2)}</strong><div style={{ fontSize: 10, color: '#bbf7d0' }}>Profit is in Bundle Sales</div></div>
-      <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Drivers Kept ({driverKeeps}%)</div><strong style={{ fontSize: 20 }}>R{driversPaid.toFixed(2)}</strong></div>
+      <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Drivers Kept (100%)</div><strong style={{ fontSize: 20 }}>R{driversPaid.toFixed(2)}</strong></div>
       <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Cash (Completed)</div><strong style={{ fontSize: 20 }}>R{cashRevenue.toFixed(2)}</strong></div>
       <div style={{ background: '#1e293b', padding: 12, borderRadius: 10 }}><div style={{ fontSize: 11, color: '#94a3b8' }}>Bundle Credits Used</div><strong style={{ fontSize: 20, color: '#f59e0b' }}>{totalCreditsUsed}</strong></div>
     </div>
@@ -178,32 +153,29 @@ export function AdminRides({ onBack }: { onBack: () => void }) {
       <button onClick={() => load()} style={{ padding: '6px 14px', borderRadius: 20, border: 0, background: '#0ea5e9', color: 'white', fontWeight: 700 }}>{loading ? '...' : '↻ Refresh'}</button>
     </div>
     {loading && <p>Loading rides...</p>}
-    <div style={{overflowX:'auto'}}>
-      <table style={{width:'100%', borderCollapse:'collapse', background:'#1e293b'}}>
-        <thead><tr>{['ID','From','To','Category','Driver','Passenger','Fare','Driver Gets (100%)','Your Fee (0%)','Credits','Payment','Status','Cancel Reason','Date'].map(label=><th key={label} style={{padding:'10px', textAlign:'left', whiteSpace:'nowrap'}}>{label}</th>)}</tr></thead>
-        <tbody>{filtered.map(ride=>{
-          const fare = Number(ride.fare ?? 0)
-          const fee = 0
-          const driverGets = fare
-          const credits = creditsForRide(ride.distance_km)
-          const cat = categoryFor(ride.ride_category || (ride as any).ride_type)
-          return <tr key={ride.id} style={{borderTop:'1px solid #475569'}}>
-          <td style={{padding:'10px'}}>{ride.id.slice(0,8)}</td>
-          <td style={{padding:'10px'}}>{ride.pickup_address}<br/><span style={{fontSize:11, color:'#94a3b8'}}>{ride.distance_km ? `${ride.distance_km.toFixed(1)} km • ${ride.duration_min} min • ${credits} credit${credits > 1 ? 's' : ''}` : ''}</span></td>
-          <td style={{padding:'10px'}}>{ride.dropoff_address}</td>
-          <td style={{padding:'10px'}}><span style={{ background: '#0066FF', color: 'white', padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>{cat.icon} {cat.name} • {cat.seats}</span></td>
-          <td style={{padding:'10px'}}>{ride.driver_id ? users[ride.driver_id]?.full_name || users[ride.driver_id]?.email || ride.driver_id : 'Unassigned'}</td>
-          <td style={{padding:'10px'}}>{users[ride.passenger_id]?.full_name || users[ride.passenger_id]?.email || ride.passenger_id}</td>
-          <td style={{padding:'10px', fontWeight:700}}>R{fare.toFixed(2)}</td>
-          <td style={{padding:'10px', color:'#86efac'}}>R{driverGets.toFixed(2)}</td>
-          <td style={{padding:'10px', color:'#94a3b8'}}>R{fee.toFixed(2)}</td>
-          <td style={{padding:'10px', fontWeight: 700, color: credits > 1 ? '#f59e0b' : 'white'}}>{credits} {credits > 1 ? '⭐ Long' : ''}</td>
-          <td style={{padding:'10px'}}>💵 Cash</td>
-          <td style={{padding:'10px'}}><span style={{ padding: '3px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, background: STATUS_COLORS[ride.status.toLowerCase()] || '#475569', color: 'white', textTransform: 'uppercase' }}>{ride.status.replace(/_/g,' ')}</span></td>
-          <td style={{padding:'10px', fontSize:12, color:'#fca5a5'}}>{ride.status.toLowerCase() === 'cancelled' ? `${ride.cancelled_by || ''}: ${ride.cancel_reason || ''}` : ''}</td>
-          <td style={{padding:'10px', whiteSpace:'nowrap'}}>{new Date(ride.created_at).toLocaleString()}</td>
-        </tr>})}
-        {!loading && filtered.length===0 && <tr><td colSpan={14} style={{padding:'12px'}}>No rides found.</td></tr>}</tbody>
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', background: '#1e293b' }}>
+        <thead><tr>{['ID', 'From', 'To', 'Category', 'Driver', 'Passenger', 'Fare', 'Driver Gets (100%)', 'Your Fee (0%)', 'Credits', 'Payment', 'Status', 'Cancel Reason', 'Date'].map(label => <th key={label} style={{ padding: '10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{label}</th>)}</tr></thead>
+        <tbody>{filtered.map(ride => {
+          const fare = Number(ride.fare ?? 0); const fee = 0; const driverGets = fare; const credits = creditsForRide(ride.distance_km); const cat = categoryFor(ride.ride_category || (ride as any).ride_type)
+          return <tr key={ride.id} style={{ borderTop: '1px solid #475569' }}>
+            <td style={{ padding: '10px' }}>{ride.id.slice(0, 8)}</td>
+            <td style={{ padding: '10px' }}>{ride.pickup_address}<br /><span style={{ fontSize: 11, color: '#94a3b8' }}>{ride.distance_km ? `${ride.distance_km.toFixed(1)} km • ${ride.duration_min} min • ${credits} credit${credits > 1 ? 's' : ''}` : ''}</span></td>
+            <td style={{ padding: '10px' }}>{ride.dropoff_address}</td>
+            <td style={{ padding: '10px' }}><span style={{ background: '#0066FF', color: 'white', padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>{cat.icon} {cat.name} • {cat.seats}</span></td>
+            <td style={{ padding: '10px' }}>{ride.driver_id ? users[ride.driver_id]?.full_name || users[ride.driver_id]?.email || ride.driver_id : 'Unassigned'}</td>
+            <td style={{ padding: '10px' }}>{users[ride.passenger_id]?.full_name || users[ride.passenger_id]?.email || ride.passenger_id}</td>
+            <td style={{ padding: '10px', fontWeight: 700 }}>R{fare.toFixed(2)}</td>
+            <td style={{ padding: '10px', color: '#86efac' }}>R{driverGets.toFixed(2)}</td>
+            <td style={{ padding: '10px', color: '#94a3b8' }}>R{fee.toFixed(2)}</td>
+            <td style={{ padding: '10px', fontWeight: 700, color: credits > 1 ? '#f59e0b' : 'white' }}>{credits} {credits > 1 ? '⭐ Long' : ''}</td>
+            <td style={{ padding: '10px' }}>💵 Cash</td>
+            <td style={{ padding: '10px' }}><span style={{ padding: '3px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, background: STATUS_COLORS[ride.status.toLowerCase()] || '#475569', color: 'white', textTransform: 'uppercase' }}>{ride.status.replace(/_/g, ' ')}</span></td>
+            <td style={{ padding: '10px', fontSize: 12, color: '#fca5a5' }}>{ride.status.toLowerCase() === 'cancelled' ? `${ride.cancelled_by || ''}: ${ride.cancel_reason || ''}` : ''}</td>
+            <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>{new Date(ride.created_at).toLocaleString()}</td>
+          </tr>
+        })}
+          {!loading && filtered.length === 0 && <tr><td colSpan={14} style={{ padding: '12px' }}>No rides found.</td></tr>}</tbody>
       </table>
     </div>
   </main>

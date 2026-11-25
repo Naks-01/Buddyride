@@ -38,7 +38,6 @@ function lerpAngle(a: number, b: number, t: number) {
   return a + diff * t
 }
 
-// FIX: Theme-aware tiles - light = CARTO light, dark = CARTO dark
 function getMapStyle(theme: string | undefined) {
   const isDark = theme === 'dark'
   return {
@@ -58,7 +57,30 @@ function getMapStyle(theme: string | undefined) {
   } as any
 }
 
-// FIX: Destructure theme - was missing before, so theme never applied
+function drawRoute(map: maplibregl.Map, route: any, isDark: boolean) {
+  const routeId = 'buddy-route'
+  const outlineId = 'buddy-route-outline'
+  const remove = () => {
+    if (map.getLayer(routeId)) map.removeLayer(routeId)
+    if (map.getLayer(outlineId)) map.removeLayer(outlineId)
+    if (map.getSource(routeId)) map.removeSource(routeId)
+    if (map.getSource(outlineId)) map.removeSource(outlineId)
+  }
+  if (!route) { remove(); return }
+  const coords = parseRoute(route)
+  if (coords.length < 2) { remove(); return }
+  const geo = { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } as any
+  if (map.getSource(routeId)) {
+    ;(map.getSource(routeId) as any).setData(geo)
+    ;(map.getSource(outlineId) as any).setData(geo)
+    return
+  }
+  map.addSource(outlineId, { type: 'geojson', data: geo })
+  map.addSource(routeId, { type: 'geojson', data: geo })
+  map.addLayer({ id: outlineId, type: 'line', source: outlineId, paint: { 'line-color': isDark ? '#0e0e10' : 'white', 'line-width': 10 } })
+  map.addLayer({ id: routeId, type: 'line', source: routeId, paint: { 'line-color': '#0066FF', 'line-width': 6 } })
+}
+
 export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, onMapMove, theme = 'light' }: Props) {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -69,10 +91,12 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   const animRef = useRef<number | null>(null)
   const currentPos = useRef<[number, number] | null>(null)
   const currentBearing = useRef(0)
+  const routeRef = useRef(route)
   const isDark = theme === 'dark'
 
   useEffect(() => { followRef.current = followDriver }, [followDriver])
   useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
+  useEffect(() => { routeRef.current = route }, [route])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -87,34 +111,20 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     map.setPadding({ top: 0, bottom: 220, left: 0, right: 0 })
     map.on('movestart', (e: any) => { if (e.originalEvent) onMapMoveRef.current?.() })
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); map.remove(); mapRef.current = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // FIX: When theme toggles, swap map tiles WITHOUT losing position / route / marker
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     const centerNow = map.getCenter()
     const zoomNow = map.getZoom()
     const bearingNow = map.getBearing()
-    // Save route so we can redraw after style swap
-    const currentRoute = route
     map.setStyle(getMapStyle(theme))
     map.once('style.load', () => {
       map.setPadding({ top: 0, bottom: 220, left: 0, right: 0 })
       map.jumpTo({ center: [centerNow.lng, centerNow.lat], zoom: zoomNow, bearing: bearingNow })
-      // Re-add route after style change (MapLibre clears sources on setStyle)
-      if (currentRoute) {
-        const coords = parseRoute(currentRoute)
-        if (coords.length >= 2) {
-          try {
-            map.addSource('buddy-route-outline', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } as any })
-            map.addSource('buddy-route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } as any })
-            map.addLayer({ id: 'buddy-route-outline', type: 'line', source: 'buddy-route-outline', paint: { 'line-color': isDark ? '#0e0e10' : 'white', 'line-width': 10 } })
-            map.addLayer({ id: 'buddy-route', type: 'line', source: 'buddy-route', paint: { 'line-color': '#0066FF', 'line-width': 6 } })
-          } catch {}
-        }
-      }
-      // Re-add driver marker (also cleared on style change)
+      drawRoute(map, routeRef.current, theme === 'dark')
       if (markerRef.current && currentPos.current) {
         markerRef.current.addTo(map)
       }
@@ -128,7 +138,13 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     const lngLat: [number, number] = [driverLocation[0], driverLocation[1]]
     if (!markerRef.current) {
       const el = document.createElement('div')
-      el.style.width = '48px'; el.style.height = '48px'; el.style.background = '#111'; el.style.borderRadius = '14px'; el.style.border = '3px solid white'; el.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)'; el.style.display = 'grid'; el.style.placeItems = 'center'; el.style.transform = `rotate(${bearing}deg)`; el.innerHTML = `<div style="color:white;font-size:22px">▲</div>`
+      el.style.width = '48px'; el.style.height = '48px'; el.style.background = '#0066FF'; el.style.borderRadius = '14px'; el.style.border = '3px solid white'; el.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)'; el.style.display = 'grid'; el.style.placeItems = 'center'; el.style.transform = `rotate(${bearing}deg)`
+      // FIX: No innerHTML - XSS safe, Blue Lite (was #111 black + innerHTML)
+      const arrow = document.createElement('div')
+      arrow.textContent = '▲'
+      arrow.style.color = 'white'
+      arrow.style.fontSize = '22px'
+      el.appendChild(arrow)
       markerElRef.current = el
       currentPos.current = lngLat; currentBearing.current = bearing
       markerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(lngLat).addTo(map)
@@ -157,22 +173,11 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    const routeId = 'buddy-route'; const outlineId = 'buddy-route-outline'
-    const draw = () => {
-      if (!route) { if (map.getLayer(routeId)) map.removeLayer(routeId); if (map.getLayer(outlineId)) map.removeLayer(outlineId); if (map.getSource(routeId)) map.removeSource(routeId); if (map.getSource(outlineId)) map.removeSource(outlineId); return }
-      const coords = parseRoute(route); if (coords.length < 2) return
-      if (map.getSource(routeId)) { (map.getSource(routeId) as any).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } }); (map.getSource(outlineId) as any).setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } }); return }
-      map.addSource(outlineId, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } as any })
-      map.addSource(routeId, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } as any })
-      // FIX: Route outline follows theme - white in light, dark in dark mode
-      map.addLayer({ id: outlineId, type: 'line', source: outlineId, paint: { 'line-color': isDark ? '#0e0e10' : 'white', 'line-width': 10 } })
-      map.addLayer({ id: routeId, type: 'line', source: routeId, paint: { 'line-color': '#0066FF', 'line-width': 6 } })
-    }
+    const draw = () => drawRoute(map, route, isDark)
     if (map.isStyleLoaded()) draw(); else map.once('load', draw)
   }, [route, isDark])
 
   return (
-    // FIX: Background + buttons now follow theme
     <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 190, width: '100%', background: isDark ? '#0e0e10' : '#F8F9FA', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>

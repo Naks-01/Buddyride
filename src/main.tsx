@@ -8,55 +8,38 @@ const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
 const SUPPORT_WA = '27641018991'
 
-// FIX: ONE theme key for whole app - must match styles.css + DriverHome + PassengerHome
 const THEME_KEY = 'buddyride-theme'
-export type BuddyTheme = 'dark' | 'light'
+export type BuddyTheme = 'light'
 
 function getSavedTheme(): BuddyTheme {
-  try {
-    const saved = localStorage.getItem(THEME_KEY)
-    if (saved === 'dark' || saved === 'light') return saved
-    // Respect OS if user never chose - Bolt/Bro Cabs default is DARK for battery + night driving
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light'
-  } catch {}
-  return 'dark'
+  return 'light'
 }
 
-function applyTheme(theme: BuddyTheme) {
+function applyTheme() {
   try {
-    localStorage.setItem(THEME_KEY, theme)
-    document.documentElement.setAttribute('data-theme', theme)
-    document.documentElement.classList.toggle('ride-app--dark', theme === 'dark')
-    document.documentElement.classList.toggle('ride-app--light', theme === 'light')
-    // DO NOT set inline body background or --ride-* here - styles.css owns all colors via var()
-    // This was the bug: inline styles were overriding styles.css and causing 2 darks
-    document.documentElement.style.colorScheme = theme
+    localStorage.setItem(THEME_KEY, 'light')
+    document.documentElement.setAttribute('data-theme', 'light')
+    document.documentElement.classList.remove('ride-app--dark')
+    document.documentElement.classList.add('ride-app--light')
+    document.documentElement.style.colorScheme = 'light'
   } catch {}
 }
 
-// Expose for settings toggle - any component can call window.__setBuddyTheme('light')
-;(window as any).__setBuddyTheme = (t: string) => {
-  if (t === 'dark' || t === 'light') applyTheme(t)
-}
-;(window as any).__getBuddyTheme = () => getSavedTheme()
+;(window as any).__setBuddyTheme = () => { applyTheme() }
+;(window as any).__getBuddyTheme = (): BuddyTheme => 'light'
 
-// Apply immediately - before React mounts, no flash
-applyTheme(getSavedTheme())
+applyTheme()
 
-// Keep in sync across tabs + from settings
 window.addEventListener('storage', (e) => {
-  if (e.key === THEME_KEY && (e.newValue === 'dark' || e.newValue === 'light')) {
-    applyTheme(e.newValue)
-  }
+  if (e.key === THEME_KEY) applyTheme()
 })
-window.addEventListener('buddyride-theme-changed', ((e: CustomEvent) => {
-  if (e.detail === 'dark' || e.detail === 'light') applyTheme(e.detail)
-}) as EventListener)
-// Legacy key - migrate old users who had 'buddy_theme'
+window.addEventListener('buddyride-theme-changed', () => {
+  applyTheme()
+})
 try {
   const legacy = localStorage.getItem('buddy_theme')
   if ((legacy === 'dark' || legacy === 'light') && !localStorage.getItem(THEME_KEY)) {
-    applyTheme(legacy)
+    applyTheme()
   }
 } catch {}
 
@@ -121,21 +104,16 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
   render() {
     if (this.state.hasError) {
-      const isDark = getSavedTheme() === 'dark'
-      const errBg = isDark ? '#0b1120' : '#f5f5f7'
-      const errText = isDark ? '#f8fafc' : '#111827'
-      const errMuted = isDark ? '#aeb9cb' : '#666'
-      const errCard = isDark ? '#111a2a' : '#ffffff'
       return (
-        <main style={{ maxWidth: 520, margin: '12vh auto', padding: 24, fontFamily: 'system-ui, sans-serif', textAlign: 'center', background: errBg, color: errText, minHeight: '100vh' }}>
+        <main style={{ maxWidth: 520, margin: '12vh auto', padding: 24, fontFamily: 'system-ui, sans-serif', textAlign: 'center', background: '#FFFFFF', color: '#111827', minHeight: '100vh' }}>
           <div style={{ fontSize: 48 }}>🚗</div>
-          <h1 style={{ color: errText }}>Something went wrong</h1>
-          <p style={{ color: errMuted }}>BuddyRide hit an unexpected error. Your trip data is safe in the app.</p>
-          <p style={{ fontSize: 12, color: errMuted, wordBreak: 'break-word' }}>{this.state.error?.message}</p>
+          <h1 style={{ color: '#111827' }}>Something went wrong</h1>
+          <p style={{ color: '#666' }}>BuddyRide hit an unexpected error. Your trip data is safe in the app.</p>
+          <p style={{ fontSize: 12, color: '#666', wordBreak: 'break-word' }}>{this.state.error?.message}</p>
           <button onClick={this.handleReset} style={{ background: BLUE, color: 'white', border: 'none', padding: '14px 28px', borderRadius: 999, fontWeight: 700, cursor: 'pointer', marginTop: 8 }}>Reload BuddyRide</button>
-          <button onClick={this.handleHardReset} style={{ background: errCard, color: BLUE_DARK, border: `2px solid ${BLUE}`, padding: '12px 24px', borderRadius: 999, fontWeight: 700, cursor: 'pointer', marginTop: 10, marginLeft: 8 }}>Clear Cache + Home</button>
+          <button onClick={this.handleHardReset} style={{ background: '#ffffff', color: BLUE_DARK, border: `2px solid ${BLUE}`, padding: '12px 24px', borderRadius: 999, fontWeight: 700, cursor: 'pointer', marginTop: 10, marginLeft: 8 }}>Clear Cache + Home</button>
           <div style={{ marginTop: 12 }}><a href="/" style={{ color: BLUE_DARK, fontSize: 13, fontWeight: 700 }}>Go to home</a></div>
-          <p style={{ fontSize: 12, color: errMuted, marginTop: 16 }}>Still stuck? WhatsApp support: <a href={`https://wa.me/${SUPPORT_WA}`} target="_blank" rel="noreferrer" style={{ color: BLUE_DARK, fontWeight: 700 }}>064 101 8991</a></p>
+          <p style={{ fontSize: 12, color: '#666', marginTop: 16 }}>Still stuck? WhatsApp support: <a href={`https://wa.me/${SUPPORT_WA}`} target="_blank" rel="noreferrer" style={{ color: BLUE_DARK, fontWeight: 700 }}>064 101 8991</a></p>
         </main>
       )
     }

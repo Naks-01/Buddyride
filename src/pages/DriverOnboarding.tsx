@@ -1,4 +1,3 @@
-"use client"
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import {
   CarFront,
@@ -58,7 +57,6 @@ function normalizeDateInput(raw: string): string {
   return raw
 }
 
-// FIX PDP ONLY: Force any pdp/prdp variant to same type 'prdp'
 function fixPdpType(raw: string): string {
   const t = String(raw || '').toLowerCase().trim()
   if (t.includes('prdp') || t === 'pdp' || t.includes('pdp') || t.includes('pr_dp') || t === 'professional_driving_permit') {
@@ -150,6 +148,8 @@ function isCardComplete(card: typeof DOCUMENT_CARDS[number], documents: StoredDo
     return ct === want || cdt === want
   })
   if (!document?.file_url && !(document as any)?.document_url) return false
+  // FIX: Rejected doc is NOT complete - was counting as complete, driver stuck on Submit
+  if (String(document.status || '').toUpperCase() === 'REJECTED') return false
   if (card.expiryRequired) return Boolean(document?.expiry_date)
   return true
 }
@@ -413,7 +413,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
     setDriverIdNumber(prev => prev || localId || dbId || '')
     setLicenceNumber(prev => prev || localLic || dbLic || '')
     setLoading(false)
-    const loadedIdentityComplete = IDENTITY_CARDS.every(card => { const doc = loadedDocuments.find(d => fixPdpType(d.doc_type) === fixPdpType(card.type)); return Boolean(doc?.file_url || (doc as any)?.document_url) && (!card.expiryRequired || Boolean(doc?.expiry_date)) })
+    const loadedIdentityComplete = IDENTITY_CARDS.every(card => { const doc = loadedDocuments.find(d => fixPdpType(d.doc_type) === fixPdpType(card.type)); return Boolean(doc?.file_url || (doc as any)?.document_url) && (!card.expiryRequired || Boolean(doc?.expiry_date)) && String(doc?.status || '').toUpperCase() !== 'REJECTED' })
     if (loadedIdentityComplete || status === 'identity_complete') {
       setPhase('remaining')
       setShowPlan(false)
@@ -480,7 +480,11 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       let savedDocument: any = null; let saveError: any = null
       if (existing) { const res = await supabase.from('driver_documents').update(payload).eq('id', existing.id).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single(); savedDocument = res.data; saveError = res.error }
       else { const res = await supabase.from('driver_documents').insert({ ...payload, created_at: new Date().toISOString() }).select('id,doc_type,document_type,document_url,document_date,file_url,status,rejection_reason,created_at,expiry_date,prdp_number,document_hash').single(); savedDocument = res.data; saveError = res.error }
-      if (saveError) throw new Error(`DB: ${saveError.message}`)
+      if (saveError) {
+        // FIX: Cleanup orphan storage on DB fail
+        await supabase.storage.from(bucket).remove([path]).catch(()=>{})
+        throw new Error(`DB: ${saveError.message}`)
+      }
       await saveIdNumbersNow(driverIdNumber, licenceNumber)
       const savedPreview = await createDriverDocumentSignedUrl(storageReference).catch(() => null)
       setDocuments(current => latestDocuments([...current.filter(d => fixPdpType(d.doc_type) !== finalDocType), { ...(savedDocument as StoredDocument), preview_url: savedPreview }]))
@@ -633,19 +637,20 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       {phase === 'identity' && (
       <section style={{ ...cardStyle, padding: 17, marginBottom: 18 }}>
         <p style={{ margin: '0 0 6px', color: '#0066FF', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Step 1 - Identity Numbers</p>
-        <h2 style={{ margin: '0 0 12px', fontSize: 20, color: '#111827' }}>ID & Licence Numbers</h2>
+        <h2 style={{ margin: '0 0 12px', fontSize: 20, color: '#111827' }}>ID &amp; Licence Numbers</h2>
         <p style={{ margin: '0 0 12px', fontSize: 13, color: '#667085' }}>Enter numbers exactly as on your documents. Both required to enter app.</p>
         <div style={{ display: 'grid', gap: 10 }}>
           <label style={labelStyle}>SA ID Number / Passport Number *<input type="text" value={driverIdNumber} onChange={e => setDriverIdNumber(e.target.value)} onBlur={() => void saveIdNumbersNow(driverIdNumber, licenceNumber)} placeholder="e.g. 9001015009087" inputMode="numeric" style={inputStyle} /></label>
           <label style={labelStyle}>Driver Licence Number *<input type="text" value={licenceNumber} onChange={e => setLicenceNumber(e.target.value)} onBlur={() => void saveIdNumbersNow(driverIdNumber, licenceNumber)} placeholder="As on licence card" style={inputStyle} /></label>
           {driverIdNumber && /^\d{13}$/.test(driverIdNumber.trim()) && !isValidSAID(driverIdNumber.trim()) && <p style={{ color: '#b42318', fontSize: 12 }}>Invalid SA ID - check digits.</p>}
+          {rejectedTypes.size > 0 && <p style={{ color: '#b42318', fontSize: 12, fontWeight: 700 }}>⚠️ Rejected: {[...rejectedTypes].join(', ')} - re-upload below. Reason shown on card.</p>}
         </div>
       </section>
       )}
       {phase === 'remaining' && (
       <>
       <section style={{ ...cardStyle, padding: 17, marginBottom: 18 }}>
-        <p style={{ margin: '0 0 6px', color: '#0066FF', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Vehicle & Ride Type - Tell us about your vehicle</p>
+        <p style={{ margin: '0 0 6px', color: '#0066FF', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>Vehicle &amp; Ride Type - Tell us about your vehicle</p>
         <h2 style={{ margin: '0 0 6px', fontSize: 20, color: '#111827' }}>Vehicle details</h2>
         <p style={{ margin: '0 0 12px', fontSize: 13, color: '#667085' }}>Add the details exactly as they appear on the licence disk. {vehicleComplete ? '✅ Complete' : '❌ Incomplete - required to submit.'}</p>
         <div style={{ display: 'grid', gap: 10 }}>
@@ -710,7 +715,7 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
               return <article key={type} className="driver-onboarding-card" style={{ ...cardStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 14, padding: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
                   <div style={{ width: 42, height: 42, display: 'grid', flex: '0 0 42px', placeItems: 'center', borderRadius: 12, background: '#f1f4f7', color: '#475467' }}><Icon size={22} /></div>
-                  <div style={{ minWidth: 0 }}><strong style={{ fontSize: 14, color: '#111827' }}>{title}</strong><div style={{ marginTop: 4, color: '#667085', fontSize: 12 }}>{description}</div><span style={{ display: 'inline-block', marginTop: 6, padding: '4px 8px', borderRadius: 99, color: badgeColor, background: `${badgeColor}18`, fontSize: 11, fontWeight: 700 }}>{badgeLabel}</span></div>
+                  <div style={{ minWidth: 0 }}><strong style={{ fontSize: 14, color: '#111827' }}>{title}</strong><div style={{ marginTop: 4, color: '#667085', fontSize: 12 }}>{description}</div><span style={{ display: 'inline-block', marginTop: 6, padding: '4px 8px', borderRadius: 99, color: badgeColor, background: `${badgeColor}18`, fontSize: 11, fontWeight: 700 }}>{badgeLabel}</span>{rejected && document?.rejection_reason && <div style={{ marginTop: 6, color: '#b42318', fontSize: 12, fontWeight: 700 }}>Reason: {document.rejection_reason}</div>}</div>
                 </div>
                 <div>
                   <input ref={element => { fileInputs.current[type] = element; fileInputs.current[want] = element }} type="file" accept={type.startsWith('vehicle_photo') || type.startsWith('vehicle_interior_photo') || type === 'profile_photo' || type === 'selfie' ? 'image/jpeg,image/png,image/webp' : 'image/jpeg,image/png,image/webp,application/pdf'} capture={type === 'selfie' ? 'user' : undefined} onChange={event => void handleFileChange(type, bucket, event, type)} style={{ display: 'none' }} />
@@ -739,14 +744,14 @@ export function DriverOnboarding({ profile, onDashboard }: { profile: Profile; o
       )}
       {uploadStatus && <p style={{ ...cardStyle, margin: '16px 0 0', padding: 14, borderColor: '#B2CCFF', background: '#E6F0FF', color: '#0052CC', fontSize: 13, fontWeight: 700 }}>{uploadStatus}</p>}
       {error && <p role="alert" style={{ ...cardStyle, margin: '16px 0 0', padding: 14, borderColor: '#fecdca', color: '#b42318', fontSize: 13, whiteSpace: 'pre-wrap' }}>{error}</p>}
-      <section style={{ ...cardStyle, marginTop: 16, padding: 17, display: 'flex', alignItems: 'center', gap: 12 }}><ShieldCheck size={22} color="#0066FF" /><div><strong style={{ fontSize: 14, color: '#111827' }}>Your documents are kept secure</strong><p style={{ margin: '4px 0 0', color: '#667085', fontSize: 12 }}>They’re used only to verify your driver account.</p></div></section>
+      <section style={{ ...cardStyle, marginTop: 16, padding: 17, display: 'flex', alignItems: 'center', gap: 12 }}><ShieldCheck size={22} color="#0066FF" /><div><strong style={{ fontSize: 14, color: '#111827' }}>Your documents are kept secure</strong><p style={{ margin: '4px 0 0', color: '#667085', fontSize: 12 }}>They’re used only to verify your driver account. POPIA: kept only while you are a driver + 6 months.</p></div></section>
       {phase === 'identity' ? (
         <button type="button" disabled={!identityReadyToEnterApp || submitting || Boolean(uploading)} onClick={() => void enterAppAfterIdentity()} style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 20, padding: 16, border: 0, borderRadius: 14, background: identityReadyToEnterApp ? '#16A34A' : '#cbd2da', color: '#fff', fontSize: 16, fontWeight: 800, cursor: identityReadyToEnterApp && !submitting ? 'pointer' : 'not-allowed' }}>{submitting ? 'Entering App…' : !hasIdNumbers ? 'Enter ID Number + Licence Number to continue' : !identityComplete ? `Upload Identity ${identityCompletedCount}/4 to Enter App` : <>🚀 Enter App - Finish Rest Inside <ChevronRight size={19} /></>}</button>
       ) : (
         <button type="button" disabled={completedCards !== DOCUMENT_CARDS.length || !vehicleComplete || !zonesComplete || !rideTypeComplete || !hasIdNumbers || rejectedTypes.size > 0 || submitting || Boolean(uploading)} onClick={() => void submitForReview()} style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 20, padding: 16, border: 0, borderRadius: 14, background: completedCards === DOCUMENT_CARDS.length && vehicleComplete && zonesComplete && rideTypeComplete && hasIdNumbers ? '#0066FF' : '#cbd2da', color: '#fff', fontSize: 16, fontWeight: 800, cursor: completedCards === DOCUMENT_CARDS.length && vehicleComplete && zonesComplete && rideTypeComplete && hasIdNumbers && !submitting ? 'pointer' : 'not-allowed' }}>{submitting ? 'Submitting for review…' : rejectedTypes.size > 0 ? 'Replace rejected documents to continue' : !hasIdNumbers ? 'Enter ID Number + Licence Number to continue' : !vehicleComplete ? 'Complete Vehicle Details to continue' : !zonesComplete ? 'Choose Service Area to continue' : !rideTypeComplete ? 'Choose Ride Type to continue' : completedCards === DOCUMENT_CARDS.length ? <>Submit for Review <ChevronRight size={19} /></> : `Complete ${remainingCount} remaining + vehicle + zones + ride type (${completedCards}/${DOCUMENT_CARDS.length})`}</button>
       )}
       {phase === 'identity' && <button type="button" onClick={() => setPhase('remaining')} style={{ width: '100%', marginTop: 10, padding: 12, border: '1px solid #D0D5DD', borderRadius: 12, background: '#fff', fontWeight: 700, fontSize: 13, color: '#111827' }}>Skip - Show all docs</button>}
-      {phase === 'remaining' && <button type="button" onClick={() => void backToApp()} style={{ width: '100%', marginTop: 10, padding: 12, border: '1px solid #0066FF', borderRadius: 12, background: '#E6F0FF', color: '#0066FF', fontWeight: 800, fontSize: 13 }}>← Back to App - Save & Continue Later</button>}
+      {phase === 'remaining' && <button type="button" onClick={() => void backToApp()} style={{ width: '100%', marginTop: 10, padding: 12, border: '1px solid #0066FF', borderRadius: 12, background: '#E6F0FF', color: '#0066FF', fontWeight: 800, fontSize: 13 }}>← Back to App - Save &amp; Continue Later</button>}
     </div>
     <style>{'@keyframes driver-onboarding-spin{to{transform:rotate(360deg)}}.driver-onboarding-spin{animation:driver-onboarding-spin 1s linear infinite}@media(max-width:520px){.driver-onboarding-card{flex-wrap:wrap}}'}</style>
   </main>

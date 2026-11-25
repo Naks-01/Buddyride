@@ -12,17 +12,17 @@ type BottomSheetProps = {
 
 const SNAP_POINTS: BottomSheetSnapPoint[] = [25, 50, 80, 90]
 
-export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark', fitToSnap = false }: BottomSheetProps) {
+export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light', fitToSnap = false }: BottomSheetProps) {
   const [dragHeight, setDragHeight] = useState<number | null>(null)
   const dragStartRef = useRef<{ y: number; height: number } | null>(null)
   const liveHeightRef = useRef<number>(snapPoint)
   const isDark = theme === 'dark'
-  const surface = isDark ? '#121212' : '#ffffff'
-  const text = isDark ? '#ffffff' : '#000000'
-  const border = isDark ? '#383838' : '#e5e5e5'
-  const handle = isDark ? '#666666' : '#c7c7c7'
+  // FIX: Blue Lite - light = white, dark = navy (was #121212 black, broke Lite)
+  const surface = isDark ? '#0A2540' : '#ffffff'
+  const text = isDark ? '#ffffff' : '#111827'
+  const border = isDark ? '#1e293b' : '#E4E7EC'
+  const handle = isDark ? '#B2CCFF' : '#D0D5DD'
 
-  // FIXED: Keep live height in ref so onPointerUp never uses stale event / state
   const height = dragHeight ?? snapPoint
   liveHeightRef.current = height
 
@@ -33,7 +33,6 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark',
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     dragStartRef.current = {
       y: event.clientY,
-      // FIXED: Use rendered height, not async dragHeight state
       height: liveHeightRef.current,
     }
     try {
@@ -43,7 +42,6 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark',
 
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
     if (!dragStartRef.current) return
-    // FIXED: Prevent scroll takeover on mobile while dragging handle
     event.preventDefault()
     const delta = dragStartRef.current.y - event.clientY
     const h = clampHeight(dragStartRef.current.height + (delta / window.innerHeight) * 100)
@@ -54,7 +52,6 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark',
   function onPointerUp(event: PointerEvent<HTMLDivElement>) {
     if (!dragStartRef.current) return
     try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
-    // FIXED: Use last live height, not recomputed from event.clientY (may be stale on fast flick)
     const h = liveHeightRef.current
     const nearestSnap = SNAP_POINTS.reduce((closest, point) =>
       Math.abs(point - h) < Math.abs(closest - h) ? point : closest,
@@ -88,7 +85,7 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark',
         color: text,
         border: `1px solid ${border}`,
         borderRadius: '28px 28px 0 0',
-        boxShadow: isDark ? '0 -8px 32px rgba(0,0,0,.4)' : '0 -8px 32px rgba(0,0,0,.12)',
+        boxShadow: isDark ? '0 -8px 32px rgba(10,37,64,.4)' : '0 -8px 32px rgba(0,0,0,.12)',
         backdropFilter: 'blur(24px)',
         transition: dragHeight === null
           ? `${fitToSnap ? 'height' : 'transform'} 400ms cubic-bezier(.32,.72,0,1)`
@@ -102,8 +99,14 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'dark',
         .uber-bottom-sheet--dark .ride-card,
         .uber-bottom-sheet--dark .ride-status,
         .uber-bottom-sheet--dark .fare-card {
-          background: #2c2c2e !important;
-          border-color: #3a3a3c !important;
+          background: #1e293b !important;
+          border-color: #334155 !important;
+        }
+        .uber-bottom-sheet--light .ride-card,
+        .uber-bottom-sheet--light .ride-status,
+        .uber-bottom-sheet--light .fare-card {
+          background: #F2F4F7 !important;
+          border-color: #E4E7EC !important;
         }
       `}</style>
       <div

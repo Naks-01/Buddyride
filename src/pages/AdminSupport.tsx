@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-// BUNDLE MODEL: No change needed here.
-// SOS has no commission, no fare, no payout logic. Already compatible.
-
 type SosReport = { id: string, created_at?: string, status?: string, message?: string, description?: string, user_id?: string, ride_id?: string, user_name?: string, user_phone?: string, user_role?: string, type?: string }
 
 function toWhatsAppNumber(phone: string | null | undefined) {
@@ -24,22 +21,22 @@ export function AdminSupport({ onBack }: { onBack: () => void }) {
 
   async function load(silent = false) {
     if (!silent) setLoading(true)
-    const { data, error: loadError } = await supabase.from('sos_reports').select('*').order('created_at',{ascending:false}).limit(200)
-    if (loadError) { setError('Could not load SOS reports: ' + loadError.message); setLoading(false); return }
-    const rows = (data || []) as SosReport[]
-    const ids = [...new Set(rows.map(r => r.user_id).filter(Boolean))] as string[]
-    let enriched = rows
-    if (ids.length) {
-      const { data: profiles } = await supabase.from('profiles').select('id,full_name,phone,role').in('id', ids)
-      const map = Object.fromEntries((profiles || []).map(p => [p.id, p]))
-      enriched = rows.map(r => {
-        const p: any = r.user_id ? map[r.user_id] : null
-        return p ? { ...r, user_name: p.full_name, user_phone: p.phone, user_role: p.role } : r
-      })
-    }
-    setReports(enriched)
-    setError('')
-    setLoading(false)
+    try {
+      const { data, error: loadError } = await supabase.from('sos_reports').select('*').order('created_at', { ascending: false }).limit(200)
+      if (loadError) throw loadError
+      const rows = (data || []) as SosReport[]
+      const ids = [...new Set(rows.map(r => r.user_id).filter(Boolean))] as string[]
+      let enriched = rows
+      if (ids.length) {
+        const { data: profiles } = await supabase.from('profiles').select('id,full_name,phone,phone_number,role').in('id', ids)
+        const map = Object.fromEntries((profiles || []).map((p: any) => [p.id, { ...p, phone: p.phone || p.phone_number }]))
+        enriched = rows.map(r => {
+          const p: any = r.user_id ? map[r.user_id] : null
+          return p ? { ...r, user_name: p.full_name, user_phone: p.phone, user_role: p.role } : r
+        })
+      }
+      setReports(enriched); setError('')
+    } catch (e: any) { setError('Could not load SOS reports: ' + (e?.message || String(e))) } finally { setLoading(false) }
   }
 
   useEffect(() => {
@@ -47,17 +44,18 @@ export function AdminSupport({ onBack }: { onBack: () => void }) {
     const ch = supabase.channel('admin-sos-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sos_reports' }, () => { void load(true) })
       .subscribe()
-    return () => { supabase.removeChannel(ch) }
+    return () => { void supabase.removeChannel(ch) }
   }, [])
 
   async function resolve(report: SosReport) {
-    if (!confirm(`Mark SOS ${report.id.slice(0,8)} as resolved?`)) return
-    setBusyId(report.id)
-    setError('')
-    const { error: updateError } = await supabase.from('sos_reports').update({ status: 'resolved' } as any).eq('id', report.id)
-    if (updateError) setError(updateError.message)
-    else setReports(prev => prev.map(r => r.id === report.id ? { ...r, status: 'resolved' } : r))
-    setBusyId(null)
+    if (!confirm(`Mark SOS ${report.id.slice(0, 8)} as resolved?`)) return
+    setBusyId(report.id); setError('')
+    try {
+      // FIX: Save resolved_at - was only status, admin couldn't prove when it was resolved
+      const { error: updateError } = await supabase.from('sos_reports').update({ status: 'resolved', resolved_at: new Date().toISOString() } as any).eq('id', report.id)
+      if (updateError) throw updateError
+      setReports(prev => prev.map(r => r.id === report.id ? { ...r, status: 'resolved' } : r))
+    } catch (e: any) { setError(e?.message || String(e)) } finally { setBusyId(null) }
   }
 
   const filtered = reports.filter(r => {
@@ -67,9 +65,9 @@ export function AdminSupport({ onBack }: { onBack: () => void }) {
   })
   const openCount = reports.filter(r => (r.status || 'open').toLowerCase() !== 'resolved').length
 
-  return <main style={{minHeight:'100vh', background:'#0f172a', color:'white', padding:'16px'}}>
-    <button onClick={onBack}>← Admin home</button><h1>SOS Support Reports</h1>
-    {error && <p role="alert" style={{color:'#fca5a5'}}>{error}</p>}
+  return <main style={{ minHeight: '100vh', background: '#0f172a', color: 'white', padding: '16px' }}>
+    <button onClick={onBack} style={{ background: '#1e293b', color: 'white', border: '1px solid #334155', padding: '8px 14px', borderRadius: 8, cursor: 'pointer' }}>← Admin home</button><h1>SOS Support Reports</h1>
+    {error && <p role="alert" style={{ color: '#fca5a5' }}>{error}</p>}
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0' }}>
       <div style={{ background: openCount > 0 ? '#7f1d1d' : '#1e293b', padding: '10px 14px', borderRadius: 10, fontWeight: 800 }}>🚨 {openCount} Open SOS</div>
       <div style={{ background: '#1e293b', padding: '10px 14px', borderRadius: 10 }}>Total: {reports.length}</div>
@@ -77,7 +75,7 @@ export function AdminSupport({ onBack }: { onBack: () => void }) {
       <a href="tel:10111" style={{ padding: '8px 14px', borderRadius: 20, background: '#ef4444', color: 'white', fontWeight: 800, textDecoration: 'none' }}>🚓 Call SAPS 10111</a>
     </div>
     <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-      {(['open','all','resolved'] as const).map(f => (
+      {(['open', 'all', 'resolved'] as const).map(f => (
         <button key={f} onClick={() => setFilter(f)} style={{ padding: '6px 14px', borderRadius: 20, border: 0, background: filter === f ? 'white' : '#334155', color: filter === f ? 'black' : 'white', fontWeight: 700, textTransform: 'capitalize', cursor: 'pointer' }}>{f}</button>
       ))}
     </div>
@@ -87,12 +85,12 @@ export function AdminSupport({ onBack }: { onBack: () => void }) {
       const resolved = (report.status || '').toLowerCase() === 'resolved'
       const wa = toWhatsAppNumber(report.user_phone)
       const tel = wa ? `+${wa}` : (report.user_phone || '')
-      return <article key={report.id} style={{ background: resolved ? '#1e293b' : '#450a0a', borderLeft: `4px solid ${resolved ? '#22c55e' : '#ef4444'}`, padding:'12px', borderRadius:'8px', marginTop:'10px'}}>
+      return <article key={report.id} style={{ background: resolved ? '#1e293b' : '#450a0a', borderLeft: `4px solid ${resolved ? '#22c55e' : '#ef4444'}`, padding: '12px', borderRadius: '8px', marginTop: '10px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong>🚨 SOS {report.id.slice(0,8)} {report.type ? `· ${report.type}` : ''}</strong>
+          <strong>🚨 SOS {report.id.slice(0, 8)} {report.type ? `· ${report.type}` : ''}</strong>
           <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 10, background: resolved ? '#14532d' : '#991b1b', fontWeight: 800 }}>{(report.status || 'OPEN').toUpperCase()}</span>
         </div>
-        <div style={{ fontSize: 13, marginTop: 6 }}>User: <strong>{report.user_name || report.user_id || 'Unknown'}</strong> {report.user_role ? `(${report.user_role})` : ''} · Ride: {report.ride_id ? report.ride_id.slice(0,8) : 'N/A'} · Phone: {report.user_phone || 'No phone'}</div>
+        <div style={{ fontSize: 13, marginTop: 6 }}>User: <strong>{report.user_name || report.user_id || 'Unknown'}</strong> {report.user_role ? `(${report.user_role})` : ''} · Ride: {report.ride_id ? report.ride_id.slice(0, 8) : 'N/A'} · Phone: {report.user_phone || 'No phone'}</div>
         <p style={{ margin: '8px 0' }}>{report.message || report.description || 'No report details supplied.'}</p>
         {report.created_at && <small style={{ color: '#cbd5e1' }}>{new Date(report.created_at).toLocaleString()}</small>}
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
@@ -102,6 +100,6 @@ export function AdminSupport({ onBack }: { onBack: () => void }) {
         </div>
       </article>
     })}
-    {!loading && filtered.length===0 && <p>No SOS reports found{filter !== 'all' ? ` in ${filter}` : ''}.</p>}
+    {!loading && filtered.length === 0 && <p>No SOS reports found{filter !== 'all' ? ` in ${filter}` : ''}.</p>}
   </main>
 }

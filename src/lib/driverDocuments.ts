@@ -37,8 +37,15 @@ export type DocumentRequirement = { type: string; label: string; section?: strin
 export function normalizeDocType(type: any): string {
   if (!type) return ''
   const raw = String(type).toLowerCase().trim()
-  // FIX PDP ONLY - catch ALL variants BEFORE anything else: pdp, prdp, pr_dp, professional driving permit, pdp doc, prdp card, etc.
-  if (raw.includes('prdp') || raw.includes('pdp') || raw.includes('pr_dp') || raw.includes('professional') && raw.includes('driving') || raw.includes('professional_driving')) return 'prdp'
+  // FIX: Operator precedence - was: raw.includes('professional') && raw.includes('driving') || ...
+  // && binds tighter than ||, so 'professional_driving' alone returned prdp, but 'professional' alone didn't - now explicit parens
+  if (
+    raw.includes('prdp') ||
+    raw.includes('pdp') ||
+    raw.includes('pr_dp') ||
+    (raw.includes('professional') && raw.includes('driving')) ||
+    raw.includes('professional_driving')
+  ) return 'prdp'
 
   const t = raw.replace(/[_/-]+/g, ' ').replace(/\s+/g, ' ')
 
@@ -82,6 +89,8 @@ export function isFakeFile(filePath?: string | null): boolean {
   if (normalizedPath.startsWith('http')) {
     return ['example.com', 'via.placeholder.com', 'picsum.photos', 'fake.jpg', 'bypassed.jpg'].some(value => normalizedPath.includes(value))
   }
+  // FIX: Also catch fake storage refs - was only http
+  if (normalizedPath.includes('fake') || normalizedPath.includes('bypass') || normalizedPath.includes('placeholder') || normalizedPath.includes('test.jpg')) return true
   return false
 }
 

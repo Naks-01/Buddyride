@@ -11,7 +11,6 @@ export function getPlusCodeFromCoords(lat: number, lng: number) {
 export function decodePlusCode(code: string) {
   try {
     const clean = code.trim().toUpperCase().replace(/\s/g, '')
-    // Supports "6J5Q+2W2" or "6J5Q+2W2 Seshego"
     const match = clean.match(/([23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3})/)
     if (!match) return null
     const decoded = olc.decode(match[1])
@@ -27,14 +26,22 @@ function isKeyOk() {
   return true
 }
 
+// FIX: Cache reverse + search - was calling TomTom on every keystroke / render
+const reverseCache = new Map<string, string>()
+const searchCache = new Map<string, any[]>()
+
 export async function reverseTomTom(coords: [number, number]): Promise<string> {
   const fallback = `${coords[1].toFixed(5)}, ${coords[0].toFixed(5)}`
+  const cacheKey = `${coords[0].toFixed(4)},${coords[1].toFixed(4)}`
+  if (reverseCache.has(cacheKey)) return reverseCache.get(cacheKey)!
   if (!isKeyOk()) return fallback
   try {
     const res = await fetch(`https://api.tomtom.com/search/2/reverseGeocode/${coords[1]},${coords[0]}.json?key=${KEY}`)
     if (!res.ok) return fallback
     const data = await res.json()
-    return data.addresses?.[0]?.address?.freeformAddress || fallback
+    const addr = data.addresses?.[0]?.address?.freeformAddress || fallback
+    reverseCache.set(cacheKey, addr)
+    return addr
   } catch { return fallback }
 }
 
@@ -62,17 +69,21 @@ async function searchPhoton(query: string) {
 export async function geocodeTomTom(query: string) {
   if (!query || query.trim().length < 2) return []
   const q = query.trim()
+  const cacheKey = q.toLowerCase()
+  if (searchCache.has(cacheKey)) return searchCache.get(cacheKey)!
 
   // 0. PLUS CODE FIRST - exact RDP house, no API needed, free
   const plus = decodePlusCode(q)
   if (plus) {
-    return [{
+    const out = [{
       id: `plus_${plus.code}`,
       center: [plus.lng, plus.lat] as [number, number],
       text: `📍 Exact Pin - ${plus.code}`,
       place_name: `Exact Location ${plus.code}, Limpopo`,
       geometry: { coordinates: [plus.lng, plus.lat] },
     }]
+    searchCache.set(cacheKey, out)
+    return out
   }
 
   // 1. Try TomTom fuzzySearch
@@ -101,20 +112,19 @@ export async function geocodeTomTom(query: string) {
     }
   }
 
-  // 2. Photon fallback
+  // 2. Photon fallback - ONLY if TomTom empty
   if (tomtomResults.length === 0) {
     const photon = await searchPhoton(q)
-    if (photon.length > 0) return photon
-    return await searchPhoton(`${q}, Polokwane`)
+    if (photon.length > 0) { searchCache.set(cacheKey, photon); return photon }
+    const photon2 = await searchPhoton(`${q}, Polokwane`)
+    searchCache.set(cacheKey, photon2)
+    return photon2
   }
 
-  const photonExtra = await searchPhoton(q)
-  const seen = new Set(tomtomResults.map((r: any) => `${r.center[0].toFixed(4)},${r.center[1].toFixed(4)}`))
-  for (const p of photonExtra) {
-    const key = `${p.center[0].toFixed(4)},${p.center[1].toFixed(4)}`
-    if (!seen.has(key)) { tomtomResults.push(p); seen.add(key) }
-  }
-  return tomtomResults.slice(0, 10)
+  // FIX: Was calling Photon AGAIN even when TomTom succeeded - doubled latency + API cost. Now return TomTom directly.
+  const out = tomtomResults.slice(0, 10)
+  searchCache.set(cacheKey, out)
+  return out
 }
 
 export async function getTomTomRoute(from: [number, number], to: [number, number]) {

@@ -2,10 +2,11 @@ const sectionStyle = { margin: '28px 0' }
 
 export default function PrivacyPage() {
   const handlePrint = () => { window.print() }
-  const handleBack = () => { if (window.history.length > 1) window.history.back(); else window.location.href = '/' }
+  const handleBack = () => { window.location.href = '/' }
 
   return <main style={{ maxWidth: 880, margin: '0 auto', padding: '32px 20px 56px', color: '#182230', fontFamily: 'Arial, sans-serif', lineHeight: 1.65 }}>
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+    <style>{`@media print { .no-print { display: none !important } }`}</style>
+    <div className="no-print" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
       <button onClick={handleBack} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid #D0D5DD', background: '#fff', fontWeight: 700, cursor: 'pointer' }}>← Back</button>
       <a href="/" style={{ padding: '10px 16px', borderRadius: 10, background: '#F2F4F7', color: '#182230', fontWeight: 700, textDecoration: 'none', display: 'grid', placeItems: 'center' }}>BuddyRide home</a>
       <button onClick={handlePrint} style={{ padding: '10px 16px', borderRadius: 10, border: 0, background: '#0066FF', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>🖨️ Print Policy</button>
@@ -15,7 +16,7 @@ export default function PrivacyPage() {
     <p><strong>Effective date: 6 November 2026</strong> • Last updated: 6 November 2026</p>
     <p>This policy explains how BuddyRide (Pty) Ltd (“BuddyRide”, “we”, “us”) handles personal information in connection with its e-hailing platform in South Africa. Our service base is Polokwane, Limpopo, South Africa. This policy supports compliance with the Protection of Personal Information Act 4 of 2013 (POPIA); it is not legal advice.</p>
 
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0' }}>
+    <div className="no-print" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0' }}>
       <a href="mailto:buddyride@outlook.com?subject=Privacy%20Request%20-%20BuddyRide" style={{ padding: '10px 14px', borderRadius: 10, background: '#E6F0FF', color: '#0052CC', fontWeight: 800, textDecoration: 'none' }}>✉️ Email Privacy Team</a>
       <a href="tel:+27641018991" style={{ padding: '10px 14px', borderRadius: 10, background: '#E6F0FF', color: '#0052CC', fontWeight: 800, textDecoration: 'none' }}>📞 Call 064 101 8991</a>
       <a href="https://wa.me/27641018991?text=Hi%20BuddyRide%2C%20I%20have%20a%20privacy%20question" target="_blank" rel="noreferrer" style={{ padding: '10px 14px', borderRadius: 10, background: '#ECFDF3', color: '#067647', fontWeight: 800, textDecoration: 'none' }}>💬 WhatsApp Us</a>
@@ -47,7 +48,8 @@ export default function PrivacyPage() {
         <li><strong>Account and contact information:</strong> name, email address, telephone number, account identifiers, role, and authentication/security records.</li>
         <li><strong>Trip and location information:</strong> pickup/drop-off details and coordinates, route, trip status, timestamps, driver availability and location while using relevant features, and support or safety reports.</li>
         <li><strong>Identity and safety information:</strong> ID/passport number or image, selfie, driver identity and qualification documents, vehicle documents and images, verification/review status, and safety-related communications. These may be sensitive and receive restricted access.</li>
-        <li><strong>Payment and driver payout information:</strong> transaction references, payment status, fare and earnings records, and driver bank account details needed for payout. Payment providers process card details directly; BuddyRide does not receive or store full card numbers, CVVs, or PINs.</li>
+        {/* FIX: Bundle model - no bank payouts, no card storage - was claiming bank details */}
+        <li><strong>Payment and bundle information:</strong> transaction references, payment status, fare and bundle records. Payment providers process card details directly; BuddyRide does not receive or store full card numbers, CVVs, or PINs. Drivers are paid directly by riders in cash - BuddyRide does not collect driver bank details.</li>
         <li><strong>Technical and usage information:</strong> device/browser details, app events, diagnostics, security logs, and cookie or local-storage preferences necessary for operation and security.</li>
         <li><strong>Communications:</strong> messages sent to support, ride chat where enabled, feedback, ratings, and notices sent through configured channels.</li>
       </ul>
@@ -70,14 +72,14 @@ export default function PrivacyPage() {
       <h2>5. Retention and deletion</h2>
       <p>We retain information only as long as needed for its collection purpose, legal obligations, dispute resolution, and platform security. Our retention periods are: trip and payment records for up to five years after the transaction; account data while the account is active and up to 12 months after closure; support and safety incident records for up to five years after closure of the matter; and rejected or expired identity documents for no longer than 90 days after the decision unless a dispute, legal hold, or law requires longer. Backups may persist for up to 90 days after deletion from active systems.</p>
       <p>Where information is no longer needed, we will securely delete it or irreversibly de-identify it, subject to legal holds and lawful retention duties. Request deletion by contacting us; we will explain any information we must retain and why.</p>
-      <div style={{ marginTop: 12 }}>
+      <div className="no-print" style={{ marginTop: 12 }}>
         <a href="mailto:buddyride@outlook.com?subject=Request%20Deletion%20of%20My%20Data%20-%20POPIA&body=Hi%20BuddyRide%2C%20I%20would%20like%20to%20request%20deletion%20of%20my%20personal%20information%20under%20POPIA.%20My%20name%20is%3A%20%0A My%20phone%20is%3A%20" style={{ display: 'inline-block', padding: '10px 14px', borderRadius: 10, background: '#0066FF', color: '#fff', fontWeight: 800, textDecoration: 'none' }}>Request Deletion of My Data</a>
       </div>
     </section>
 
     <section id="security" style={sectionStyle}>
       <h2>6. Security and confidentiality</h2>
-      <p>We use safeguards appropriate to the information and risk, such as access restrictions, authentication, encryption in transit, secure storage configuration, least-privilege provider access, monitoring, and staff confidentiality measures. No internet transmission or storage system can be guaranteed completely secure. Identity images, ID numbers, live location, and bank details are only available to people and systems with a specific operational need.</p>
+      <p>We use safeguards appropriate to the information and risk, such as access restrictions, authentication, encryption in transit, secure storage configuration, least-privilege provider access, monitoring, and staff confidentiality measures. No internet transmission or storage system can be guaranteed completely secure. Identity images, ID numbers, and live location are only available to people and systems with a specific operational need.</p>
       <p>If a security compromise occurs, BuddyRide will assess and respond, notify the Information Regulator and affected data subjects where POPIA requires, and provide appropriate information and mitigation guidance. Report suspected exposure promptly to <a href="mailto:buddyride@outlook.com?subject=Report%20Suspected%20Data%20Exposure">buddyride@outlook.com</a>.</p>
     </section>
 
@@ -85,7 +87,7 @@ export default function PrivacyPage() {
       <h2>7. Your rights and complaints</h2>
       <p>Subject to POPIA and other applicable law, you may request access to, correction or deletion of personal information; object to certain processing; withdraw consent where consent is the basis; ask about an automated decision that significantly affects you; or lodge a complaint. We may request information reasonably necessary to verify your identity and protect another person’s information. Contact the details in section 1. We will respond within applicable statutory time limits and explain any lawful refusal.</p>
       <p>You may also complain to the Information Regulator (South Africa) using the current contact channels published at <a href="https://inforegulator.org.za/" target="_blank" rel="noreferrer">inforegulator.org.za</a>. You are not required to contact BuddyRide first.</p>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+      <div className="no-print" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
         <a href="mailto:buddyride@outlook.com?subject=POPIA%20Request%20-%20Access%20to%20My%20Data" style={{ padding: '10px 14px', borderRadius: 10, background: '#E6F0FF', color: '#0052CC', fontWeight: 800, textDecoration: 'none' }}>Request My Data</a>
         <a href="mailto:buddyride@outlook.com?subject=POPIA%20Request%20-%20Correct%20My%20Data" style={{ padding: '10px 14px', borderRadius: 10, background: '#E6F0FF', color: '#0052CC', fontWeight: 800, textDecoration: 'none' }}>Correct My Data</a>
       </div>
@@ -101,6 +103,6 @@ export default function PrivacyPage() {
       <p>We may update this policy when our practices or legal obligations change. We will publish the revised policy and effective date and provide notice or obtain renewed consent where required. The current policy is available at <a href="/privacy">/privacy</a>. Questions and privacy requests: <a href="mailto:buddyride@outlook.com">buddyride@outlook.com</a> or <a href="tel:+27641018991">064 101 8991</a>.</p>
     </section>
 
-    <p><a href="/terms">Read the Terms and Conditions</a> · <a href="/">Return to BuddyRide</a></p>
+    <p className="no-print"><a href="/terms">Read the Terms and Conditions</a> · <a href="/">Return to BuddyRide</a></p>
   </main>
 }

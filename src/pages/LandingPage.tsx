@@ -54,7 +54,7 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
           BuddyRide is a South African e-hailing platform based in Limpopo. We connect passengers with verified local drivers. Drivers keep {driverKeeps}% of every trip — no commission, ever.
         </p>
         <p style={{ maxWidth: 700, margin: "8px auto 0", color: "#475467", fontSize: 13, fontWeight: 600 }}>
-          ✅ Verified Drivers Only • Selfie + SA ID Required • No Bypass • 🎫 Drivers buy trip bundles to go online
+          ✅ Verified Drivers Only • Selfie + SA ID Required • No Bypass • 🎫 Drivers buy trip bundles to go online • 🚨 SOS + Panic + Share Trip on every ride
         </p>
       </div>
 
@@ -63,7 +63,7 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
           <h2 style={{ fontWeight: 900, fontSize: 26, color: "white" }}>Passenger<br />Need a ride?</h2>
           <div style={{ marginTop: 16, background: "white", borderRadius: 12, padding: 12, color: BLUE_DARK, textAlign: "center", fontWeight: 800 }}>Limpopo 📍</div>
           <button onClick={handlePassengerClick} style={{ marginTop: 20, width: "100%", background: "#fff", color: BLUE, padding: 14, borderRadius: 999, fontWeight: 800, border: "none", cursor: "pointer" }}>Request Buddy</button>
-          <p style={{ marginTop: 12, fontSize: 13, color: "white" }}>Safe, affordable rides in Polokwane, Mankweng & Seshego. Pay your driver directly in cash. Drivers keep 100% of the fare.</p>
+          <p style={{ marginTop: 12, fontSize: 13, color: "white" }}>Safe, affordable rides in Polokwane, Mankweng &amp; Seshego. Pay Cash or Card. Drivers keep 100% of the fare. Receipt on every trip.</p>
         </div>
         <div style={{ background: BLUE_NAVY, flex: "1 1 320px", padding: 32, color: "white" }}>
           <div style={{ color: BLUE, fontWeight: 900, fontSize: 26 }}>Driver</div>
@@ -79,7 +79,7 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
           <div style={{ flex: "1 1 200px", padding: 16 }}>
             <div style={{ fontSize: 36 }}>📍</div>
             <h3 style={{ color: "#182230", fontWeight: 800, margin: "10px 0 6px" }}>1. Request</h3>
-            <p style={{ fontSize: 14, color: "#667085" }}>Enter pickup & destination in Limpopo</p>
+            <p style={{ fontSize: 14, color: "#667085" }}>Enter pickup &amp; destination in Limpopo</p>
           </div>
           <div style={{ flex: "1 1 200px", padding: 16 }}>
             <div style={{ fontSize: 36 }}>🚗</div>
@@ -88,18 +88,21 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
           </div>
           <div style={{ flex: "1 1 200px", padding: 16 }}>
             <div style={{ fontSize: 36 }}>💳</div>
-            <h3 style={{ color: "#182230", fontWeight: 800, margin: "10px 0 6px" }}>3. Pay Securely</h3>
-            <p style={{ fontSize: 14, color: "#667085" }}>Pay your driver directly in cash. Drivers keep 100% of the fare.</p>
+            <h3 style={{ color: "#182230", fontWeight: 800, margin: "10px 0 6px" }}>3. Pay Cash or Card</h3>
+            <p style={{ fontSize: 14, color: "#667085" }}>Pay Cash or Card. Drivers keep 100% of the fare. Receipt auto-sent.</p>
           </div>
           <div style={{ flex: "1 1 200px", padding: 16 }}>
             <div style={{ fontSize: 36 }}>🛡️</div>
-            <h3 style={{ color: "#182230", fontWeight: 800, margin: "10px 0 6px" }}>4. Verified</h3>
-            <p style={{ fontSize: 14, color: "#667085" }}>Selfie + SA ID checked by Admin before you ride</p>
+            <h3 style={{ color: "#182230", fontWeight: 800, margin: "10px 0 6px" }}>4. Verified + Safe</h3>
+            <p style={{ fontSize: 14, color: "#667085" }}>Selfie + SA ID checked by Admin. SOS, Panic, Share Trip &amp; Report on every ride.</p>
           </div>
         </div>
         <div style={{ marginTop: 24, background: '#14532d', color: 'white', padding: '16px', borderRadius: '12px', maxWidth: 700, marginLeft: 'auto', marginRight: 'auto' }}>
           <strong>🎫 For Drivers: How Bundles Work</strong>
           <p style={{ fontSize: 13, margin: '8px 0 0', lineHeight: 1.6 }}>Purchase an active trip bundle through secure Paystack checkout to unlock trip acceptance. The required credits depend on the verified trip distance. You keep 100% of every fare. <strong>All bundles expire 31 days after purchase date — use them before they expire.</strong></p>
+        </div>
+        <div style={{ marginTop: 16, background: BLUE_LIGHT, padding: '14px', borderRadius: '12px', maxWidth: 700, marginLeft: 'auto', marginRight: 'auto', fontSize: 12, color: '#182230', lineHeight: 1.6 }}>
+          <strong>POPIA &amp; Safety:</strong> Trip data kept 6 months only. You can request / delete your data via Support. Every ride has SOS, Panic Button, Share Trip, Report &amp; Receipt.
         </div>
         <div style={{ marginTop: 24, display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
           <button onClick={handlePassengerClick} style={{ background: BLUE, color: 'white', border: 'none', padding: '12px 24px', borderRadius: 999, fontWeight: 800, cursor: 'pointer' }}>Book a Ride →</button>
@@ -129,9 +132,9 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
           <div style={{ flex: "1 1 150px" }}>
             <h4 style={{ fontWeight: 700, fontSize: 14 }}>Legal</h4>
             <div style={{ fontSize: 13, color: "#B2CCFF", marginTop: 8, lineHeight: 2 }}>
-              <button onClick={() => goToLegal('/terms')} style={{ background: 'none', border: 'none', color: "#B2CCFF", cursor: 'pointer', padding: 0, fontSize: 13 }}>Terms & Conditions</button><br/>
+              <button onClick={() => goToLegal('/terms')} style={{ background: 'none', border: 'none', color: "#B2CCFF", cursor: 'pointer', padding: 0, fontSize: 13 }}>Terms &amp; Conditions</button><br/>
               <button onClick={() => goToLegal('/privacy')} style={{ background: 'none', border: 'none', color: "#B2CCFF", cursor: 'pointer', padding: 0, fontSize: 13 }}>Privacy Policy</button><br/>
-              <button onClick={() => goToLegal('/terms#refunds')} style={{ background: 'none', border: 'none', color: "#B2CCFF", cursor: 'pointer', padding: 0, fontSize: 13 }}>Cancellation & Refunds</button>
+              <button onClick={() => goToLegal('/terms#refunds')} style={{ background: 'none', border: 'none', color: "#B2CCFF", cursor: 'pointer', padding: 0, fontSize: 13 }}>Cancellation &amp; Refunds</button>
             </div>
           </div>
           <div style={{ flex: "1 1 200px" }}>

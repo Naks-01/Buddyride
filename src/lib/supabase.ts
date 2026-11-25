@@ -9,23 +9,21 @@ if (!isSupabaseConfigured) {
   console.error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY - check Vercel Env Vars + .env.local')
 }
 
-// Fail closed when production configuration is missing. Never send auth, Storage,
-// or database traffic to a fabricated placeholder Supabase project.
-if (!url || !anonKey) {
-  throw new Error('BuddyRide is not configured: set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY before starting the app.')
-}
+// FIX PRODUCTION: Never throw on import - main.tsx needs to import isSupabaseConfigured
+// to show the config screen. If we throw here, app white-screens before that screen.
+// Use safe placeholder only so createClient does not crash - main.tsx blocks all real calls.
+const safeUrl = url || 'https://placeholder.supabase.co'
+const safeKey = anonKey || 'placeholder-anon-key'
 
-export const supabase = createClient(url, anonKey, {
+export const supabase = createClient(safeUrl, safeKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
     flowType: 'pkce',
     storageKey: 'buddyride-auth',
-    // FIXED: Don't lock session to a single tab - driver uploads in one tab, admin in another
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
-  // FIXED: Global headers so Supabase logs show which app made the call
   global: {
     headers: { 'x-client-info': 'buddyride-web' },
   },
@@ -61,7 +59,6 @@ export type Profile = {
   email: string | null
   role: Role
   full_name: string | null
-  // FIXED: These were used as (profile as any) everywhere - now typed
   first_name?: string | null
   last_name?: string | null
   phone: string | null
@@ -70,7 +67,6 @@ export type Profile = {
   selfie_url?: string | null
   id_document_url?: string | null
   id_number?: string | null
-  // FIXED: Licence numbers - used in Onboarding / Documents / Pending
   licence_number?: string | null
   driver_licence_number?: string | null
   id_verification_method?: 'id_number' | 'id_photo' | null
@@ -148,7 +144,8 @@ export type Ride = {
   booking_fee?: number | null
   status: RideStatus
   ride_category?: string | null
-  payment_method?: 'cash' | null
+  // FIX GOV: Cash + Card both allowed - was 'cash' only, broke Card UI
+  payment_method?: 'cash' | 'card' | null
   payment_status?: 'awaiting_payment' | 'paid' | 'cash_due' | 'failed' | 'refunded' | null
   payment_reference?: string | null
   fare_quote_id?: string | null
@@ -170,8 +167,44 @@ export type Ride = {
   driver_rating?: number | null
 }
 
-// FIXED: Helper so every file gets ownerId the same way - no more user?.id || profile.id drift
+// GOV CHECKLIST TYPES - for Panic + Complaints
+export type EmergencyLog = {
+  id: string
+  ride_id: string | null
+  driver_id: string | null
+  passenger_id?: string | null
+  lat: number | null
+  lng: number | null
+  created_at?: string | null
+}
+
+export type Complaint = {
+  id: string
+  ride_id: string | null
+  driver_id: string | null
+  passenger_id?: string | null
+  reason: string | null
+  created_at?: string | null
+}
+
 export async function getOwnerId(fallbackId?: string | null): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser()
   return user?.id || fallbackId || null
+}
+
+// FIX: updateRide was missing / returned Ride - DriverHome + PassengerHome expect builder
+// Return Supabase query builder so callers can do:
+// await updateRide(id, { status: 'accepted' }).select('id').maybeSingle()
+// const { data } = await updateRide(id, { status: 'completed' })
+export function updateRide(rideId: string, patch: Partial<Ride> & Record<string, any>) {
+  return supabase.from('rides').update(patch as any).eq('id', rideId) as any
+}
+
+// FIX: Helper for DriverHome / PassengerHome - was inline supabase.from everywhere, inconsistent
+export function getRide(rideId: string) {
+  return supabase.from('rides').select('*').eq('id', rideId).single() as any
+}
+
+export function createRide(payload: Partial<Ride> & Record<string, any>) {
+  return supabase.from('rides').insert(payload as any).select().single() as any
 }

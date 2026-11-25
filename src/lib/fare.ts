@@ -10,6 +10,7 @@ export type FareEstimate = {
   booking_fee: number;
   driverGets: number;
   breakdown: string;
+  surgeMultiplier?: number;
 };
 
 export type FareCategoryRate = { base: number; perKm: number; perMin: number; min: number; max: number }
@@ -36,14 +37,18 @@ export function calculateFare(
   durationMin: number = 5,
   category: string = 'buddy_go',
   config: FareConfig = DEFAULT_FARE_CONFIG,
+  opts: { surgeMultiplier?: number } = {},
 ): FareEstimate {
   const normalized = normalizeCategory(category)
   const rates = config.categories[normalized] || config.categories.buddy_go
 
-  const safeKm = Number.isFinite(distanceKm) && distanceKm > 0 ? distanceKm : 0
-  const safeMin = Number.isFinite(durationMin) && durationMin > 0 ? durationMin : 5
+  // FIX: Clamp insane inputs - was NaN -> 0, 9999km -> R80k fare shown to passenger
+  const safeKm = Number.isFinite(distanceKm) && distanceKm > 0 ? Math.min(distanceKm, 500) : 0
+  const safeMin = Number.isFinite(durationMin) && durationMin > 0 ? Math.min(durationMin, 600) : 5
+  // FIX: Surge clamped 1.0 - 2.0 - was no param, any future caller could pass 10x
+  const surge = Number.isFinite(opts.surgeMultiplier) ? Math.min(Math.max(opts.surgeMultiplier || 1, 1), 2) : 1
 
-  let calcFare = rates.base + (safeKm * rates.perKm) + (safeMin * rates.perMin)
+  let calcFare = (rates.base + (safeKm * rates.perKm) + (safeMin * rates.perMin)) * surge
 
   if (calcFare < rates.min) calcFare = rates.min
   if (calcFare > rates.max) calcFare = rates.max
@@ -51,8 +56,6 @@ export function calculateFare(
 
   const bookingFee = 0
   const total = calcFare
-
-  // FIXED: Round platform first, driver = total - platform, so they always sum to total (no R1 mismatch)
   const driverGets = total
 
   return {
@@ -66,7 +69,8 @@ export function calculateFare(
     bookingFee,
     booking_fee: bookingFee,
     driverGets,
-    breakdown: `Driver receives 100% of the R${total} fare. BuddyRide earns from driver bundles.`,
+    surgeMultiplier: surge,
+    breakdown: `Base R${rates.base} + ${safeKm.toFixed(1)}km × R${rates.perKm} + ${safeMin.toFixed(0)}min × R${rates.perMin}${surge > 1 ? ` × ${surge.toFixed(1)}x surge` : ''} = R${total}. Driver receives 100%. BuddyRide earns from driver bundles.`,
   };
 }
 

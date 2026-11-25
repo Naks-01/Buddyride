@@ -4,25 +4,19 @@ import { supabase } from '../lib/supabase'
 import { normalizeDocType as canonicalType } from '../lib/driverDocuments'
 import compressImageFile from '../lib/compressImageFile'
 
-// BUNDLE MODEL: No commission, no payout. Bank NOT required. Driver keeps 100%.
-// BOLT COMPLETE: 4 Exterior + 3 Interior (Dashboard added) + Vehicle Details + Service Area + Ride Type
-
 const BLUE = '#0066FF'
 const BLUE_DARK = '#0052CC'
 const BLUE_LIGHT = '#E6F0FF'
 
-// FIX PDP ONLY
 function canonicalKey(raw: string | null | undefined) {
   const t = String(raw || '').toLowerCase().trim()
   if (t.includes('prdp') || t.includes('pdp') || t === 'professional_driving_permit' || t.includes('pr_dp')) return 'prdp'
   return canonicalType(raw || '')
 }
-
 function getExpiryForType(expiryDates: Record<string, string>, key: string): string | null {
   const c = canonicalKey(key)
   return expiryDates[c] || expiryDates[key] || null
 }
-
 const DOC_TYPES = [
   { key: 'profile_photo', label: 'Profile Photo', bucket: 'profile-photos', folder: 'profile_photo' },
   { key: 'selfie', label: 'Selfie', bucket: 'driver-documents', folder: 'selfie' },
@@ -41,69 +35,44 @@ const DOC_TYPES = [
   { key: 'huru_criminal_check', label: 'Huru Check', bucket: 'driver-documents', folder: 'huru_criminal_check' },
   { key: 'vehicle_inspection_report', label: 'Vehicle Inspection Report', bucket: 'driver-documents', folder: 'vehicle_inspection_report' },
 ] as const
-
 type DocKey = typeof DOC_TYPES[number]['key']
 const TOTAL_DOCS = DOC_TYPES.length
-const southAfricanToday = () => new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Africa/Johannesburg', year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(new Date())
-
-const EXPIRING_DOCS = new Set<string>([
-  'drivers_license',
-  'prdp',
-  'license_disc',
-  'huru_criminal_check',
-  'vehicle_inspection_report'
-])
-
-// === FIX: DD/MM/YYYY helpers ===
+const southAfricanToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+const EXPIRING_DOCS = new Set<string>(['drivers_license', 'prdp', 'license_disc', 'huru_criminal_check', 'vehicle_inspection_report'])
 function parseDDMMYYYYToISO(input: string): string | null {
   const digits = input.replace(/[^0-9]/g, '')
   if (digits.length !== 8) return null
-  const dd = Number(digits.slice(0,2))
-  const mm = Number(digits.slice(2,4))
-  const yyyy = Number(digits.slice(4,8))
+  const dd = Number(digits.slice(0, 2)); const mm = Number(digits.slice(2, 4)); const yyyy = Number(digits.slice(4, 8))
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31 || yyyy < 1900 || yyyy > 2100) return null
-  const iso = `${String(yyyy).padStart(4,'0')}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`
-  // Validate real date
+  const iso = `${String(yyyy).padStart(4, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
   const d = new Date(iso)
-  if (d.getFullYear() !== yyyy || d.getMonth()+1 !== mm || d.getDate() !== dd) return null
+  if (d.getFullYear() !== yyyy || d.getMonth() + 1 !== mm || d.getDate() !== dd) return null
   return iso
 }
 function formatISOToDDMMYYYY(iso: string): string {
   if (!iso) return ''
-  const clean = iso.slice(0,10)
-  const parts = clean.split('-')
+  const parts = iso.slice(0, 10).split('-')
   if (parts.length !== 3) return ''
-  const [y,m,d] = parts
-  if (!y || !m || !d) return ''
-  return `${d}/${m}/${y}`
+  return `${parts[2]}/${parts[1]}/${parts[0]}`
 }
 function formatTyping(v: string): string {
-  const digits = v.replace(/[^0-9]/g, '').slice(0,8)
+  const digits = v.replace(/[^0-9]/g, '').slice(0, 8)
   if (digits.length <= 2) return digits
-  if (digits.length <= 4) return `${digits.slice(0,2)}/${digits.slice(2)}`
-  return `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4)}`
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`
 }
-
-function safeUUID() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
-}
-
+function safeUUID() { if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID(); return `${Date.now()}-${Math.random().toString(36).slice(2)}` }
 function isValidSAID(id: string) {
   if (!/^\d{13}$/.test(id)) return false
   const yy = Number(id.slice(0, 2)); const month = Number(id.slice(2, 4)); const day = Number(id.slice(4, 6))
-  const currentYear = new Date().getFullYear(); const currentYearTwoDigits = currentYear % 100
+  const currentYearTwoDigits = new Date().getFullYear() % 100
   const year = yy <= currentYearTwoDigits ? 2000 + yy : 1900 + yy
   const birthDate = new Date(year, month - 1, day)
-  const validBirthDate = birthDate.getFullYear() === year && birthDate.getMonth() === month - 1 && birthDate.getDate() === day && birthDate <= new Date()
-  if (!validBirthDate) return false
+  if (birthDate.getFullYear() !== year || birthDate.getMonth() !== month - 1 || birthDate.getDate() !== day || birthDate > new Date()) return false
   let sum = 0; let doubleDigit = true
   for (let index = 11; index >= 0; index -= 1) { let digit = Number(id[index]); if (doubleDigit) { digit *= 2; if (digit > 9) digit -= 9 } sum += digit; doubleDigit = !doubleDigit }
   return (sum + Number(id[12])) % 10 === 0
 }
-
 async function signedUrlFor(ref: string): Promise<string | null> {
   if (!ref) return null
   if (ref.startsWith('http')) return ref
@@ -134,9 +103,9 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
   const [driverIdNumber, setDriverIdNumber] = useState('')
   const [licenceNumber, setLicenceNumber] = useState('')
   const [vehicleDetails, setVehicleDetails] = useState({ year: '', make_model: '', colour: '', registration: '' })
-  const [serviceZones, setServiceZones] = useState<{id: string, name: string}[]>([])
+  const [serviceZones, setServiceZones] = useState<{ id: string, name: string }[]>([])
   const [selectedZones, setSelectedZones] = useState<string[]>([])
-  const [rideTypes, setRideTypes] = useState<{category: string}[]>([])
+  const [rideTypes, setRideTypes] = useState<{ category: string }[]>([])
   const [selectedRideType, setSelectedRideType] = useState('')
 
   async function saveIdNumbers(idNum: string, licNum: string) {
@@ -144,43 +113,16 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     const ownerId = user?.id || driverId
     if (!ownerId) return
     if (!idNum.trim() && !licNum.trim()) return
-    await supabase.from('profiles').update({
-      id_number: idNum.trim() || null,
-      licence_number: licNum.trim() || null,
-      driver_licence_number: licNum.trim() || null,
-    } as any).eq('id', ownerId)
+    await supabase.from('profiles').update({ id_number: idNum.trim() || null, licence_number: licNum.trim() || null, driver_licence_number: licNum.trim() || null } as any).eq('id', ownerId)
   }
-
   async function saveVehicleNow() {
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || driverId
     if (!ownerId) return
-    const payload: any = {
-      driver_id: ownerId,
-      vehicle_year: vehicleDetails.year ? Number(vehicleDetails.year) : null,
-      make_model: vehicleDetails.make_model.trim() || null,
-      colour: vehicleDetails.colour.trim() || null,
-      registration: vehicleDetails.registration.trim().toUpperCase() || null,
-      service_zones: selectedZones,
-      ride_type: selectedRideType || null,
-      updated_at: new Date().toISOString(),
-    }
+    const payload: any = { driver_id: ownerId, vehicle_year: vehicleDetails.year ? Number(vehicleDetails.year) : null, make_model: vehicleDetails.make_model.trim() || null, colour: vehicleDetails.colour.trim() || null, registration: vehicleDetails.registration.trim().toUpperCase() || null, service_zones: selectedZones, ride_type: selectedRideType || null, updated_at: new Date().toISOString() }
     const { error } = await supabase.from('driver_vehicles').upsert(payload, { onConflict: 'driver_id' })
-    if (error) {
-      await supabase.from('profiles').update({
-        vehicle_year: payload.vehicle_year,
-        vehicle_make_model: payload.make_model,
-        vehicle_colour: payload.colour,
-        vehicle_registration: payload.registration,
-        service_zones: selectedZones,
-        ride_type: selectedRideType || null,
-      } as any).eq('id', ownerId)
-    }
-    try {
-      localStorage.setItem('br_vehicle', JSON.stringify(vehicleDetails))
-      localStorage.setItem('br_zones', JSON.stringify(selectedZones))
-      localStorage.setItem('br_ride_type', selectedRideType)
-    } catch {}
+    if (error) await supabase.from('profiles').update({ vehicle_year: payload.vehicle_year, vehicle_make_model: payload.make_model, vehicle_colour: payload.colour, vehicle_registration: payload.registration, service_zones: selectedZones, ride_type: selectedRideType || null } as any).eq('id', ownerId)
+    try { localStorage.setItem('br_vehicle', JSON.stringify(vehicleDetails)); localStorage.setItem('br_zones', JSON.stringify(selectedZones)); localStorage.setItem('br_ride_type', selectedRideType) } catch {}
   }
 
   async function load() {
@@ -189,7 +131,8 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     const [docsRes, profileRes, zonesRes, faresRes, vehicleRes] = await Promise.all([
       supabase.from('driver_documents').select('id,doc_type,document_type,status,file_url,document_url,file_path,storage_path,expiry_date,created_at').eq('driver_id', effectiveId).order('created_at', { ascending: false }),
       supabase.from('profiles').select('avatar_url,id_number,licence_number,driver_licence_number,vehicle_year,vehicle_make_model,vehicle_colour,vehicle_registration,service_zones,ride_type').eq('id', effectiveId).single(),
-      supabase.from('service_zones').select('id,name').eq('active', true).order('name'),
+      // FIX: Column is is_active, not active - was .eq('active', true) = 0 zones
+      supabase.from('service_zones').select('id,name').eq('is_active', true).order('name'),
       supabase.from('fare_rules').select('category').eq('active', true).order('category'),
       supabase.from('driver_vehicles').select('*').eq('driver_id', effectiveId).maybeSingle(),
     ])
@@ -198,12 +141,7 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     if (faresRes.data) setRideTypes(faresRes.data as any)
     const v: any = vehicleRes.data || profileRes.data
     if (v) {
-      setVehicleDetails({
-        year: v.vehicle_year ? String(v.vehicle_year) : '',
-        make_model: v.make_model || v.vehicle_make_model || '',
-        colour: v.colour || v.vehicle_colour || '',
-        registration: v.registration || v.vehicle_registration || '',
-      })
+      setVehicleDetails({ year: v.vehicle_year ? String(v.vehicle_year) : '', make_model: v.make_model || v.vehicle_make_model || '', colour: v.colour || v.vehicle_colour || '', registration: v.registration || v.vehicle_registration || '' })
       if (Array.isArray(v.service_zones)) setSelectedZones(v.service_zones)
       if (v.ride_type) setSelectedRideType(v.ride_type)
     }
@@ -217,33 +155,14 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     } catch {}
     if (docsRes.data) {
       const latest = new Map<string, any>()
-      for (const d of docsRes.data as any[]) {
-        const key = canonicalKey(d.doc_type || d.document_type || '')
-        if (!latest.has(key)) latest.set(key, { ...d, doc_type: key, document_type: key })
-      }
+      for (const d of docsRes.data as any[]) { const key = canonicalKey(d.doc_type || d.document_type || ''); if (!latest.has(key)) latest.set(key, { ...d, doc_type: key, document_type: key }) }
       const deduped = [...latest.values()]
       setDocs(deduped)
-      const exp: Record<string, string> = {}
-      const expDisplay: Record<string, string> = {}
-      for (const d of deduped) {
-        const key = canonicalKey(d.doc_type || d.document_type)
-        if (key && d.expiry_date && !exp[key]) {
-          const iso = String(d.expiry_date).slice(0, 10)
-          exp[key] = iso
-          expDisplay[key] = formatISOToDDMMYYYY(iso)
-        }
-      }
-      setExpiryDates(prev => ({ ...prev, ...exp }))
-      setExpiryDisplay(prev => ({ ...prev, ...expDisplay }))
+      const exp: Record<string, string> = {}; const expDisplay: Record<string, string> = {}
+      for (const d of deduped) { const key = canonicalKey(d.doc_type || d.document_type); if (key && d.expiry_date && !exp[key]) { const iso = String(d.expiry_date).slice(0, 10); exp[key] = iso; expDisplay[key] = formatISOToDDMMYYYY(iso) } }
+      setExpiryDates(prev => ({ ...prev, ...exp })); setExpiryDisplay(prev => ({ ...prev, ...expDisplay }))
       const previews: Record<string, string> = {}
-      await Promise.all(deduped.map(async (d) => {
-        const key = canonicalKey(d.doc_type || d.document_type)
-        const ref = d.file_url || d.document_url || d.file_path || d.storage_path
-        if (key && ref) {
-          const url = await signedUrlFor(String(ref))
-          if (url) previews[key] = url
-        }
-      }))
+      await Promise.all(deduped.map(async (d) => { const key = canonicalKey(d.doc_type || d.document_type); const ref = d.file_url || d.document_url || d.file_path || d.storage_path; if (key && ref) { const url = await signedUrlFor(String(ref)); if (url) previews[key] = url } }))
       setPreviewUrls(previews)
     }
     const avatar = (profileRes.data as any)?.avatar_url
@@ -251,17 +170,12 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
     setDriverIdNumber(prev => prev || (profileRes.data as any)?.id_number || '')
     setLicenceNumber(prev => prev || (profileRes.data as any)?.licence_number || (profileRes.data as any)?.driver_licence_number || '')
   }
-
   useEffect(() => { void load() }, [driverId])
 
   async function saveExpiry(key: DocKey, isoValue: string) {
     const cKey = canonicalKey(key)
     if (isoValue && isoValue.length !== 10) return
-    setExpiryDates(prev => {
-      const next = { ...prev, [cKey]: isoValue, [key]: isoValue }
-      try { localStorage.setItem('br_expiry_dates', JSON.stringify(next)) } catch {}
-      return next
-    })
+    setExpiryDates(prev => { const next = { ...prev, [cKey]: isoValue, [key]: isoValue }; try { localStorage.setItem('br_expiry_dates', JSON.stringify(next)) } catch {}; return next })
     if (!isoValue) return
     const { data: { user } } = await supabase.auth.getUser()
     const ownerId = user?.id || driverId
@@ -271,33 +185,21 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
   }
 
   async function upload(key: DocKey, file: File) {
-    setUploading(key)
-    setMsg('')
-    setIsError(false)
+    setUploading(key); setMsg(''); setIsError(false)
     let uploadedPath: string | null = null
     const meta = DOC_TYPES.find(d => d.key === key)!
     const cKey = canonicalKey(key)
     try {
       const extFromName = file.name.split('.').pop()?.toLowerCase() || ''
-      if (['heic','heif'].includes(extFromName)) throw new Error('iPhone HEIC not supported. Screenshot the document or pick JPG.')
+      if (['heic', 'heif'].includes(extFromName)) throw new Error('iPhone HEIC not supported. Screenshot the document or pick JPG.')
       const guessedType = file.type || (extFromName === 'pdf' ? 'application/pdf' : extFromName === 'png' ? 'image/png' : extFromName === 'webp' ? 'image/webp' : 'image/jpeg')
       if (file.size <= 0 || file.size > 20 * 1024 * 1024) throw new Error('File must be greater than 0 bytes and smaller than 20 MB.')
       const expiryForUpload = getExpiryForType(expiryDates, key)
       if (EXPIRING_DOCS.has(cKey) && !expiryForUpload) throw new Error(`Please select Expiry Date for ${meta.label} FIRST, then click Upload. Use DD/MM/YYYY format e.g. 23/11/2026`)
-      if (EXPIRING_DOCS.has(cKey) && expiryForUpload && expiryForUpload < southAfricanToday()) {
-        throw new Error('This document has expired. Upload a current document.')
-      }
+      if (EXPIRING_DOCS.has(cKey) && expiryForUpload && expiryForUpload < southAfricanToday()) throw new Error('This document has expired. Upload a current document.')
       const isImage = guessedType.startsWith('image/')
       let blob: Blob | File = file
-      if (isImage) {
-        try {
-          setMsg(`Compressing ${(file.size / 1024 / 1024).toFixed(1)}MB...`)
-          blob = await compressImageFile(file)
-        } catch (compressErr) {
-          console.warn('Compress failed on mobile, using original', compressErr)
-          blob = file
-        }
-      }
+      if (isImage) { try { setMsg(`Compressing ${(file.size / 1024 / 1024).toFixed(1)}MB...`); blob = await compressImageFile(file) } catch (compressErr) { console.warn('Compress failed on mobile, using original', compressErr); blob = file } }
       if (blob.size > 20 * 1024 * 1024) throw new Error('Processed file must be smaller than 20 MB.')
       const outputType = isImage ? 'image/jpeg' : guessedType
       const { data: { user } } = await supabase.auth.getUser()
@@ -306,65 +208,33 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       await saveIdNumbers(driverIdNumber, licenceNumber)
       const path = `${ownerId}/${meta.folder}/${cKey}_${safeUUID()}.${isImage ? 'jpg' : (extFromName === 'pdf' ? 'pdf' : 'jpg')}`
       uploadedPath = path
-      const { error: upErr } = await supabase.storage.from(meta.bucket).upload(path, blob, {
-        contentType: outputType,
-        upsert: true,
-      })
+      // FIX: upsert false - was upsert true, overwrote previous doc with same path pattern
+      const { error: upErr } = await supabase.storage.from(meta.bucket).upload(path, blob, { contentType: outputType, upsert: false })
       if (upErr) throw upErr
       const storageRef = `${meta.bucket}:${path}`
-      const payload: any = {
-        driver_id: ownerId,
-        doc_type: cKey,
-        document_type: cKey,
-        file_url: storageRef,
-        document_url: storageRef,
-        file_path: path,
-        storage_path: path,
-        file_name: file.name,
-        status: 'PENDING',
-        expiry_date: EXPIRING_DOCS.has(cKey) ? (expiryForUpload || null) : null,
-      }
+      const payload: any = { driver_id: ownerId, doc_type: cKey, document_type: cKey, file_url: storageRef, document_url: storageRef, file_path: path, storage_path: path, file_name: file.name, status: 'PENDING', expiry_date: EXPIRING_DOCS.has(cKey) ? (expiryForUpload || null) : null }
       const { data: existingList } = await supabase.from('driver_documents').select('id').eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`).limit(1)
       const existing = existingList?.[0]
       let dbErr: any = null
-      if (existing) {
-        const res = await supabase.from('driver_documents').update(payload).eq('id', existing.id)
-        dbErr = res.error
-      } else {
-        const res = await supabase.from('driver_documents').insert(payload)
-        dbErr = res.error
-      }
+      if (existing) { const res = await supabase.from('driver_documents').update(payload).eq('id', existing.id); dbErr = res.error } else { const res = await supabase.from('driver_documents').insert(payload); dbErr = res.error }
       if (dbErr) throw dbErr
       const { data: allForType } = await supabase.from('driver_documents').select('id,created_at').eq('driver_id', ownerId).or(`doc_type.eq.${cKey},document_type.eq.${cKey}`).order('created_at', { ascending: false })
-      if (allForType && allForType.length > 1) {
-        const idsToDelete = allForType.slice(1).map((r: any) => r.id)
-        await supabase.from('driver_documents').delete().in('id', idsToDelete)
-      }
+      if (allForType && allForType.length > 1) { const idsToDelete = allForType.slice(1).map((r: any) => r.id); await supabase.from('driver_documents').delete().in('id', idsToDelete) }
       if (cKey === 'profile_photo') {
         const { data: publicData } = supabase.storage.from(meta.bucket).getPublicUrl(path)
         const { error: profErr } = await supabase.from('profiles').update({ avatar_url: publicData.publicUrl }).eq('id', ownerId)
         if (profErr) throw profErr
         setProfileUrl(publicData.publicUrl)
       }
-      uploadedPath = null
-      setMsg(`${meta.label} uploaded ✅`)
-      await load()
+      uploadedPath = null; setMsg(`${meta.label} uploaded ✅`); await load()
     } catch (e: unknown) {
-      if (uploadedPath) await supabase.storage.from(meta.bucket).remove([uploadedPath]).catch(()=>{})
-      setIsError(true)
-      const errMsg = e instanceof Error ? e.message : String(e)
-      setMsg(`Upload failed: ${errMsg}`)
-      console.error(errMsg)
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    } finally {
-      setUploading(null)
-    }
+      if (uploadedPath) await supabase.storage.from(meta.bucket).remove([uploadedPath]).catch(() => {})
+      setIsError(true); const errMsg = e instanceof Error ? e.message : String(e); setMsg(`Upload failed: ${errMsg}`); console.error(errMsg); window.scrollTo({ top: 0, behavior: 'smooth' })
+    } finally { setUploading(null) }
   }
 
   async function submitForReview() {
-    setSubmitting(true)
-    setMsg('')
-    setIsError(false)
+    setSubmitting(true); setMsg(''); setIsError(false)
     try {
       const trimmedId = driverIdNumber.trim()
       if (!trimmedId) throw new Error('Enter your SA ID number / Passport number - required.')
@@ -393,25 +263,13 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
           if (retryError) throw retryError
         } else throw error
       }
-      setMsg('Your documents have been submitted for admin review.')
-      await load()
-    } catch (submitError: unknown) {
-      setIsError(true)
-      setMsg(`Could not submit for review: ${submitError instanceof Error ? submitError.message : String(submitError)}.`)
-    } finally {
-      setSubmitting(false)
-    }
+      setMsg('Your documents have been submitted for admin review.'); await load()
+    } catch (submitError: unknown) { setIsError(true); setMsg(`Could not submit for review: ${submitError instanceof Error ? submitError.message : String(submitError)}.`) } finally { setSubmitting(false) }
   }
 
   const getDoc = (key: DocKey) => docs.find(d => canonicalKey(d.doc_type || d.document_type || '') === canonicalKey(key))
-  const getStatus = (key: DocKey) => {
-    const latest = getDoc(key)
-    return latest ? latest.status : 'Missing'
-  }
-  const uploadedCount = DOC_TYPES.filter(t => {
-    const d = getDoc(t.key)
-    return Boolean(d?.file_url || d?.document_url || d?.file_path || d?.storage_path)
-  }).length
+  const getStatus = (key: DocKey) => { const latest = getDoc(key); return latest ? latest.status : 'Missing' }
+  const uploadedCount = DOC_TYPES.filter(t => { const d = getDoc(t.key); return Boolean(d?.file_url || d?.document_url || d?.file_path || d?.storage_path) }).length
   const hasIdNumbers = Boolean(driverIdNumber.trim() && licenceNumber.trim())
   const vehicleComplete = Boolean(vehicleDetails.year && vehicleDetails.make_model.trim() && vehicleDetails.colour.trim() && vehicleDetails.registration.trim())
   const zonesComplete = selectedZones.length > 0
@@ -423,12 +281,10 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
       <section style={{ maxWidth: 480, margin: '0 auto' }}>
         <button onClick={onBack} style={{ background: '#fff', border: '1px solid #E4E7EC', color: '#344054', padding: '8px 14px', borderRadius: 10, marginBottom: 12, fontWeight: 700, cursor: 'pointer' }}>← Back</button>
         <p style={{ color: BLUE, fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', margin: 0 }}>Step 4 of 4</p>
-        <h1 style={{ fontSize: 26, fontWeight: 800, margin: '6px 0 0', letterSpacing: '-.02em' }}>Driver documents</h1>
+        <h1 style={{ fontSize: 26, fontWeight: 800, margin: '6px 0 0' }}>Driver documents</h1>
         <p style={{ color: '#667085', marginTop: 6, fontSize: 14 }}>Your {TOTAL_DOCS} driver verification documents - ID, licence, licence disk and selfie. Plus Vehicle, Service Area & Ride Type.</p>
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div style={{ flex: 1, height: 9, background: '#E5E9EF', borderRadius: 99, overflow: 'hidden' }}>
-            <div style={{ width: `${(uploadedCount/TOTAL_DOCS)*100}%`, height: '100%', background: BLUE, transition: 'width 0.3s', borderRadius: 99 }} />
-          </div>
+          <div style={{ flex: 1, height: 9, background: '#E5E9EF', borderRadius: 99, overflow: 'hidden' }}><div style={{ width: `${(uploadedCount / TOTAL_DOCS) * 100}%`, height: '100%', background: BLUE, transition: 'width 0.3s', borderRadius: 99 }} /></div>
           <span style={{ fontSize: 13, fontWeight: 800, color: uploadedCount === TOTAL_DOCS ? BLUE : '#667085' }}>{uploadedCount}/{TOTAL_DOCS} {uploadedCount === TOTAL_DOCS ? '✅ READY' : ''}</span>
         </div>
         {msg && <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: isError ? '#FEF3F2' : BLUE_LIGHT, color: isError ? '#B42318' : BLUE_DARK, fontSize: 13, border: `1px solid ${isError ? '#FECDCA' : '#B2CCFF'}` }}>{msg}</div>}
@@ -461,81 +317,41 @@ export function DriverDocuments({ driverId, onBack }: { driverId: string, onBack
         <div style={{ marginTop: 16, padding: 16, borderRadius: 16, background: '#fff', border: '1px solid #EDF0F3', display: 'grid', gap: 10 }}>
           <strong style={{ fontSize: 14 }}>📍 Service Area - Choose where you drive {zonesComplete ? `✅ ${selectedZones.length} selected` : '❌'}</strong>
           <p style={{ margin: 0, fontSize: 12, color: '#667085' }}>Pick at least 1. You only get requests in these zones.</p>
-          {serviceZones.map(z => {
-            const checked = selectedZones.includes(z.id)
-            return <label key={z.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 12, borderRadius: 10, border: checked ? '2px solid #0066FF' : '1px solid #D0D5DD', background: checked ? BLUE_LIGHT : '#fff', cursor: 'pointer' }}><input type="checkbox" checked={checked} onChange={() => setSelectedZones(prev => prev.includes(z.id) ? prev.filter(x => x !== z.id) : [...prev, z.id])} onBlur={() => void saveVehicleNow()} /><strong style={{ fontSize: 14 }}>{z.name}</strong></label>
-          })}
+          {serviceZones.map(z => { const checked = selectedZones.includes(z.id); return <label key={z.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 12, borderRadius: 10, border: checked ? '2px solid #0066FF' : '1px solid #D0D5DD', background: checked ? BLUE_LIGHT : '#fff', cursor: 'pointer' }}><input type="checkbox" checked={checked} onChange={() => setSelectedZones(prev => prev.includes(z.id) ? prev.filter(x => x !== z.id) : [...prev, z.id])} onBlur={() => void saveVehicleNow()} /><strong style={{ fontSize: 14 }}>{z.name}</strong></label> })}
           {serviceZones.length === 0 && <p style={{ fontSize: 12, color: '#667085' }}>No zones - Admin must create service_zones.</p>}
         </div>
         <div style={{ marginTop: 16, padding: 16, borderRadius: 16, background: '#fff', border: '1px solid #EDF0F3', display: 'grid', gap: 10 }}>
           <strong style={{ fontSize: 14 }}>🚙 Ride Type {rideTypeComplete ? `✅ ${selectedRideType}` : '❌'}</strong>
-          <p style={{ margin: 0, fontSize: 12, color: '#667085' }}>Save vehicle first to unlock (like Bolt).</p>
-          {rideTypes.map(r => {
-            const checked = selectedRideType === r.category
-            return <label key={r.category} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 12, borderRadius: 10, border: checked ? '2px solid #0066FF' : '1px solid #D0D5DD', background: checked ? BLUE_LIGHT : '#fff', cursor: 'pointer', opacity: !vehicleComplete ? 0.5 : 1 }}><input type="radio" name="ride_type" checked={checked} disabled={!vehicleComplete} onChange={() => { setSelectedRideType(r.category); void saveVehicleNow() }} /><strong style={{ fontSize: 14 }}>{r.category}</strong></label>
-          })}
+          <p style={{ margin: 0, fontSize: 12, color: '#667085' }}>Save vehicle first to unlock.</p>
+          {rideTypes.map(r => { const checked = selectedRideType === r.category; return <label key={r.category} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 12, borderRadius: 10, border: checked ? '2px solid #0066FF' : '1px solid #D0D5DD', background: checked ? BLUE_LIGHT : '#fff', cursor: 'pointer', opacity: !vehicleComplete ? 0.5 : 1 }}><input type="radio" name="ride_type" checked={checked} disabled={!vehicleComplete} onChange={() => { setSelectedRideType(r.category); void saveVehicleNow() }} /><strong style={{ fontSize: 14 }}>{r.category}</strong></label> })}
           {!vehicleComplete && <p style={{ fontSize: 12, color: '#B54708', fontWeight: 700 }}>⚠️ Save vehicle details first to unlock ride type.</p>}
         </div>
         <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>
           {DOC_TYPES.map(t => {
-            const status = getStatus(t.key)
-            const isApproved = String(status).toLowerCase() === 'approved'
-            const isExpiring = EXPIRING_DOCS.has(canonicalKey(t.key))
-            const doc = getDoc(t.key)
-            const uploaded = Boolean(doc?.file_url || doc?.document_url)
-            const preview = previewUrls[canonicalKey(t.key)]
-            const expiryMissing = isExpiring && uploaded && !doc?.expiry_date && !getExpiryForType(expiryDates, t.key)
-            const isoVal = getExpiryForType(expiryDates, t.key) || ''
-            const displayVal = expiryDisplay[canonicalKey(t.key)] ?? expiryDisplay[t.key] ?? formatISOToDDMMYYYY(isoVal)
+            const status = getStatus(t.key); const isApproved = String(status).toLowerCase() === 'approved'; const isExpiring = EXPIRING_DOCS.has(canonicalKey(t.key)); const doc = getDoc(t.key); const uploaded = Boolean(doc?.file_url || doc?.document_url); const preview = previewUrls[canonicalKey(t.key)]; const expiryMissing = isExpiring && uploaded && !doc?.expiry_date && !getExpiryForType(expiryDates, t.key); const isoVal = getExpiryForType(expiryDates, t.key) || ''; const displayVal = expiryDisplay[canonicalKey(t.key)] ?? expiryDisplay[t.key] ?? formatISOToDDMMYYYY(isoVal)
             return (
-              <div key={t.key} style={{ padding: 16, border: `1px solid ${isApproved ? '#B2CCFF' : '#EDF0F3'}`, borderRadius: 16, background: isApproved ? BLUE_LIGHT : '#fff', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: '0 5px 18px rgba(20,33,50,0.045)' }}>
+              <div key={t.key} style={{ padding: 16, border: `1px solid ${isApproved ? '#B2CCFF' : '#EDF0F3'}`, borderRadius: 16, background: isApproved ? BLUE_LIGHT : '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                  <div><div style={{ fontWeight: 700, fontSize: 14 }}>{t.label} {isExpiring && <span style={{ fontSize: 10, background: '#FEF0C7', color: '#B54708', padding: '2px 6px', borderRadius: 99, marginLeft: 6, fontWeight: 800 }}>NEEDS EXPIRY</span>}</div><div style={{ marginTop: 6, display: 'inline-block', padding: '4px 8px', borderRadius: 99, fontSize: 11, fontWeight: 800, background: isApproved ? BLUE : uploaded ? '#ECFDF3' : '#F2F4F7', color: isApproved ? '#fff' : uploaded ? '#067647' : '#667085' }}>{isApproved ? 'VERIFIED' : expiryMissing ? 'EXPIRY MISSING' : String(status).toUpperCase()}</div>{doc?.expiry_date && <div style={{ fontSize: 11, color: '#667085', marginTop: 4 }}>Expires: {formatISOToDDMMYYYY(String(doc.expiry_date))}</div>}<div style={{ fontSize: 10, color: '#98A2B3', marginTop: 2 }}>📁 {t.folder}/</div></div>
+                  <div><div style={{ fontWeight: 700, fontSize: 14 }}>{t.label} {isExpiring && <span style={{ fontSize: 10, background: '#FEF0C7', color: '#B54708', padding: '2px 6px', borderRadius: 99, marginLeft: 6, fontWeight: 800 }}>NEEDS EXPIRY</span>}</div><div style={{ marginTop: 6, display: 'inline-block', padding: '4px 8px', borderRadius: 99, fontSize: 11, fontWeight: 800, background: isApproved ? BLUE : uploaded ? '#ECFDF3' : '#F2F4F7', color: isApproved ? '#fff' : uploaded ? '#067647' : '#667085' }}>{isApproved ? 'VERIFIED' : expiryMissing ? 'EXPIRY MISSING' : String(status).toUpperCase()}</div>{doc?.expiry_date && <div style={{ fontSize: 11, color: '#667085', marginTop: 4 }}>Expires: {formatISOToDDMMYYYY(String(doc.expiry_date))}</div>}</div>
                   <label style={{ background: isApproved ? '#fff' : BLUE, color: isApproved ? BLUE : 'white', border: isApproved ? `1px solid ${BLUE}` : 'none', padding: '10px 14px', borderRadius: 11, fontWeight: 800, fontSize: 13, cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.6 : 1, whiteSpace: 'nowrap' }}>
                     {uploading === t.key ? 'Uploading...' : status === 'Missing' ? 'Upload' : 'Replace'}
                     <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" style={{ display: 'none' }} disabled={!!uploading} onChange={e => { const f = e.target.files?.[0]; if (f) void upload(t.key, f); e.currentTarget.value = '' }} />
                   </label>
                 </div>
                 {isExpiring && (
-                  <label style={{ display: 'grid', gap: 4, fontSize: 12, color: '#344054', fontWeight: 700 }}>
-                    Expiry Date - REQUIRED BEFORE UPLOAD (DD/MM/YYYY)
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="23/11/2026"
-                      value={displayVal}
-                      onChange={e => {
-                        const formatted = formatTyping(e.target.value)
-                        setExpiryDisplay(prev => ({ ...prev, [canonicalKey(t.key)]: formatted, [t.key]: formatted }))
-                        const iso = parseDDMMYYYYToISO(formatted)
-                        if (iso) void saveExpiry(t.key, iso)
-                        else if (formatted.length === 0) {
-                          setExpiryDates(prev => {
-                            const n = { ...prev }
-                            delete n[canonicalKey(t.key)]; delete n[t.key]
-                            return n
-                          })
-                        }
-                      }}
-                      style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9, letterSpacing: '0.02em' }}
-                    />
+                  <label style={{ display: 'grid', gap: 4, fontSize: 12, color: '#344054', fontWeight: 700 }}>Expiry Date - REQUIRED BEFORE UPLOAD (DD/MM/YYYY)
+                    <input type="text" inputMode="numeric" placeholder="23/11/2026" value={displayVal} onChange={e => { const formatted = formatTyping(e.target.value); setExpiryDisplay(prev => ({ ...prev, [canonicalKey(t.key)]: formatted, [t.key]: formatted })); const iso = parseDDMMYYYYToISO(formatted); if (iso) void saveExpiry(t.key, iso); else if (formatted.length === 0) { setExpiryDates(prev => { const n = { ...prev }; delete n[canonicalKey(t.key)]; delete n[t.key]; return n }) } }} style={{ background: '#fff', border: '1px solid #D0D5DD', color: '#182230', padding: '10px 8px', borderRadius: 9 }} />
                     {expiryMissing && <span style={{ color: '#B54708', fontSize: 11 }}>⚠️ File uploaded but expiry missing - type date as DD/MM/YYYY then click Replace.</span>}
                   </label>
                 )}
-                {preview && (
-                  <a href={preview} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: BLUE, fontWeight: 700, textDecoration: 'none' }}>
-                    Preview uploaded document ↗
-                  </a>
-                )}
+                {preview && <a href={preview} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: BLUE, fontWeight: 700, textDecoration: 'none' }}>Preview uploaded document ↗</a>}
               </div>
             )
           })}
         </div>
-        <button disabled={!canSubmit || submitting || !!uploading} onClick={() => void submitForReview()} style={{ marginTop: 20, width: '100%', padding: 16, borderRadius: 14, background: canSubmit && !submitting ? BLUE : '#CBD2DA', color: 'white', border: 0, fontWeight: 800, fontSize: 16, opacity: submitting ? 0.7 : 1, cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
-          {submitting ? 'Submitting…' : canSubmit ? '✅ SUBMIT FOR REVIEW' : !hasIdNumbers ? `Enter ID Number + Licence Number (${uploadedCount}/${TOTAL_DOCS})` : !vehicleComplete ? 'Complete Vehicle Details to submit' : !zonesComplete ? 'Choose Service Area to submit' : !rideTypeComplete ? 'Choose Ride Type to submit' : `Upload all ${TOTAL_DOCS} documents (${uploadedCount}/${TOTAL_DOCS})`}
-        </button>
+        <button disabled={!canSubmit || submitting || !!uploading} onClick={() => void submitForReview()} style={{ marginTop: 20, width: '100%', padding: 16, borderRadius: 14, background: canSubmit && !submitting ? BLUE : '#CBD2DA', color: 'white', border: 0, fontWeight: 800, fontSize: 16, opacity: submitting ? 0.7 : 1, cursor: canSubmit ? 'pointer' : 'not-allowed' }}>{submitting ? 'Submitting…' : canSubmit ? '✅ SUBMIT FOR REVIEW' : !hasIdNumbers ? `Enter ID Number + Licence Number (${uploadedCount}/${TOTAL_DOCS})` : !vehicleComplete ? 'Complete Vehicle Details to submit' : !zonesComplete ? 'Choose Service Area to submit' : !rideTypeComplete ? 'Choose Ride Type to submit' : `Upload all ${TOTAL_DOCS} documents (${uploadedCount}/${TOTAL_DOCS})`}</button>
       </section>
     </main>
   )
 }
-export default DriverDocuments;
+export default DriverDocuments

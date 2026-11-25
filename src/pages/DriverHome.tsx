@@ -38,18 +38,23 @@ export function DriverHome({ profile }: { profile: Profile }) {
   async function toggleOnline() {
     if (!isOnline) {
       if (missingFields.length > 0) { window.location.assign('/driver/onboarding'); return }
-      if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundles'); return }
+      if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
       if (!docsOk || !verified) { alert('Waiting admin approval'); return }
     }
     const next = !isOnline
-    await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: next, updated_at: new Date().toISOString() }, { onConflict: 'driver_id' })
+    const { error } = await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: next, updated_at: new Date().toISOString() }, { onConflict: 'driver_id' })
+    if (error) { alert('Could not go online - try again'); return }
     setIsOnline(next)
   }
 
   async function accept(id: string) {
     clearInterval(timer.current)
     const { error } = await supabase.rpc('accept_ride_with_bundle', { p_ride_id: id })
-    if (error) { if (error.message.includes('NO_CREDITS')) window.location.href = '/driver/bundles'; alert(error.message); return }
+    if (error) {
+      if (String(error.message || '').includes('NO_CREDITS')) { window.location.href = '/driver/bundle'; return }
+      alert(error.message)
+      return
+    }
     const { data } = await supabase.from('rides').select('*').eq('id', id).single()
     if (data) {
       setRide(data as Ride)
@@ -64,11 +69,39 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setIncoming(null)
   }
 
+  async function handleTripAction() {
+    if (!ride) return
+    const s = String(ride.status)
+    if (s === 'arrived') {
+      // FIX: updateRide returns Ride directly, not { data } - was TS2339 Property 'data' does not exist on type 'Ride'
+      const data = await updateRide(ride.id, { status: 'in_progress' })
+      if (data) setRide(data as any)
+      return
+    }
+    if (s.includes('progress') || s === 'picked_up' || s === 'en_route' || s === 'on_trip') {
+      const { error } = await supabase.rpc('complete_ride', { p_ride_id: ride.id })
+      if (error) { alert(error.message); return }
+      const { data } = await supabase.from('rides').select('*').eq('id', ride.id).single()
+      if (data) {
+        alert(`✅ Trip Complete - Receipt sent. YOU KEEP R${(data as any).fare}`)
+        setRide(null)
+        setRoute(undefined)
+        setShowChat(false)
+        reloadBundle()
+      }
+      return
+    }
+    // FIX: Same - updateRide returns Ride directly
+    const data = await updateRide(ride.id, { status: 'arrived' })
+    if (data) setRide(data as any)
+  }
+
   useEffect(() => {
     if (!incoming) return
     setCountdown(EXPIRE)
     timer.current = setInterval(() => setCountdown(s => { if (s <= 1) { void decline(incoming.id); return 0 } return s - 1 }), 1000)
     return () => clearInterval(timer.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming?.id])
 
   useEffect(() => {
@@ -88,7 +121,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: BG, borderBottom: `1px solid ${BORDER}` }}>
         <NavigationMenu profile={profile} theme="light" onThemeChange={() => {}} onSignOut={() => supabase.auth.signOut()} />
-        <button onClick={() => window.location.href = '/driver/bundles'} style={{ flex: 1, borderRadius: 999, padding: '8px 12px', border: '1px solid #DBEAFE', background: '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 12 }}>
+        <button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, borderRadius: 999, padding: '8px 12px', border: '1px solid #DBEAFE', background: '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 12 }}>
           {bundleCredits ?? 0} trips • {bundleCount} bundles
         </button>
       </header>
@@ -111,21 +144,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
           ) : (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><h3 style={{ margin: 0, color: '#0F172A' }}>R{ride.fare} • Cash | Card</h3><span style={{ fontSize: 10, background: '#DBEAFE', color: BLUE, padding: '4px 8px', borderRadius: 999, fontWeight: 800 }}>YOU KEEP R{ride.fare}</span></div>
-              <p style={{ fontSize: 12, opacity: 0.7, margin: '6px 0' }}>{ride.pickup_address}</p>
+              <p style={{ fontSize: 12, opacity: 0.7, margin: '6px 0' }}>{ride.pickup_address} → {ride.dropoff_address}</p>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <button onClick={() => setShowChat(true)} style={{ padding: 12, borderRadius: 10, background: '#F8FAFF', border: `1px solid ${BORDER}` }}>💬</button>
-                <button onClick={() => {
-                  const s = String(ride.status)
-                  if (s === 'arrived') updateRide(ride.id, { status: 'in_progress' }).then(({ data }) => data && setRide(data as any))
-                  else if (s.includes('progress')) { supabase.rpc('complete_ride', { p_ride_id: ride.id }).then(() => supabase.from('rides').select('*').eq('id', ride.id).single().then(({ data }) => data && setRide(data as any))) }
-                  else updateRide(ride.id, { status: 'arrived' }).then(({ data }) => data && setRide(data as any))
-                }} style={{ flex: 1, padding: 14, borderRadius: 12, background: BLUE, color: 'white', border: 0, fontWeight: 800 }}>
-                  {String(ride.status) === 'arrived' ? 'Start Trip →' : String(ride.status).includes('progress') ? 'Complete ✓ • Receipt' : 'I Have Arrived'}
+                <button onClick={handleTripAction} style={{ flex: 1, padding: 14, borderRadius: 12, background: BLUE, color: 'white', border: 0, fontWeight: 800 }}>
+                  {String(ride.status) === 'arrived' ? 'Start Trip →' : (String(ride.status).includes('progress') || String(ride.status) === 'picked_up' || String(ride.status) === 'en_route' || String(ride.status) === 'on_trip') ? 'Complete ✓ • Receipt' : 'I Have Arrived'}
                 </button>
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Track my BuddyRide ${ride.id} https://www.google.com/maps?q=${location[1]},${location[0]}`)}`, '_blank')} style={{ flex: 1, padding: 10, borderRadius: 10, background: '#EFF6FF', color: BLUE, border: '1px solid #DBEAFE', fontWeight: 700, fontSize: 12 }}>📤 Share Trip</button>
-                <button onClick={() => { const r = prompt('Report reason?'); if (r) supabase.from('complaints').insert({ ride_id: ride.id, driver_id: profile.id, reason: r }) }} style={{ flex: 1, padding: 10, borderRadius: 10, background: '#F8FAFF', border: `1px solid ${BORDER}`, fontWeight: 700, fontSize: 12 }}>⚠️ Report</button>
+                <button onClick={() => { const r = prompt('Report reason?'); if (r) supabase.from('complaints').insert({ ride_id: ride.id, driver_id: profile.id, reason: r }).then(({ error }) => { if (error) alert(error.message); else alert('Report sent to BuddyRide Support') }) }} style={{ flex: 1, padding: 10, borderRadius: 10, background: '#F8FAFF', border: `1px solid ${BORDER}`, fontWeight: 700, fontSize: 12 }}>⚠️ Report</button>
               </div>
               <div style={{ marginTop: 10 }}><PanicButton rideId={ride.id} lat={location[1]} lng={location[0]} /></div>
               <div style={{ marginTop: 8, textAlign: 'center', fontSize: 11, color: '#64748B' }}>Receipt auto on Complete • Cash or Card • Gov Compliant</div>

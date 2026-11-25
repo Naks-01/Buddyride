@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { PassengerTomTomMap } from '../components/PassengerTomTomMap'
 import { supabase } from '../lib/supabase'
+import { isAdmin } from '../lib/auth'
 
 const BLUE = '#0066FF'
-const ORANGE = '#FF6B00'
+// FIX: Orange removed - was #FF6B00 on Docs button + Popular, fought Blue Lite
+const BLUE_DARK = '#0052CC'
 
-// ===== YOUR 3 CATEGORIES =====
 const CATEGORIES = [
   { id: 'buddy_lite', name: 'Buddy Lite', icon: '🛺', seats: '2 seats' },
   { id: 'buddy_plus', name: 'Buddy Plus', icon: '🚗', seats: '3 seats' },
@@ -26,7 +27,6 @@ function categoryFor(cat: string | null | undefined) {
 type DriverLocation = { driver_id: string, lat: number, lng: number }
 type PendingUser = { id: string, full_name: string, email: string, phone_number: string, verification_status: string, avatar_url: string, created_at: string, role: string, ride_type?: string | null }
 
-// --- ONLY CHANGE 1: added 'admin-bundles' ---
 type AdminModule = 'admin-dashboard' | 'admin-docs' | 'admin-rides' | 'admin-passengers' | 'admin-finance' | 'admin-support' | 'admin-zones' | 'admin-settings' | 'admin-bundles'
 type BundlePrice = { id: string, name: string, label: string, category: string, trips: number, price: number, active: boolean, popular: boolean }
 
@@ -42,9 +42,10 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
   const [processing, setProcessing] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'drivers' | 'passengers' | 'with-phone'>('all')
   const [ridesByCat, setRidesByCat] = useState<Record<string, number>>({})
+  const [sosCount, setSosCount] = useState(0)
+  const [complaintCount, setComplaintCount] = useState(0)
   const loadingRef = useRef(false)
 
-  // --- ONLY CHANGE 2: bundles state ---
   const [bundles, setBundles] = useState<BundlePrice[]>([])
   const [bundleSaving, setBundleSaving] = useState<string | null>(null)
 
@@ -71,13 +72,13 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
         .select('role,email')
         .eq('id', user.id)
         .maybeSingle()
-      if (profileError || profile?.role !== 'admin') { denyAccess(); return }
+      // FIX GOV: Role + Email BOTH must match - was role only, any profile with role=admin got in
+      if (profileError || profile?.role !== 'admin' || !isAdmin(profile?.email)) { denyAccess(); return }
       if (active) setAuthorization('authorized')
     })()
     return () => { active = false; if (redirectTimeout !== undefined) window.clearTimeout(redirectTimeout) }
   }, [])
 
-  // --- ONLY CHANGE 2b: load bundles ---
   async function loadBundles() {
     const { data } = await supabase.from('bundle_prices').select('*').order('category').order('trips')
     if (data) setBundles(data as BundlePrice[])
@@ -96,7 +97,7 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
     loadingRef.current = true
     setError('')
     try {
-      const [statsResult, pendingDriverResult, pendingPassengerResult, identityResult] = await Promise.all([
+      const [statsResult, pendingDriverResult, pendingPassengerResult, identityResult, sosResult, complaintResult] = await Promise.all([
         supabase.rpc('admin_dashboard_stats'),
         supabase.from('profiles')
           .select('id,full_name,email,phone_number,verification_status,avatar_url,created_at,role,ride_type')
@@ -113,12 +114,16 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
           .eq('role', 'driver')
           .eq('verification_status', 'identity_complete')
           .order('created_at', { ascending: true }),
+        supabase.from('sos_reports').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+        supabase.from('complaints').select('id', { count: 'exact', head: true }),
       ])
       let locs: DriverLocation[] = []
       const { data: statusLocs, error: statusErr } = await supabase.from('driver_status').select('driver_id,lat,lng').eq('is_online', true)
       if (!statusErr && statusLocs) {
         locs = statusLocs.filter((d: any): d is DriverLocation => typeof d.lat === 'number' && typeof d.lng === 'number')
       }
+      if (sosResult.count !== null && sosResult.count !== undefined) setSosCount(sosResult.count)
+      if (complaintResult.count !== null && complaintResult.count !== undefined) setComplaintCount(complaintResult.count)
 
       if (statsResult.error || pendingDriverResult.error || pendingPassengerResult.error || identityResult.error) {
         setError(statsResult.error?.message || pendingDriverResult.error?.message || pendingPassengerResult.error?.message || identityResult.error?.message || 'Could not load dashboard data.')
@@ -226,7 +231,7 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
             <button disabled={processing === d.id} onClick={() => approvePassenger(d.id, true, d.full_name || d.email)} style={{ padding: '8px 12px', borderRadius: 8, background: BLUE, color: 'white', border: 0, fontWeight: 700, cursor: 'pointer' }}>{processing === d.id ? '...' : 'Approve ✅'}</button>
           </>
         ) : (
-          <button onClick={() => onDocs(d.id)} style={{ padding: '8px 12px', borderRadius: 8, background: BLUE, color: 'white', border: 0, fontWeight: 700, cursor: 'pointer' }}>Check Docs & Approve →</button>
+          <button onClick={() => onDocs(d.id)} style={{ padding: '8px 12px', borderRadius: 8, background: BLUE, color: 'white', border: 0, fontWeight: 700, cursor: 'pointer' }}>Check Docs &amp; Approve →</button>
         )}
       </div>
     </div>
@@ -241,6 +246,14 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
     <h1 style={{ margin: '8px 0 16px', color: text }}>Admin Command Center - Bundle Model</h1>
     {error && <p role="alert" style={{ color: '#fca5a5', background: '#7f1d1d', padding: 10, borderRadius: 10 }}>{error}</p>}
     {msg && <p style={{ background: '#1e293b', color: '#93c5fd', padding: 10, borderRadius: 10, fontWeight: 700, border: `1px solid ${border}` }}>{msg}</p>}
+
+    {(sosCount > 0 || complaintCount > 0) && (
+      <div style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: '#7f1d1d', border: '1px solid #991b1b', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <strong>🚨 URGENT:</strong>
+        {sosCount > 0 && <button onClick={() => goModule('admin-support')} style={{ background: '#fff', color: '#7f1d1d', border: 0, padding: '8px 12px', borderRadius: 8, fontWeight: 800, cursor: 'pointer' }}>{sosCount} Open SOS →</button>}
+        {complaintCount > 0 && <button onClick={() => goModule('admin-support')} style={{ background: '#fff', color: '#7f1d1d', border: 0, padding: '8px 12px', borderRadius: 8, fontWeight: 800, cursor: 'pointer' }}>{complaintCount} Complaints →</button>}
+      </div>
+    )}
 
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '10px' }}>
       <section style={card}><div style={{ fontSize: 12, color: subText }}>Today Rides</div><strong style={{ fontSize: '26px', color: text }}>{stats.todayRides}</strong><div style={{ fontSize: 11, color: subText, marginTop: 4 }}>{CATEGORIES.map(c => `${c.icon} ${c.name}: ${ridesByCat[c.id] || 0}`).join(' • ')}</div></section>
@@ -295,7 +308,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
       <p style={{ fontSize: '12px', color: subText }}>Showing {locations.length} online driver location(s). Auto-refreshes every 5s. Center: Polokwane [-23.9045, 29.4689] • Bundle Model: Drivers use 1 credit per ride, 2 credits for trips of 100km or longer</p>
     </section>
 
-    {/* --- ONLY CHANGE 3: BUNDLES SECTION - EDIT PRICES HERE --- */}
     <section style={{ ...card, marginTop: '14px', background: '#0a1a0a', border: '1px solid #14532d' }}>
       <h2 style={{ marginTop: 0, color: '#bbf7d0' }}>💰 Bundle Prices - Edit Live ({bundles.length} bundles)</h2>
       <p style={{ fontSize: 12, color: subText }}>Change price → click outside → saved instantly to Supabase. Driver app sees new price.</p>
@@ -313,7 +325,7 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
                       onBlur={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v !== b.price) void updateBundle(b.id, 'price', v) }}
                       style={{ width: 90, background: '#000', color: 'white', border: `1px solid ${border}`, borderRadius: 8, padding: '8px' }} />
                     <button disabled={bundleSaving === b.id} onClick={() => void updateBundle(b.id, 'active', !b.active)} style={{ padding: '8px 12px', borderRadius: 8, background: b.active ? '#16a34a' : '#7f1d1d', color: 'white', border: 0, fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>{b.active ? 'Active' : 'Off'}</button>
-                    <button disabled={bundleSaving === b.id} onClick={() => void updateBundle(b.id, 'popular', !b.popular)} style={{ padding: '8px 12px', borderRadius: 8, background: b.popular ? ORANGE : bg2, color: 'white', border: `1px solid ${border}`, fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>{b.popular ? '★ Popular' : 'Make Popular'}</button>
+                    <button disabled={bundleSaving === b.id} onClick={() => void updateBundle(b.id, 'popular', !b.popular)} style={{ padding: '8px 12px', borderRadius: 8, background: b.popular ? BLUE : bg2, color: 'white', border: `1px solid ${border}`, fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>{b.popular ? '★ Popular' : 'Make Popular'}</button>
                   </div>
                 </div>
               ))}
@@ -328,14 +340,13 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
       <h3 style={{ color: text, marginTop: 0 }}>Admin Modules</h3>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button onClick={() => goModule('admin-dashboard')} style={{ padding: '8px 14px', borderRadius: 8, background: BLUE, color: 'white', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Dashboard</button>
-        <button onClick={() => goModule('admin-docs')} style={{ padding: '8px 14px', borderRadius: 8, background: ORANGE, color: 'white', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Documents ({pendingDrivers.length + pendingPassengers.length} pending)</button>
+        <button onClick={() => goModule('admin-docs')} style={{ padding: '8px 14px', borderRadius: 8, background: BLUE_DARK, color: 'white', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Documents ({pendingDrivers.length + pendingPassengers.length} pending)</button>
         <button onClick={() => goModule('admin-rides')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>Rides</button>
         <button onClick={() => goModule('admin-passengers')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>Passengers</button>
         <button onClick={() => goModule('admin-finance')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>Finance</button>
-        <button onClick={() => goModule('admin-support')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>SOS Support</button>
+        <button onClick={() => goModule('admin-support')} style={{ padding: '8px 14px', borderRadius: 8, background: sosCount > 0 ? '#dc2626' : bg2, color: sosCount > 0 ? 'white' : subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>SOS Support {sosCount > 0 ? `(${sosCount})` : ''}</button>
         <button onClick={() => goModule('admin-zones')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>Zones</button>
         <button onClick={() => goModule('admin-settings')} style={{ padding: '8px 14px', borderRadius: 8, background: bg2, color: subText, border: `1px solid ${border}`, fontSize: 12, cursor: 'pointer' }}>Settings</button>
-        {/* --- ONLY CHANGE 3b: bundles button --- */}
         <button onClick={() => goModule('admin-bundles')} style={{ padding: '8px 14px', borderRadius: 8, background: '#16a34a', color: 'white', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>💰 Bundles ({bundles.length})</button>
       </div>
     </section>

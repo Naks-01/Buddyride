@@ -34,10 +34,8 @@ function normalizeCategory(raw: string | null | undefined) {
   if (v === 'buddy_max') return 'buddy_max'
   return 'buddy_plus'
 }
-
 function errMsg(e: any) { return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e)) }
 function safeUUID() { if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID(); return `${Date.now()}-${Math.random().toString(36).slice(2)}` }
-
 function formatDisplayName(fullName?: string | null) {
   if (!fullName?.trim()) return 'Passenger'
   return fullName.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
@@ -115,7 +113,8 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [duration, setDuration] = useState(5); const [price, setPrice] = useState<number | null>(null); const [showEstimate, setShowEstimate] = useState(false)
   const [selectedCat, setSelectedCat] = useState('buddy_plus'); const [fareQuote, setFareQuote] = useState<any>(null)
   const [categories] = useState(CATEGORIES)
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('buddy_theme') as any) || 'light')
+  const theme = 'light' as const
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card'>('cash')
   const [rating, setRating] = useState(0); const [ratingComment, setRatingComment] = useState('')
   const [showCancelReason, setShowCancelReason] = useState(false); const [cancelReason, setCancelReason] = useState('')
   const [nearbyCars, setNearbyCars] = useState<any[]>([]); const [showChat, setShowChat] = useState(false)
@@ -130,8 +129,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const galleryDocRef = useRef<PassengerSafetyCapture | null>(null)
   const pickupDebounce = useRef<any>(null); const dropoffDebounce = useRef<any>(null); const pickupAddressRequest = useRef(0); const dropoffAddressRequest = useRef(0); const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null); const cancelledRideTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const uploadToastTimer = useRef<number | null>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null); const prevStatusRef = useRef<string>('')
-  // FIX: Match Driver colours so theme is consistent across app
-  const isDark = theme === 'dark'; const bg = isDark ? '#0e0e10' : '#f5f5f7'; const bgCard = isDark ? '#121214' : '#ffffff'; const bg2 = isDark ? '#1c1c1e' : '#F2F4F7'; const text = isDark ? 'white' : '#111827'; const muted = isDark ? '#9ca3af' : '#667085'; const border = isDark ? 'rgba(255,255,255,0.08)' : '#E4E7EC'
+  const isDark = false; const bg = '#f5f5f7'; const bgCard = '#ffffff'; const bg2 = '#F2F4F7'; const text = '#111827'; const muted = '#667085'; const border = '#E4E7EC'
   const hasIdNumber = !!(safetyProfile.id_number || safetyIdNumber.trim())
   const hasIdDoc = !!safetyProfile.id_document_url
   const hasSelfie = !!safetyProfile.selfie_url
@@ -155,20 +153,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) setSheetSnap(50)
     else if (rideStatus === 'completed') setSheetSnap(90)
   }, [rideStatus])
-  // FIX: WHOLE APP THEME - same as Driver, sync body + CSS vars
   useEffect(() => {
-    try { localStorage.setItem('buddy_theme', theme) } catch {}
     try {
-      document.documentElement.setAttribute('data-theme', theme)
-      document.body.style.background = theme === 'dark' ? '#0e0e10' : '#f5f5f7'
-      document.body.style.color = theme === 'dark' ? 'white' : '#111827'
-      document.documentElement.style.setProperty('--ride-surface', theme === 'dark' ? 'rgba(17,17,19,.94)' : 'rgba(255,255,255,.94)')
-      document.documentElement.style.setProperty('--ride-subtle', theme === 'dark' ? '#1c1c1e' : '#f5f5f7')
-      document.documentElement.style.setProperty('--ride-text', theme === 'dark' ? '#f8fafc' : '#111827')
-      document.documentElement.style.setProperty('--ride-muted', theme === 'dark' ? '#9ca3af' : '#6b7280')
-      document.documentElement.style.setProperty('--ride-border', theme === 'dark' ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)')
+      localStorage.setItem('buddyride-theme', 'light')
+      document.documentElement.setAttribute('data-theme', 'light')
+      document.documentElement.classList.remove('ride-app--dark')
+      document.documentElement.classList.add('ride-app--light')
+      document.body.style.background = '#f5f5f7'
+      document.body.style.color = '#111827'
+      document.documentElement.style.setProperty('--ride-surface', 'rgba(255,255,255,.94)')
+      document.documentElement.style.setProperty('--ride-subtle', '#f5f5f7')
+      document.documentElement.style.setProperty('--ride-text', '#111827')
+      document.documentElement.style.setProperty('--ride-muted', '#6b7280')
+      document.documentElement.style.setProperty('--ride-border', 'rgba(0,0,0,.06)')
     } catch {}
-  }, [theme])
+  }, [])
   useEffect(() => () => { if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current); cameraStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
   useEffect(() => {
     if (rideStatus !== 'searching') { setSearchSec(0); return }
@@ -188,7 +187,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     }
     void loadPassengerVerification(); return () => { active = false }
   }, [profile.id])
-
   useEffect(() => {
     if (!cameraDocument) return; let active = true; setCameraReady(false); setCameraError('')
     if (!navigator.mediaDevices?.getUserMedia) { setCameraError('Camera access is not available in this browser.'); return }
@@ -278,7 +276,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     const ch = createRealtimeChannel('ride-' + ride.id).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides', filter: 'id=eq.' + ride.id }, handleUpdate).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [ride?.id])
-
   function onPickupChange(val: string) { setFareQuote(null); setPickup(val); setPickupCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 300) }
   function onDropoffChange(val: string) { setFareQuote(null); setDropoff(val); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
   function selectPickupSuggestion(item: any) { setFareQuote(null); setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowPickupSug(false); setPinTarget('dropoff') }
@@ -374,7 +371,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         status: initialStatus,
         fare_quote_id: quote.quote_id,
         fare: finalFare, distance_km: Number(quote.distance_km), duration_min: Number(quote.duration_min),
-        payment_method: 'cash', ride_category: normalizedCat,
+        payment_method: paymentMethod, ride_category: normalizedCat,
         ride_type: normalizedCat,
       } as any).select().single()
       if (error) throw error
@@ -382,7 +379,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       if (initialStatus === 'searching') {
         await notifyDriversInPickupZone(data.id, pickup, normalizedCat)
       }
-
     } catch (error) { console.error('createRide error:', error); setRideError(errMsg(error)) } finally { setLoading(false) }
   }
   async function notifyDriversInPickupZone(rideId: string, pickupText: string, rideCategory: string) {
@@ -430,23 +426,30 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     } catch (error) { setVerificationError('Could not verify: ' + errMsg(error)) } finally { setLoading(false) }
   }
   async function sendPassengerSos() {
-    if (!window.confirm('Send SOS?')) return
+    if (!window.confirm('Send SOS? Share your live location with BuddyRide Support?')) return
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Please log in again')
       const coords = liveDriverLocation?.coordinates || location
       const { error } = await supabase.from('sos_reports').insert({ user_id: user.id, ride_id: ride?.id || null, message: 'Passenger SOS', status: 'open', type: 'passenger_sos', latitude: coords?.[1] ?? null, longitude: coords?.[0] ?? null, } as any)
       if (error) throw error
-      window.alert('SOS sent.')
+      window.alert('SOS sent - Support + driver notified. Stay safe.')
     } catch (error) { window.alert('SOS failed: ' + errMsg(error)) }
   }
   async function cancelRide() {
-    if (!ride) return; if (!cancelReason) { setShowCancelReason(true); return }
-    const rideId = ride.id; const { data: cancelledRide, error } = await updateRide(rideId, { status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).select('id').maybeSingle()
-    if (error) { setRideError('Could not cancel: ' + errMsg(error)); return }
-    if (!cancelledRide) { setRideError('Ride no longer available to cancel.'); return }
-    try { await supabase.from('ride_requests').update({ status: 'cancelled' }).eq('ride_id', rideId).eq('status', 'pending') } catch {}
-    setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(90); setCancelReason('')
+    if (!ride) return
+    if (!cancelReason) { setShowCancelReason(true); return }
+    const rideId = ride.id
+    // FIX: TS2339 Property 'select' does not exist on type 'Promise<Ride>' - updateRide returns Ride directly, not builder
+    // Was: const { data: cancelledRide, error } = await updateRide(rideId, {...}).select('id').maybeSingle()
+    try {
+      const cancelledRide = await updateRide(rideId, { status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any)
+      if (!cancelledRide) { setRideError('Ride no longer available to cancel.'); return }
+      try { await supabase.from('ride_requests').update({ status: 'cancelled' }).eq('ride_id', rideId).eq('status', 'pending') } catch {}
+      setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(90); setCancelReason('')
+    } catch (e: any) {
+      setRideError('Could not cancel: ' + errMsg(e))
+    }
   }
   async function finishTrip() {
     const finishedRide = completedRide || completedReceipt; if (!finishedRide) return; if (rating === 0 || !finishedRide.driver_id) return
@@ -481,14 +484,12 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     } finally { setVerificationUploadType(null) }
   }
   function closeVerificationCamera() { cameraStreamRef.current?.getTracks().forEach(track => track.stop()); cameraStreamRef.current = null; setCameraDocument(null); setCameraError(''); setCameraReady(false) }
-
   async function handleGalleryFile(file: File) {
     const doc = galleryDocRef.current || cameraDocument
     if (!doc) return
     closeVerificationCamera()
     await uploadPassengerVerification(doc, file)
   }
-
   async function captureVerificationPhoto() {
     const video = cameraVideoRef.current; const verificationDocument = cameraDocument
     if (!video || !verificationDocument || !video.videoWidth || !video.videoHeight) { setCameraError('Camera not ready'); return }
@@ -502,22 +503,10 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     const sounds: any = { accept: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', arrived: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-2-269292.mp3', start: 'https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3', complete: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', cancel: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3' }
     try { const audio = new Audio(sounds[type]); audio.volume = 1.0; audio.play().catch(() => {}) } catch {}; if ('vibrate' in navigator) { if (type === 'arrived') navigator.vibrate([200, 100, 200, 100, 400]); else if (type === 'cancel') navigator.vibrate([500, 200, 500]); else navigator.vibrate(300) }
   }
-
-  // FIXED TOP - safe-area, no hardcoded 60px
-  return <div className={'ride-app ride-app--' + theme} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, color: text, paddingTop: 'env(safe-area-inset-top)' }}>
-    <input
-      ref={galleryInputRef}
-      type="file"
-      accept="image/jpeg,image/png,image/webp,application/pdf"
-      style={{ display: 'none' }}
-      onChange={e => { const f = e.target.files?.[0] as any; if (f) void handleGalleryFile(f); e.currentTarget.value = '' }}
-    />
+  return <div className={'ride-app ride-app--light'} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, color: text, paddingTop: 'env(safe-area-inset-top)' }}>
+    <input ref={galleryInputRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0] as any; if (f) void handleGalleryFile(f); e.currentTarget.value = '' }} />
     {uploadToast && <div role="alert" style={{ position: 'fixed', left: 16, right: 16, bottom: 24, zIndex: 100002, margin: '0 auto', maxWidth: 480, padding: '12px 16px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>Upload failed: {uploadToast}</div>}
-    {showSafetyModal && <PassengerSafetyModal dark={isDark} avatarUrl={safetyProfile.selfie_url} idDocumentUrl={safetyProfile.id_document_url} idNumber={safetyIdNumber} loading={loading} uploading={verificationUploadType !== null} error={verificationError} onIdNumberChange={setSafetyIdNumber} onOpenCamera={type => {
-      const cap = type === 'passenger_selfie' ? PASSENGER_SAFETY_CAPTURES[0] : PASSENGER_SAFETY_CAPTURES[1]
-      galleryDocRef.current = cap
-      setCameraDocument(cap)
-    }} onSubmit={event => { void verifyAndRequestRide(event) }} onClose={() => setShowSafetyModal(false)} />}
+    {showSafetyModal && <PassengerSafetyModal dark={false} avatarUrl={safetyProfile.selfie_url} idDocumentUrl={safetyProfile.id_document_url} idNumber={safetyIdNumber} loading={loading} uploading={verificationUploadType !== null} error={verificationError} onIdNumberChange={setSafetyIdNumber} onOpenCamera={type => { const cap = type === 'passenger_selfie' ? PASSENGER_SAFETY_CAPTURES[0] : PASSENGER_SAFETY_CAPTURES[1]; galleryDocRef.current = cap; setCameraDocument(cap) }} onSubmit={event => { void verifyAndRequestRide(event) }} onClose={() => setShowSafetyModal(false)} />}
     {cameraDocument && <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 100002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'rgba(0,0,0,.88)' }}>
       <section style={{ width: '100%', maxWidth: 480, padding: 16, borderRadius: 18, background: bgCard, color: text }}>
         <h2 style={{ margin: '0 0 12px' }}>{cameraDocument.action}</h2>
@@ -528,17 +517,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <button type="button" onClick={closeVerificationCamera} style={{ flex: 1, padding: 13, borderRadius: 12, border: '1px solid ' + border, background: bg2, color: text }}>Cancel</button>
             <button type="button" onClick={() => void captureVerificationPhoto()} disabled={!cameraReady} style={{ flex: 1, padding: 13, borderRadius: 12, border: 'none', background: cameraReady ? BLUE : '#555', color: 'white', fontWeight: 700 }}>Capture</button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              galleryDocRef.current = cameraDocument
-              galleryInputRef.current?.click()
-            }}
-            // FIX: Gallery button was hardcoded white - now theme-aware
-            style={{ width: '100%', padding: 13, borderRadius: 12, border: `2px solid ${BLUE}`, background: bgCard, color: BLUE, fontWeight: 800 }}
-          >
-            🖼️ Choose from Gallery instead
-          </button>
+          <button type="button" onClick={() => { galleryDocRef.current = cameraDocument; galleryInputRef.current?.click() }} style={{ width: '100%', padding: 13, borderRadius: 12, border: `2px solid ${BLUE}`, background: bgCard, color: BLUE, fontWeight: 800 }}>🖼️ Choose from Gallery instead</button>
         </div>
       </section>
     </div>}
@@ -557,30 +536,25 @@ export function PassengerHome({ profile }: { profile: Profile }) {
         <div style={{ background: bg2, border: '1px solid '+border, borderRadius:12, padding:12, display:'grid', gap:8, fontSize:13, color: text }}>
           <div>● Pickup: <strong>{ride.pickup_address}</strong></div>
           <div>● Destination: <strong>{ride.dropoff_address}</strong></div>
-          <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{color: muted}}>Cash - Fixed Fare</span><strong>R {ride.fare}</strong></div>
+          <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{color: muted}}>{paymentMethod === 'card' ? 'Card' : 'Cash'} - Fixed Fare</span><strong>R {ride.fare}</strong></div>
         </div>
         <button onClick={()=>{ setCancelReason('Changed mind'); void cancelRide() }} style={{ width:'100%', marginTop:16, background:'none', border:0, color:'#FF6B6B', fontWeight:800 }}>Cancel ride</button>
       </div>
       <style>{'@keyframes bro-pulse{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}'}</style>
     </div>}
-
     <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: bgCard, color: text, borderBottom: '1px solid ' + border, minHeight: 56, position: 'relative' }}>
-      <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => { void supabase.auth.signOut() }} verificationStatus={verificationStatus} verificationRejectionReason={verificationRejectionReason} onReuploadVerification={() => { setVerificationError(''); setShowSafetyModal(true) }} />
+      <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={() => {}} onSignOut={() => { void supabase.auth.signOut() }} verificationStatus={verificationStatus} verificationRejectionReason={verificationRejectionReason} onReuploadVerification={() => { setVerificationError(''); setShowSafetyModal(true) }} />
       <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 1 }}>
         <strong style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.2px', lineHeight: 1.1, color: BLUE }}>BuddyRide</strong>
-        <span style={{ fontSize: 12, fontWeight: 600, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {formatDisplayName(profile.full_name)} {isVerified && <span style={{ color: '#22c55e' }}>● Verified</span>}
-        </span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatDisplayName(profile.full_name)} {isVerified && <span style={{ color: '#22c55e' }}>● Verified</span>}</span>
       </div>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}><button type="button" className="sos-btn" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 14px', borderRadius: 20, background: '#dc2626', color: 'white', border: 0, fontWeight: 900, fontSize: 13 }}>SOS</button><button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: '36px', height: '36px', borderRadius: '18px', background: bg2, border: '1px solid ' + border, display: 'grid', placeItems: 'center', padding: 0, color: text }}>{isDark ? '☀️' : '🌙'}</button></div>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}><button type="button" className="sos-btn" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 14px', borderRadius: 20, background: '#dc2626', color: 'white', border: 0, fontWeight: 900, fontSize: 13 }}>SOS</button></div>
     </header>
-
     {cancelledNotification && (<div style={{ position: 'fixed', top: 'calc(env(safe-area-inset-top) + 70px)', left: '12px', right: '12px', zIndex: 99999, background: '#ff3b30', borderRadius: '16px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
       <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>❌</div>
       <div style={{ flex: 1 }}><div style={{ color: 'white', fontWeight: '900' }}>Driver Cancelled!</div><div style={{ color: 'white', fontSize: '13px' }}>{cancelledNotification}</div></div>
       <button onClick={() => setCancelledNotification(null)} style={{ background: 'white', color: '#ff3b30', border: 'none', borderRadius: '20px', padding: '8px 14px', fontWeight: 'bold' }}>OK</button>
     </div>)}
-
     <div style={{ position: 'absolute', inset: '0 0 0 0', top: 'calc(env(safe-area-inset-top) + 56px)', bottom: 0, zIndex: 1 }}>
       <Suspense fallback={<div aria-label="Loading map" style={{ width: '100%', height: '100%', background: bg2 }} />}>
         <PassengerTomTomMap center={mapCenter} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onMapMove} />
@@ -593,7 +567,6 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       )}
       <button aria-label="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: BLUE, color: 'white', border: 'none', fontSize: '22px' }}>📍</button>
     </div>
-
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, pointerEvents: 'none' }}>
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
         {!ride && !completedRide && !completedReceipt && (<>
@@ -601,17 +574,15 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <h2 style={{ margin: 0, fontSize: 20, color: text }}>Where are you going?</h2>
             <span style={{ fontSize: 13, color: muted, fontWeight: 500 }}>Hi {firstName(profile.full_name)} {isVerified ? <span style={{ color: '#22c55e', fontWeight: 700 }}>● Verified</span> : <span>• Ready to ride</span>}</span>
           </div>
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ position: 'relative' }}>
               <input value={pickup} onFocus={() => setPinTarget('pickup')} onChange={e => onPickupChange(e.target.value)} placeholder="Pickup location" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />
-              {showPickupSug && <div style={sugStyle(isDark) as any}>{pickupSuggestions.map((s, i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name}</div>))}</div>}
+              {showPickupSug && <div style={sugStyle(false) as any}>{pickupSuggestions.map((s, i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}
             </div>
             <div style={{ position: 'relative' }}>
               <input value={dropoff} onFocus={() => setPinTarget('dropoff')} onChange={e => onDropoffChange(e.target.value)} placeholder="Where to?" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />
-              {showDropoffSug && <div style={sugStyle(isDark) as any}>{dropoffSuggestions.map((s, i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(isDark)}>📍 {s.place_name}</div>))}</div>}
+              {showDropoffSug && <div style={sugStyle(false) as any}>{dropoffSuggestions.map((s, i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}
             </div>
-
             <div>
               <h3 style={{ margin: '8px 0 8px', fontSize: 15, color: text }}>Choose a ride</h3>
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: 4 }}>
@@ -621,25 +592,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
                 })}
               </div>
             </div>
-
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={() => setPaymentMethod('cash')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'cash' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'cash' ? BLUE_LIGHT : bg2, color: paymentMethod === 'cash' ? BLUE : text, fontWeight: 800 }}>💵 Cash</button>
+              <button type="button" onClick={() => setPaymentMethod('card')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'card' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'card' ? BLUE_LIGHT : bg2, color: paymentMethod === 'card' ? BLUE : text, fontWeight: 800 }}>💳 Card</button>
+            </div>
             {showEstimate && displayPrice !== null && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, background: bg2, borderRadius: 14, padding: 12, border: '1px solid '+border }}>
                 <div style={{ textAlign:'center' }}>
                   <div style={{ fontWeight:900, fontSize:20, color: text }}>R {displayPrice}</div>
-                  <div style={{ fontSize:11, color: muted }}>Fixed Fare • {selectedCategoryLabel} • No negotiation</div>
+                  <div style={{ fontSize:11, color: muted }}>Fixed Fare • {selectedCategoryLabel} • {paymentMethod === 'card' ? 'Card' : 'Cash'} • No negotiation</div>
                 </div>
               </div>
             )}
-
-            <p style={{fontSize:12,color:muted,textAlign:'center'}}>Payment: Cash paid directly to your driver. Paystack is used only for driver bundle purchases.</p>
-
+            <p style={{fontSize:12,color:muted,textAlign:'center'}}>Payment: {paymentMethod === 'card' ? 'Card - pay in app after trip' : 'Cash paid directly to your driver.'} • POPIA: Trip data kept 6 months</p>
             {rideError && <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 13, background: '#fee', padding: 8, borderRadius: 8 }}>{rideError}</p>}
-
             <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: '10px 0 calc(10px + env(safe-area-inset-bottom))', background: bgCard, borderTop: '1px solid ' + border }}>
               <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '50px', padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={() => { void requestRide() }} disabled={loading} style={{ flex: 1.5, minHeight: '50px', padding: '14px', borderRadius: '14px', border: 'none', background: loading ? '#555' : BLUE, color: 'white', fontWeight: 'bold', opacity: loading ? 0.6 : 1 }}>
-                {loading ? 'Finding…' : displayPrice ? `Request - R${displayPrice}` : 'Request Ride'}
-              </button>
+              <button onClick={() => { void requestRide() }} disabled={loading} style={{ flex: 1.5, minHeight: '50px', padding: '14px', borderRadius: '14px', border: 'none', background: loading ? '#555' : BLUE, color: 'white', fontWeight: 'bold', opacity: loading ? 0.6 : 1 }}>{loading ? 'Finding…' : displayPrice ? `Request - R${displayPrice}` : 'Request Ride'}</button>
             </div>
             {showEstimate && distance !== null && displayPrice !== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: '12px', background: bg2, border: '1px solid '+border, fontSize: 13, color: text }}><span>{distance.toFixed(1)} km • {duration} min</span><span style={{ fontWeight: 'bold' }}>R {displayPrice.toFixed(0)} • {selectedCategoryLabel}</span></div>)}
           </div>
@@ -663,11 +632,17 @@ export function PassengerHome({ profile }: { profile: Profile }) {
             <button onClick={()=>setShowChat(true)} style={{flex:1, padding:12, borderRadius:12, border:'1px solid '+border, background:bg2, color:text, fontWeight:'bold'}}>💬 Chat</button>
             <button onClick={() => { setCancelReason('Changed mind'); void cancelRide() }} style={{ flex:1, padding: 12, background: '#ff3b30', color: 'white', borderRadius: 12, border: 'none', fontWeight:'bold' }}>Cancel</button>
           </div>
+          <div style={{display:'flex', gap:8, marginTop:8}}>
+            <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Track my BuddyRide ${ride.id} ${ride.pickup_address} → ${ride.dropoff_address}`)}`, '_blank')} style={{flex:1, padding:10, borderRadius:10, background:'#EFF6FF', color:BLUE, border:'1px solid #DBEAFE', fontWeight:700, fontSize:12}}>📤 Share Trip</button>
+            <button onClick={() => { const r = prompt('Report driver / trip?'); if (r) supabase.from('complaints').insert({ ride_id: ride.id, passenger_id: profile.id, driver_id: ride.driver_id, reason: r }).then(({ error }) => { if (error) alert(error.message); else alert('Report sent to BuddyRide Support') }) }} style={{flex:1, padding:10, borderRadius:10, background:'#F8FAFF', border:`1px solid ${border}`, fontWeight:700, fontSize:12}}>⚠️ Report</button>
+          </div>
+          <p style={{fontSize:11, color:muted, textAlign:'center', marginTop:8}}>Receipt auto on Complete • POPIA 6 months • SOS in header</p>
         </div>}
         {(completedRide || completedReceipt) && (
           <div style={{padding:16, textAlign:'center'}}>
             <div style={{fontSize:48}}>✅</div>
             <h2 style={{margin:'8px 0', color: text}}>Trip Completed!</h2><h1 style={{color: BLUE, margin:'4px 0'}}>R {(completedRide || completedReceipt)?.fare}</h1>
+            <p style={{color: muted}}>🧾 Receipt: R {(completedRide || completedReceipt)?.fare} • {(completedRide || completedReceipt)?.payment_method || paymentMethod} • {(completedRide || completedReceipt)?.pickup_address} → {(completedRide || completedReceipt)?.dropoff_address}</p>
             <p style={{color: muted}}>Rate your driver</p>
             <div style={{display:'flex', gap:4, justifyContent:'center', margin:'12px 0'}}>{[1,2,3,4,5].map(s=>(<button key={s} onClick={()=>setRating(s)} style={{fontSize:36, background:'none', border:'none', color: rating>=s? BLUE : muted}}>{rating>=s?'★':'☆'}</button>))}</div>
             <textarea value={ratingComment} onChange={e=>setRatingComment(e.target.value)} placeholder="Comment (optional)" style={{width:'100%', padding:12, borderRadius:12, background:bg2, color:text, boxSizing:'border-box', border: '1px solid ' + border}} />

@@ -35,7 +35,6 @@ async function compressWithCanvas(file: File): Promise<File> {
       resolve(f)
     }
     const timer = setTimeout(() => finish(file), 8000)
-
     img.onload = () => {
       try {
         const max = 1280
@@ -52,7 +51,13 @@ async function compressWithCanvas(file: File): Promise<File> {
         ctx.fillStyle = '#fff'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        // FIX: toBlob timeout - was hanging forever on corrupt / huge images
+        let blobDone = false
+        const blobTimer = setTimeout(() => { if (!blobDone) { blobDone = true; finish(file) } }, 5000)
         canvas.toBlob((blob) => {
+          if (blobDone) return
+          blobDone = true
+          clearTimeout(blobTimer)
           if (!blob) { finish(file); return }
           finish(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: Date.now() }))
         }, 'image/jpeg', 0.65)
@@ -64,20 +69,16 @@ async function compressWithCanvas(file: File): Promise<File> {
 }
 
 export default async function compressImageFile(file: File): Promise<File> {
+  if (!file || file.size === 0) throw new Error('Empty file - please select a photo again.')
   if (file.type === 'application/pdf') return file
   if (!isImageFile(file)) return file
-  // FIXED: MAX_INPUT was declared but never used - 25MB photo would OOM low-end phone
-  // Throw so caller can show "under 20MB" instead of silently hanging
   if (file.size > MAX_INPUT) throw new Error('Image must be under 20MB. Take a smaller photo or screenshot it.')
-  // FIXED: HEIC - canvas + library both can't decode HEIC on Android Chrome
-  // Don't waste 8-10s trying, return original immediately and let caller show
-  // "iPhone HEIC not supported, screenshot it" message
-  if (/\.(heic|heif)$/i.test(file.name) || file.type === 'image/heic' || file.type === 'image/heif') {
+  // FIX: HEIC + AVIF - canvas can't decode either on Android Chrome, don't waste 8-10s
+  if (/\.(heic|heif|avif)$/i.test(file.name) || ['image/heic', 'image/heif', 'image/avif'].includes(file.type)) {
     return file
   }
   if (file.size < SKIP_BELOW) return file
 
-  // 1. Try library - WITHOUT WebWorker on mobile
   try {
     const compressed = await withTimeout(
       imageCompression(file, {
@@ -96,15 +97,12 @@ export default async function compressImageFile(file: File): Promise<File> {
         lastModified: Date.now(),
       })
     }
-    // FIXED: if library timed out (null) or returned bigger file, DON'T also
-    // run canvas - that was double CPU. Only fall through if library threw.
     if (compressed === null) return file
     if (compressed && compressed.size >= file.size) return file
   } catch {
     // Fall through to canvas only on throw
   }
 
-  // 2. Fallback to canvas
   try {
     const canvasResult = await compressWithCanvas(file)
     if (canvasResult.size < file.size) return canvasResult

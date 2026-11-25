@@ -20,6 +20,11 @@ export async function ensureProfile(userId: string, email: string | null, rolePa
     return existing
   }
 
+  // FIX GOV: Never auto-create admin via signup - admin must be provisioned by owner
+  if (normalizedEmail && isAdmin(normalizedEmail)) {
+    throw new Error('This account is not provisioned as a BuddyRide administrator. Ask the platform owner to grant admin access securely.')
+  }
+
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError) throw userError
 
@@ -48,11 +53,8 @@ export async function ensureProfile(userId: string, email: string | null, rolePa
       role: selectedRole,
       wallet_balance: 0,
       trips_completed: 0,
-      // FIXED: was 5.0 - new user has NO rating, null = show "—"
       rating: null,
       is_online: false,
-      // FIXED: was pending_verification for drivers - new driver must start
-      // at not_started so App sends them to Onboarding, not Pending screen
       verification_status: 'not_started',
       is_verified: false,
       id_verified: false,
@@ -74,7 +76,7 @@ export async function ensureProfile(userId: string, email: string | null, rolePa
 
 export async function signIn(email: string, password: string) {
   localStorage.removeItem('buddyride_pending_role')
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
   if (error) throw error
   return data.user
 }
@@ -96,8 +98,6 @@ export async function signUp(email: string, password: string, role: Exclude<Role
   }
   if (data.user) {
     try {
-      // Only create profile if we have a session - if email confirmation is on,
-      // getUser() will be null and App.loadProfile will create it on first login
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) await ensureProfile(data.user.id, normalizedEmail, role)
     } catch (e) {
@@ -107,8 +107,6 @@ export async function signUp(email: string, password: string, role: Exclude<Role
   return data.user
 }
 
-// FIXED: was `return true` stub - now actually checks last_selfie_date
-// Returns true if selfie already taken TODAY (locked), false if allowed
 export async function checkSelfieLock(userId: string): Promise<boolean> {
   try {
     const { data } = await supabase.from('profiles').select('last_selfie_date').eq('id', userId).maybeSingle()
