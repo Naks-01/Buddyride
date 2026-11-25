@@ -6,23 +6,29 @@ export default defineConfig({
   worker: {
     format: 'es'
   },
+  define: {
+    global: {}
+  },
+  optimizeDeps: {
+    exclude: ['@capacitor/core', '@capacitor/status-bar']
+  },
   build: {
     chunkSizeWarningLimit: 1500,
+    commonjsOptions: {
+      include: [/node_modules/]
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('leaflet')) return 'leaflet-vendor'
-            // FIX: Was split into mapbox-core / mapbox-shared / mapbox-vendor - core.js and shared.js import each other.
-            // Splitting them creates circular chunks and Mapbox fails to load in production. Keep ALL mapbox-gl in one chunk.
+            // Keep ALL mapbox-gl in one chunk - splitting creates circular chunks
             if (id.includes('mapbox-gl')) return 'mapbox-vendor'
             if (id.includes('maplibre')) return 'maplibre-vendor'
             if (id.includes('supabase')) return 'supabase-vendor'
             if (id.includes('react-router')) return 'router-vendor'
             return 'vendor'
           }
-          // DON'T split pages - this causes circular chunks!
-          // Let Vite handle pages automatically
         }
       }
     }
