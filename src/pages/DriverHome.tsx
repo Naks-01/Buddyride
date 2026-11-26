@@ -18,6 +18,8 @@ const EXPIRE = 15
 const BLUE = '#0066FF'
 const BG = '#FFFFFF'
 const BORDER = '#E2E8F0'
+// FIX MAP: TomTom needs valid [lng, lat] on first render, Polokwane default
+const POLOKWANE: [number, number] = [29.4587, -23.9045]
 
 export function DriverHome({ profile }: { profile: Profile }) {
   const [ride, setRide] = useState<Ride | null>(null)
@@ -28,7 +30,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [showChat, setShowChat] = useState(false)
   const timer = useRef<any>(null)
 
-  // FIX: Inline fix for Zones + Ride Type inside app - no onboarding bounce
   const [showFix, setShowFix] = useState(false)
   const [allZones, setAllZones] = useState<{id:string, name:string}[]>([])
   const [selectedZones, setSelectedZones] = useState<string[]>([])
@@ -37,38 +38,39 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [vehicleInfo, setVehicleInfo] = useState<any>(null)
 
   const { bundleCredits, bundleCount, reloadBundle } = useBundle(profile.id)
-  const { missingFields, vehicleOk, reload: reloadVehicle } = useVehicleCheck(profile.id) as any
+  const { missingFields, missingLabels, vehicleOk, reloadVehicle } = useVehicleCheck(profile.id) as any
   const { docsOk, verified } = useDocsCheck(profile.id)
-  const { location, lastLoc } = useDriverLocation(profile.id, isOnline, !!ride)
+  const { location: gpsLoc, lastLoc } = useDriverLocation(profile.id, isOnline, !!ride)
 
-  // Load current zones / ride_type / vehicle from driver_vehicles
+  // FIX MAP: never pass null to TomTom. If GPS null/invalid, use Polokwane. Always [lng, lat].
+  const location: [number, number] = (gpsLoc && Array.isArray(gpsLoc) && gpsLoc.length === 2 && typeof gpsLoc[0] === 'number' && typeof gpsLoc[1] === 'number' && gpsLoc[0] !== 0)
+    ? gpsLoc as [number, number]
+    : POLOKWANE
+
   useEffect(() => {
     void (async () => {
-      const [{ data: v }, { data: zones }] = await Promise.all([
+      const [{ data: v }, { data: zones }, { data: p }] = await Promise.all([
         supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle(),
         supabase.from('service_zones').select('id,name').order('name'),
+        supabase.from('profiles').select('service_area,service_zones,ride_type').eq('id', profile.id).single(),
       ])
       if (zones) setAllZones(zones as any)
-      if (v) {
-        setVehicleInfo(v)
-        if (Array.isArray((v as any).service_zones)) setSelectedZones((v as any).service_zones)
-        if ((v as any).ride_type) setSelectedRideType((v as any).ride_type)
-      }
-      // Fallback to profiles if vehicle row empty
-      if (!v || !(v as any).service_zones?.length) {
-        const { data: p } = await supabase.from('profiles').select('service_zones,ride_type').eq('id', profile.id).single()
-        if (p?.service_zones?.length) setSelectedZones(p.service_zones)
-        if (p?.ride_type) setSelectedRideType(p.ride_type)
-      }
+      if (v) setVehicleInfo(v)
+      const zonesFromV = Array.isArray((v as any)?.service_zones) ? (v as any).service_zones : []
+      const zonesFromP = Array.isArray((p as any)?.service_zones) ? (p as any).service_zones : []
+      const areaFromP = (p as any)?.service_area ? [String((p as any).service_area)] : []
+      const finalZones = zonesFromV.length ? zonesFromV : zonesFromP.length ? zonesFromP : areaFromP
+      if (finalZones.length) setSelectedZones(finalZones)
+      const rt = (v as any)?.ride_type || (p as any)?.ride_type
+      if (rt) setSelectedRideType(rt)
     })()
   }, [profile.id])
 
   const hasZones = selectedZones.length > 0
   const hasRideType = Boolean(selectedRideType)
-  const zonesMissing = missingFields?.includes('Service Area') || !hasZones
-  const rideTypeMissing = missingFields?.includes('Ride Type') || !hasRideType
+  const zonesMissing = missingFields?.includes('service_area') || !hasZones
+  const rideTypeMissing = missingFields?.includes('ride_type') || !hasRideType
 
-  // FIX: Go Online requires zones + ride type, but entry to app is already allowed (Guard fix)
   const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType && (bundleCredits ?? 0) > 0
 
   async function saveFix() {
@@ -76,13 +78,17 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!hasRideType) { alert('Pick a Ride Type'); return }
     setSavingFix(true)
     try {
-      // Save to BOTH tables - Guard checks driver_vehicles, Home checks both
+      const { data: existing } = await supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle()
       const { error: vErr } = await supabase.from('driver_vehicles').upsert(
-        { driver_id: profile.id, service_zones: selectedZones, ride_type: selectedRideType, updated_at: new Date().toISOString() },
+        { ...(existing || {}), driver_id: profile.id, service_zones: selectedZones, ride_type: selectedRideType, updated_at: new Date().toISOString() },
         { onConflict: 'driver_id' }
       )
       if (vErr) throw vErr
-      const { error: pErr } = await supabase.from('profiles').update({ service_zones: selectedZones, ride_type: selectedRideType }).eq('id', profile.id)
+      const { error: pErr } = await supabase.from('profiles').update({
+        service_area: selectedZones[0],
+        service_zones: selectedZones,
+        ride_type: selectedRideType,
+      }).eq('id', profile.id)
       if (pErr) throw pErr
       if (reloadVehicle) await reloadVehicle()
       setShowFix(false)
@@ -94,7 +100,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   async function toggleOnline() {
     if (!isOnline) {
-      // FIX: Don't bounce to onboarding - open inline fix sheet
       if (zonesMissing || rideTypeMissing) { setShowFix(true); return }
       if (missingFields.length > 0) { setShowFix(true); return }
       if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
@@ -158,7 +163,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setCountdown(EXPIRE)
     timer.current = setInterval(() => setCountdown(s => { if (s <= 1) { void decline(incoming.id); return 0 } return s - 1 }), 1000)
     return () => clearInterval(timer.current)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming?.id])
 
   useEffect(() => {
@@ -174,7 +178,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   return (
     <div style={{ height: '100dvh', position: 'relative', overflow: 'hidden', background: BG }}>
-      <div style={{ position: 'absolute', inset: 0 }}><DriverTomTomMap center={location} driverLocation={location} route={route} theme="light" /></div>
+      {/* FIX MAP: map starts below header (56px), not inset:0 under header. Always has valid center. */}
+      <div style={{ position: 'absolute', top: 56, left: 0, right: 0, bottom: 0 }}>
+        <DriverTomTomMap center={location} driverLocation={location} route={route} theme="light" />
+      </div>
 
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: BG, borderBottom: `1px solid ${BORDER}` }}>
         <NavigationMenu profile={profile} theme="light" onThemeChange={() => {}} onSignOut={() => supabase.auth.signOut()} />
@@ -183,7 +190,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
         </button>
       </header>
 
-      {/* FIX: Inline banner - Fix HERE, not onboarding */}
       {(zonesMissing || rideTypeMissing) && (
         <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 12, borderRadius: 12, background: '#FEF3F2', color: '#B42318', fontSize: 13, fontWeight: 700, border: '1px solid #FECACA' }}>
           ⚠️ Complete to Go Online: {zonesMissing ? 'Service Area ' : ''}{zonesMissing && rideTypeMissing ? '• ' : ''}{rideTypeMissing ? 'Ride Type' : ''}
@@ -194,7 +200,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
       {missingFields.length > 0 && !zonesMissing && !rideTypeMissing && (
         <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 10, borderRadius: 12, background: '#FEF2F2', color: '#B42318', fontSize: 12, fontWeight: 800, border: '1px solid #FECACA' }}>
-          ⚠️ Missing: {missingFields.join(', ')} <button onClick={() => setShowFix(true)} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button>
+          ⚠️ Missing: {(missingLabels?.length ? missingLabels : missingFields).join(', ')} <button onClick={() => setShowFix(true)} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button>
         </div>
       )}
 
@@ -237,7 +243,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
         </div>
       )}
 
-      {/* FIX SHEET - New driver fixes zones/ride type HERE */}
       {showFix && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'end center' }}>
           <div style={{ width: '100%', maxWidth: 480, background: '#fff', borderRadius: '20px 20px 0 0', padding: 20, maxHeight: '85dvh', overflowY: 'auto' }}>
