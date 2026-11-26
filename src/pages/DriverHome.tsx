@@ -19,7 +19,6 @@ const BLUE = '#0066FF'
 const BG = '#FFFFFF'
 const BORDER = '#E2E8F0'
 const POLOKWANE: [number, number] = [29.4587, -23.9045]
-// REAL CATEGORIES FROM YOUR fare_rules SCREENSHOT
 const CATEGORIES = [
   { id: 'buddy_lite', name: 'Buddy Lite', seats: '2 seats', desc: 'Small car • Cheapest • Base 20 / R6 per km' },
   { id: 'buddy_plus', name: 'Buddy Plus', seats: '4 seats', desc: 'Standard • Most rides • Base 25 / R8 per km' },
@@ -52,25 +51,40 @@ export function DriverHome({ profile }: { profile: Profile }) {
       const [{ data: v }, { data: zones }, { data: p }] = await Promise.all([
         supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle(),
         supabase.from('service_zones').select('id,name').order('name'),
-        // FIX: NO service_area - column does not exist in profiles
         supabase.from('profiles').select('service_zones,ride_type').eq('id', profile.id).single(),
       ])
       if (zones) setAllZones(zones as any)
       if (v) setVehicleInfo(v)
       const zonesFromV = Array.isArray((v as any)?.service_zones) ? (v as any).service_zones : []
       const zonesFromP = Array.isArray((p as any)?.service_zones) ? (p as any).service_zones : []
-      const finalZones = zonesFromV.length ? zonesFromV : zonesFromP
-      if (finalZones.length) setSelectedZones(finalZones)
+      const rawZones = zonesFromV.length ? zonesFromV : zonesFromP
+      // FIX: DB may store NAMES ('Seshego') but UI uses IDS ('seshego' / uuid) - normalize to IDs
+      if (rawZones.length && zones) {
+        const normalized = rawZones.map((z: string) => {
+          const match = (zones as any).find((zz: any) => zz.id === z || zz.name === z || zz.name?.toLowerCase() === String(z).toLowerCase() || zz.id?.toLowerCase() === String(z).toLowerCase())
+          return match ? match.id : z
+        })
+        setSelectedZones(normalized)
+      } else if (rawZones.length) {
+        setSelectedZones(rawZones)
+      }
       const rt = (v as any)?.ride_type || (p as any)?.ride_type
-      if (rt && CATEGORIES.find(c => c.id === rt)) setSelectedRideType(rt)
+      // FIX: DB may store display name 'Buddy Lite' - normalize to id 'buddy_lite'
+      if (rt) {
+        const found = CATEGORIES.find(c => c.id === rt || c.name === rt || c.name?.toLowerCase() === String(rt).toLowerCase())
+        if (found) setSelectedRideType(found.id)
+      }
     })()
   }, [profile.id])
 
   const hasZones = selectedZones.length > 0
   const hasRideType = Boolean(selectedRideType)
-  // FIX: hook uses service_zones not service_area
-  const zonesMissing = missingFields?.includes('service_zones') || !hasZones
-  const rideTypeMissing = missingFields?.includes('ride_type') || !hasRideType
+  // FIX: LOOP FIX - trust LOCAL state after user picks, not stale missingFields from hook
+  // missingFields lags Supabase by 1-2s and caused infinite "Complete to Go Online" loop
+  const zonesMissing = !hasZones
+  const rideTypeMissing = !hasRideType
+  // Only other missing fields (not zones/ride_type) should block
+  const otherMissing = (missingFields || []).filter((f: string) => f !== 'service_zones' && f !== 'ride_type' && f !== 'service_area')
   const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType && (bundleCredits ?? 0) > 0
 
   async function saveFix() {
@@ -84,11 +98,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
         { onConflict: 'driver_id' }
       )
       if (vErr) throw vErr
-      // FIX: NO service_area here - only service_zones + ride_type
       const { error: pErr } = await supabase.from('profiles').update({ service_zones: selectedZones, ride_type: selectedRideType }).eq('id', profile.id)
       if (pErr) throw pErr
       if (reloadVehicle) await reloadVehicle()
       setShowFix(false)
+      // FIX: After save, if no bundles, go to bundle page - don't stay on loop
+      if ((bundleCredits ?? 0) <= 0) {
+        alert(`✅ ${CATEGORIES.find(c=>c.id===selectedRideType)?.name} saved - now buy a bundle to Go Online`)
+        window.location.assign('/driver/bundle')
+        return
+      }
       alert(`✅ ${CATEGORIES.find(c=>c.id===selectedRideType)?.name} saved - you can now Go Online`)
     } catch (e: any) { alert(e.message || 'Could not save - try again') } finally { setSavingFix(false) }
   }
@@ -96,7 +115,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
   async function toggleOnline() {
     if (!isOnline) {
       if (zonesMissing || rideTypeMissing) { setShowFix(true); return }
-      if (missingFields.length > 0) { setShowFix(true); return }
+      // FIX: only block on OTHER missing fields, not stale zones/ride_type
+      if (otherMissing.length > 0) { setShowFix(true); return }
       if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
       if (!docsOk || !verified) { alert('Waiting admin approval - docs still under review'); return }
     }
@@ -148,14 +168,14 @@ export function DriverHome({ profile }: { profile: Profile }) {
           <button onClick={() => setShowFix(true)} style={{ marginTop: 8, width: '100%', background: BLUE, color: '#fff', border: 0, borderRadius: 8, padding: '10px', fontWeight: 900 }}>Fix Service Area & Ride Type →</button>
         </div>
       )}
-      {missingFields.length > 0 && !zonesMissing && !rideTypeMissing && (
-        <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 10, borderRadius: 12, background: '#FEF2F2', color: '#B42318', fontSize: 12, fontWeight: 800, border: '1px solid #FECACA' }}>⚠️ Missing: {(missingLabels?.length ? missingLabels : missingFields).join(', ')} <button onClick={() => setShowFix(true)} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button></div>
+      {otherMissing.length > 0 && !zonesMissing && !rideTypeMissing && (
+        <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 10, borderRadius: 12, background: '#FEF2F2', color: '#B42318', fontSize: 12, fontWeight: 800, border: '1px solid #FECACA' }}>⚠️ Missing: {(missingLabels?.length ? missingLabels : otherMissing).join(', ')} <button onClick={() => setShowFix(true)} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button></div>
       )}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60 }}>
         <BottomSheet snapPoint={50} onSnapChange={() => {}}>
           {!ride ? (
             <div style={{ textAlign: 'center' }}>
-              <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline && !zonesMissing && !rideTypeMissing && !docsOk} style={{ width: '100%', padding: 16, borderRadius: 14, background: (canGoOnline || zonesMissing || rideTypeMissing) ? (isOnline ? '#B42318' : BLUE) : '#94A3B8', color: 'white', border: 0, fontWeight: 900 }}>{isOnline ? 'GO OFFLINE' : (zonesMissing || rideTypeMissing) ? 'FIX & GO ONLINE →' : canGoOnline ? 'GO ONLINE • BLUE' : 'Waiting Approval'}</button>
+              <button onClick={toggleOnline} style={{ width: '100%', padding: 16, borderRadius: 14, background: (canGoOnline || zonesMissing || rideTypeMissing) ? (isOnline ? '#B42318' : BLUE) : '#94A3B8', color: 'white', border: 0, fontWeight: 900 }}>{isOnline ? 'GO OFFLINE' : (zonesMissing || rideTypeMissing) ? 'FIX & GO ONLINE →' : canGoOnline ? 'GO ONLINE • BLUE' : 'Waiting Approval'}</button>
               <div style={{ marginTop: 8, fontSize: 11, color: '#64748B' }}>POPIA: Trip data kept 6 months • Compliant</div>
             </div>
           ) : (
