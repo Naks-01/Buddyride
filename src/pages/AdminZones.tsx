@@ -1,21 +1,22 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-type Zone = { id: string, name: string, latitude: number, longitude: number, radius_km: number, base_fare: number, per_km: number, is_active: boolean, _isNew?: boolean }
+type Zone = { id: string, name: string, latitude: number, longitude: number, radius_km: number, is_active: boolean, _isNew?: boolean }
 
+// FIX: IDs are slugs - same as DriverHome fallback, same as what rider matching uses
 const DEFAULT_ZONES: Zone[] = [
-  { id: 'new_polokwane', name: 'Polokwane CBD', latitude: -23.9045, longitude: 29.4689, radius_km: 15, base_fare: 15, per_km: 7, is_active: true, _isNew: true },
-  { id: 'new_seshego', name: 'Seshego', latitude: -23.8833, longitude: 29.3833, radius_km: 10, base_fare: 15, per_km: 7, is_active: true, _isNew: true },
-  { id: 'new_mankweng', name: 'Mankweng', latitude: -23.8833, longitude: 29.7167, radius_km: 12, base_fare: 20, per_km: 7, is_active: true, _isNew: true },
-  { id: 'new_lebowakgomo', name: 'Lebowakgomo', latitude: -24.2167, longitude: 29.5667, radius_km: 10, base_fare: 25, per_km: 8, is_active: false, _isNew: true },
-  { id: 'new_tzaneen', name: 'Tzaneen', latitude: -23.8333, longitude: 30.1667, radius_km: 12, base_fare: 20, per_km: 7, is_active: true, _isNew: true },
-  { id: 'new_giyani', name: 'Giyani', latitude: -23.3167, longitude: 30.6833, radius_km: 10, base_fare: 20, per_km: 7, is_active: true, _isNew: true },
-  { id: 'new_thohoyandou', name: 'Thohoyandou', latitude: -22.95, longitude: 30.45, radius_km: 12, base_fare: 20, per_km: 7, is_active: true, _isNew: true },
-  { id: 'new_makhado', name: 'Makhado', latitude: -23.1667, longitude: 29.9, radius_km: 12, base_fare: 20, per_km: 7, is_active: true, _isNew: true },
+  { id: 'polokwane', name: 'Polokwane CBD', latitude: -23.9045, longitude: 29.4689, radius_km: 15, is_active: true, _isNew: true },
+  { id: 'seshego', name: 'Seshego', latitude: -23.8833, longitude: 29.3833, radius_km: 10, is_active: true, _isNew: true },
+  { id: 'mankweng', name: 'Mankweng', latitude: -23.8833, longitude: 29.7167, radius_km: 12, is_active: true, _isNew: true },
+  { id: 'lebowakgomo', name: 'Lebowakgomo', latitude: -24.2167, longitude: 29.5667, radius_km: 10, is_active: false, _isNew: true },
+  { id: 'tzaneen', name: 'Tzaneen', latitude: -23.8333, longitude: 30.1667, radius_km: 12, is_active: true, _isNew: true },
+  { id: 'giyani', name: 'Giyani', latitude: -23.3167, longitude: 30.6833, radius_km: 10, is_active: true, _isNew: true },
+  { id: 'thohoyandou', name: 'Thohoyandou', latitude: -22.95, longitude: 30.45, radius_km: 12, is_active: true, _isNew: true },
+  { id: 'makhado', name: 'Makhado', latitude: -23.1667, longitude: 29.9, radius_km: 12, is_active: true, _isNew: true },
 ]
 
-function newUuid() {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).padStart(12, '0')}`
+function slugify(name: string) {
+  return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `zone_${Date.now()}`
 }
 
 export function AdminZones({ onBack }: { onBack: () => void }) {
@@ -32,7 +33,7 @@ export function AdminZones({ onBack }: { onBack: () => void }) {
       if (!error && data && data.length > 0) {
         const mapped = data.map((z: any) => ({
           id: z.id, name: z.name, latitude: Number(z.latitude ?? -23.9045), longitude: Number(z.longitude ?? 29.4689),
-          radius_km: Number(z.radius_km ?? 15), base_fare: Number(z.base_fare ?? 15), per_km: Number(z.per_km ?? 7),
+          radius_km: Number(z.radius_km ?? 15),
           is_active: z.is_active !== undefined ? Boolean(z.is_active) : (z.active !== false),
         }))
         setZones(mapped); setLoadedFromDb(true)
@@ -46,32 +47,28 @@ export function AdminZones({ onBack }: { onBack: () => void }) {
     setZones(prev => prev.map(z => z.id === id ? { ...z, [field]: field === 'name' ? String(value) : field === 'is_active' ? Boolean(value) : (value === '' ? 0 : Number(value)) } : z))
   }
   function addZone() {
-    setZones(prev => [...prev, { id: `new_${Date.now()}`, name: 'New Zone', latitude: -23.9045, longitude: 29.4689, radius_km: 10, base_fare: 15, per_km: 7, is_active: true, _isNew: true }])
+    setZones(prev => [...prev, { id: `new_${Date.now()}`, name: 'New Zone', latitude: -23.9045, longitude: 29.4689, radius_km: 10, is_active: true, _isNew: true }])
   }
   function removeZone(id: string) {
     if (!confirm('Delete this zone? This will remove it after you press Save Zones.')) return
     const target = zones.find(z => z.id === id)
     setZones(prev => prev.filter(z => z.id !== id))
-    // FIX: Only track DB rows for delete - was tracking fake default IDs too
     if (target && !target._isNew) setDeletedIds(prev => prev.includes(id) ? prev : [...prev, id])
   }
 
   async function save() {
     setSaving(true); setMessage('')
-    const invalid = zones.find(z => !z.name.trim() || [z.latitude, z.longitude, z.radius_km, z.base_fare, z.per_km].some(v => Number.isNaN(v)) || z.latitude < -90 || z.latitude > 90 || z.longitude < -180 || z.longitude > 180 || z.radius_km <= 0 || z.radius_km > 100 || z.base_fare < 0 || z.per_km < 0)
-    if (invalid) { setMessage(`Check ${invalid.name || 'a zone'}: Name required, lat -90 to 90, lng -180 to 180, radius 0-100km, fares 0+.`); setSaving(false); return }
+    const invalid = zones.find(z => !z.name.trim() || [z.latitude, z.longitude, z.radius_km].some(v => Number.isNaN(v)) || z.latitude < -90 || z.latitude > 90 || z.longitude < -180 || z.longitude > 180 || z.radius_km <= 0 || z.radius_km > 100)
+    if (invalid) { setMessage(`Check ${invalid.name || 'a zone'}: Name required, lat -90 to 90, lng -180 to 180, radius 0-100km.`); setSaving(false); return }
     try {
-      // FIX: Insert new without ID, update existing - was upserting fake 11111111-... UUIDs
       for (const z of zones) {
-        const payload = { name: z.name.trim(), latitude: z.latitude, longitude: z.longitude, radius_km: z.radius_km, base_fare: z.base_fare, per_km: z.per_km, is_active: z.is_active }
-        if (z._isNew) {
-          const { error, data } = await supabase.from('service_zones').insert(payload as any).select('id').single()
-          if (error) throw error
-          if (data) { z.id = data.id; z._isNew = false }
-        } else {
-          const { error } = await supabase.from('service_zones').update(payload as any).eq('id', z.id)
-          if (error) throw error
-        }
+        // FIX: Use slug ID so DriverHome + rider matching use same ID
+        const id = z._isNew && z.id.startsWith('new_') ? slugify(z.name) : z.id
+        const payload = { id, name: z.name.trim(), latitude: z.latitude, longitude: z.longitude, radius_km: z.radius_km, is_active: z.is_active }
+        // FIX: upsert on id - if slug already exists, update instead of duplicate
+        const { error } = await supabase.from('service_zones').upsert(payload as any, { onConflict: 'id' })
+        if (error) throw error
+        z.id = id; z._isNew = false
       }
       if (deletedIds.length) {
         const { error: deleteError } = await supabase.from('service_zones').delete().in('id', deletedIds)
@@ -86,6 +83,7 @@ export function AdminZones({ onBack }: { onBack: () => void }) {
     <button onClick={onBack} style={{ background: '#1e293b', color: 'white', border: '1px solid #334155', padding: '8px 14px', borderRadius: 8, cursor: 'pointer' }}>← Admin home</button>
     <h1>Service Zones ({zones.filter(z => z.is_active).length} active)</h1>
     <p style={{ fontSize: 13, color: '#86efac', background: '#052e16', padding: 10, borderRadius: 8 }}>✅ Zone matching is now ACTIVE — Rider in Seshego only gets Seshego drivers.</p>
+    <p style={{ fontSize: 12, color: '#94a3b8' }}>Price is from fare_rules (Lite 20/6, Plus 25/8, Max 40/12) - zones only define area, not price.</p>
     {!loadedFromDb && !loading && <p style={{ fontSize: 12, color: '#f59e0b' }}>Showing default zones - press Save Zones to save them to the database.</p>}
     {message && <p role={message.startsWith('Could not') || message.startsWith('Check') ? 'alert' : 'status'} style={{ color: (message.startsWith('Could not') || message.startsWith('Check')) ? '#fca5a5' : '#86efac' }}>{message}</p>}
     {loading ? <p>Loading zones...</p> : zones.map(zone => (
@@ -96,14 +94,14 @@ export function AdminZones({ onBack }: { onBack: () => void }) {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 10, marginTop: 12 }}>
           {([
-            ['latitude', 'Latitude'], ['longitude', 'Longitude'], ['radius_km', 'Radius (km)'], ['base_fare', 'Base fare (R)'], ['per_km', 'Per km (R)'],
+            ['latitude', 'Latitude'], ['longitude', 'Longitude'], ['radius_km', 'Radius (km)'],
           ] as const).map(([field, label]) => (
             <label key={field} style={{ fontSize: 12, color: '#94a3b8' }}>{label}
               <input type="number" step="0.0001" value={Number.isNaN(zone[field]) ? '' : zone[field]} onChange={e => update(zone.id, field, e.target.value)} style={{ display: 'block', width: '100%', boxSizing: 'border-box', padding: 10, marginTop: 4, borderRadius: 8, border: 0, background: '#0f172a', color: 'white' }} />
             </label>
           ))}
         </div>
-        <p style={{ fontSize: 12, color: '#94a3b8' }}>Covers ~{Math.round(Math.PI * zone.radius_km * zone.radius_km)} km² • Example {zone.radius_km}km ride ≈ R{(zone.base_fare + zone.per_km * zone.radius_km).toFixed(2)}</p>
+        <p style={{ fontSize: 12, color: '#94a3b8' }}>Covers ~{Math.round(Math.PI * zone.radius_km * zone.radius_km)} km² • ID: {zone.id}</p>
         <button onClick={() => removeZone(zone.id)} style={{ padding: '6px 12px', borderRadius: 8, background: '#7f1d1d', color: 'white', border: 0, cursor: 'pointer' }}>Delete Zone</button>
       </section>
     ))}
