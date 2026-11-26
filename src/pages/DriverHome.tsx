@@ -38,6 +38,15 @@ const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_licens
 const IDENTITY_DOCS = ALL_DOCS.filter(d => IDENTITY_TYPES.has(d.id))
 const REST_DOCS = ALL_DOCS.filter(d => !IDENTITY_TYPES.has(d.id))
 
+// FIX: Treat APPROVED as VERIFIED
+const normalizeStatus = (raw: string) => {
+  const s = String(raw || '').toLowerCase().trim()
+  if (['approved', 'verified', 'approve', 'accepted'].includes(s)) return 'verified'
+  if (['pending', 'uploaded', 'submitted', 'under_review', 'review'].includes(s)) return 'pending'
+  if (['rejected', 'declined', 'invalid'].includes(s)) return 'rejected'
+  return 'missing'
+}
+
 function getDocIcon(id: string) {
   if (id.includes('photo') || id === 'profile_photo') return '👤'
   if (id === 'selfie') return '🤳'
@@ -95,7 +104,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const THEME_SUB = isDark ? '#aeb9cb' : '#6b7280'
   const { bundleCredits, bundleCount, reloadBundle } = useBundle(profile.id)
   const { missingFields, missingLabels, vehicleOk, reloadVehicle, vehicle } = useVehicleCheck(profile.id) as any
-  const { docsOk, verified } = useDocsCheck(profile.id)
+  const { docsOk: docsOkHook, verified: verifiedHook } = useDocsCheck(profile.id) as any
   const { location: gpsLoc, lastLoc } = useDriverLocation(profile.id, isOnline, !!ride)
   const [mapCenter] = useState<[number, number]>(POLOKWANE)
   const location: [number, number] = (gpsLoc && Array.isArray(gpsLoc) && gpsLoc.length === 2 && typeof gpsLoc[0] === 'number' && gpsLoc[0] !== 0) ? gpsLoc as [number, number] : POLOKWANE
@@ -186,6 +195,25 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const hasZones = selectedZones.length > 0
   const hasRideType = Boolean(selectedRideType)
   const needsFix = (missingFields || []).length > 0
+
+  // FIXED LOGIC - APPROVED counts as VERIFIED
+  const getDocStatus = (docId: string) => {
+    const found = docsList.find((d: any) => normalizeDocType(d.doc_type || d.document_type) === docId)
+    if (!found) return 'missing'
+    return normalizeStatus(found.status)
+  }
+
+  const identityDoneCount = IDENTITY_DOCS.filter(d => getDocStatus(d.id) !== 'missing').length
+  const identityVerifiedCount = IDENTITY_DOCS.filter(d => getDocStatus(d.id) === 'verified').length
+  const restDoneCount = REST_DOCS.filter(d => getDocStatus(d.id) !== 'missing').length
+  const restVerifiedCount = REST_DOCS.filter(d => getDocStatus(d.id) === 'verified').length
+  const totalDone = identityDoneCount + restDoneCount
+  const totalVerified = identityVerifiedCount + restVerifiedCount
+  const totalCount = ALL_DOCS.length
+
+  // OVERRIDE hook with fixed logic
+  const docsOk = totalDone === totalCount
+  const verified = totalVerified === totalCount
   const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType
 
   async function saveFix() {
@@ -217,7 +245,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!isOnline) {
       if (needsFix) { setShowFix(true); return }
       if ((bundleCredits ?? 0) <= 0) { go('/driver/bundle'); return }
-      if (!docsOk || !verified) { alert('Waiting admin approval - check Documents in menu'); setShowMenu(true); return }
+      if (!docsOk || !verified) { alert(`Need verification: ${totalVerified}/${totalCount} verified`); setShowMenu(true); return }
     }
     const next = !isOnline
     const { error } = await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: next, updated_at: new Date().toISOString() }, { onConflict: 'driver_id' })
@@ -292,27 +320,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
     </div>
   )
 
-  // MATCH ONBOARDING LOGIC
-  const getDocStatus = (docId: string) => {
-    const found = docsList.find((d: any) => normalizeDocType(d.doc_type || d.document_type) === docId)
-    if (!found) return 'missing'
-    return String(found.status || 'pending').toLowerCase()
-  }
-
-  const identityDoneCount = IDENTITY_DOCS.filter(d => getDocStatus(d.id) !== 'missing').length
-  const identityVerifiedCount = IDENTITY_DOCS.filter(d => getDocStatus(d.id) === 'verified').length
-  const restDoneCount = REST_DOCS.filter(d => getDocStatus(d.id) !== 'missing').length
-  const restVerifiedCount = REST_DOCS.filter(d => getDocStatus(d.id) === 'verified').length
-  const totalDone = identityDoneCount + restDoneCount
-  const totalCount = ALL_DOCS.length
-
   const DocsInBurger = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* STEP 1 - IDENTITY DONE */}
       <div style={{ background: isDark ? '#111a2a' : '#fff', borderRadius: 20, padding: 14, border: `1px solid ${THEME_BORDER}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <span style={{ fontWeight: 800, fontSize: 13, color: THEME_TEXT }}>✅ Step 1 - Identity</span>
-          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, fontWeight: 800, background: identityDoneCount === IDENTITY_DOCS.length ? '#ECFDF3' : '#EFF6FF', color: identityDoneCount === IDENTITY_DOCS.length ? '#12B76A' : BLUE, border: `1px solid ${identityDoneCount === IDENTITY_DOCS.length ? '#ABEFC6' : '#DBEAFE'}` }}>{identityDoneCount}/{IDENTITY_DOCS.length} Done</span>
+          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, fontWeight: 800, background: identityDoneCount === IDENTITY_DOCS.length ? '#ECFDF3' : '#EFF6FF', color: identityDoneCount === IDENTITY_DOCS.length ? '#12B76A' : BLUE }}>{identityDoneCount}/{IDENTITY_DOCS.length} Done</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {IDENTITY_DOCS.map(doc => {
@@ -334,13 +347,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
         </div>
       </div>
 
-      {/* STEP 2 - REST TO GO ONLINE - THIS GIVES ENERGY */}
       <div style={{ background: isDark ? '#111a2a' : '#fff', borderRadius: 20, padding: 14, border: `2px solid ${BLUE}30` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <span style={{ fontWeight: 800, fontSize: 13, color: THEME_TEXT }}>🚀 Step 2 - Finish to Go Online</span>
-          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, fontWeight: 800, background: restDoneCount === REST_DOCS.length ? '#ECFDF3' : '#FFFAEB', color: restDoneCount === REST_DOCS.length ? '#12B76A' : '#F79009' }}>{restDoneCount}/{REST_DOCS.length} {totalDone}/{totalCount} total</span>
+          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, fontWeight: 800, background: restDoneCount === REST_DOCS.length ? '#ECFDF3' : '#FFFAEB', color: restDoneCount === REST_DOCS.length ? '#12B76A' : '#F79009' }}>{restDoneCount}/{REST_DOCS.length} • {totalVerified}/{totalCount} verified</span>
         </div>
-        <div style={{ fontSize: 11, color: THEME_SUB, marginBottom: 10, fontWeight: 600, background: isDark ? '#0b1120' : '#EFF6FF', padding: '6px 10px', borderRadius: 8, border: `1px solid ${THEME_BORDER}` }}>💡 You are already inside the App! Finish these to unlock GO ONLINE - Keep 100% fare</div>
+        <div style={{ fontSize: 11, color: THEME_SUB, marginBottom: 10, fontWeight: 600, background: isDark ? '#0b1120' : '#EFF6FF', padding: '6px 10px', borderRadius: 8, border: `1px solid ${THEME_BORDER}` }}>💡 You are already inside the App! Finish these to unlock GO ONLINE</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
           {REST_DOCS.map(doc => {
             const status = getDocStatus(doc.id)
@@ -353,7 +365,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
                 </div>
                 <div style={{ marginLeft: 8 }}>
                   <input type="file" accept="image/*,.pdf" ref={(el) => { docInputRefs.current[doc.id] = el }} style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadDoc(doc.id, f) }} />
-                  <button onClick={() => docInputRefs.current[doc.id]?.click()} disabled={uploadingDoc === doc.id} style={{ padding: '5px 10px', borderRadius: 999, border: 0, background: status === 'missing' ? BLUE : isDark ? '#1e293b' : '#EFF6FF', color: status === 'missing' ? '#fff' : BLUE, fontWeight: 800, fontSize: 10, cursor: 'pointer' }}>{uploadingDoc === doc.id ? '...' : status === 'missing' ? 'Upload' : 'Update'}</button>
+                  <button onClick={() => docInputRefs.current[doc.id]?.click()} disabled={uploadingDoc === doc.id} style={{ padding: '5px 10px', borderRadius: 999, border: 0, background: status === 'missing' ? BLUE : isDark ? '#1e293b' : '#EFF6FF', color: status === 'missing' ? '#fff' : BLUE, fontWeight: 800, fontSize: 10 }}>{uploadingDoc === doc.id ? '...' : status === 'missing' ? 'Upload' : 'Update'}</button>
                 </div>
               </div>
             )
@@ -370,7 +382,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
         <button onClick={() => setShowMenu(true)} style={{ width: 44, height: 44, borderRadius: '50%', border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#fff', display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: THEME_TEXT, cursor: 'pointer', flexShrink: 0 }}>☰</button>
-        <button onClick={() => go('/driver/bundle')} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles • {totalDone}/{totalCount} docs</button>
+        <button onClick={() => go('/driver/bundle')} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles • {totalVerified}/{totalCount} verified</button>
       </header>
 
       {needsFix && (
@@ -386,7 +398,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#12B76A' : '#98A2B3' }} />
                 <span style={{ fontSize: 14, fontWeight: 700, color: THEME_TEXT }}>{isOnline ? 'You are online' : 'You are offline'}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: totalDone === totalCount ? '#12B76A' : BLUE, background: totalDone === totalCount ? '#ECFDF3' : '#EFF6FF', padding: '2px 8px', borderRadius: 999 }}>{totalDone}/{totalCount} docs • {restVerifiedCount}/{REST_DOCS.length} verified</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: totalVerified === totalCount ? '#12B76A' : BLUE, background: totalVerified === totalCount ? '#ECFDF3' : '#EFF6FF', padding: '2px 8px', borderRadius: 999 }}>{totalDone}/{totalCount} docs • {totalVerified}/{totalCount} verified</span>
               </div>
               <button onClick={toggleOnline} style={{ width: '100%', padding: 18, borderRadius: 100, background: isOnline ? (isDark ? '#334155' : '#1D2939') : BLUE, color: 'white', border: 0, fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,102,255,.25)' }}>
                 {isOnline ? 'GO OFFLINE' : needsFix ? 'FIX & GO ONLINE' : canGoOnline ? 'GO ONLINE' : `UPLOAD ${totalCount - totalDone} DOCS TO GO ONLINE`}
@@ -420,14 +432,14 @@ export function DriverHome({ profile }: { profile: Profile }) {
                   {avatarUrl ? <img src={avatarUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 15, lineHeight: 1.2 }}>{profile.full_name || 'Nakampe Trevor Mokgalaka'}</div>
-                  <span style={{ fontSize: 10, background: '#EFF6FF', color: BLUE, padding: '2px 8px', borderRadius: 999, fontWeight: 800, border: `1px solid ${BLUE}33` }}>🛡️ Inside App - Step 2</span>
+                  <div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 15, lineHeight: 1.2 }}>{profile.full_name || 'Driver'}</div>
+                  <span style={{ fontSize: 10, background: '#EFF6FF', color: BLUE, padding: '2px 8px', borderRadius: 999, fontWeight: 800, border: `1px solid ${BLUE}33` }}>🛡️ Inside App - {totalVerified}/{totalCount} verified</span>
                   <button onClick={() => fileRef.current?.click()} style={{ display: 'block', fontSize: 12, color: BLUE, fontWeight: 700, marginTop: 4, border: 0, background: 'transparent', cursor: 'pointer', padding: 0 }}>{uploadingPhoto ? 'Uploading...' : 'Change profile photo'}</button>
                 </div>
               </div>
               <div style={{ fontSize: 12, color: THEME_SUB, marginTop: 10, fontWeight: 600 }}>{(profile as any).phone || profile.phone || ''} • {vMake} {vModel} {vReg ? `• ${vReg}` : ''}</div>
-              <div style={{ marginTop: 8, height: 6, background: isDark ? '#1e293b' : '#EAECF0', borderRadius: 99 }}><div style={{ width: `${Math.round(totalDone/totalCount*100)}%`, height: 6, background: BLUE, borderRadius: 99 }} /></div>
-              <div style={{ fontSize: 10, color: THEME_SUB, marginTop: 4, fontWeight: 700 }}>{totalDone}/{totalCount} docs - {restDoneCount}/{REST_DOCS.length} rest to Go Online</div>
+              <div style={{ marginTop: 8, height: 6, background: isDark ? '#1e293b' : '#EAECF0', borderRadius: 99 }}><div style={{ width: `${Math.round(totalDone/totalCount*100)}%`, height: 6, background: totalVerified === totalCount ? '#12B76A' : BLUE, borderRadius: 99 }} /></div>
+              <div style={{ fontSize: 10, color: THEME_SUB, marginTop: 4, fontWeight: 700 }}>{totalVerified}/{totalCount} verified • {restVerifiedCount}/{REST_DOCS.length} rest to Go Online</div>
             </div>
 
             <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
