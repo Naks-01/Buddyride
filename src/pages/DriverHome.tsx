@@ -21,7 +21,6 @@ const CATEGORIES = [
   { id: 'buddy_plus', name: 'Buddy Plus', seats: '4 seats', desc: 'Standard • Most rides • Base 25 / R8 per km' },
   { id: 'buddy_max', name: 'Buddy Max', seats: '6-7 seats', desc: 'XL • Groups & luggage • Base 40 / R12 per km' },
 ]
-// FIX: Max pickup distance - 2km to 5km only, like screenshot
 const MIN_KM = 2
 const MAX_KM = 5
 
@@ -33,6 +32,23 @@ function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+// GLOBAL THEME - applies to whole app
+function useGlobalTheme() {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('buddy-theme') as any
+    if (saved === 'light' || saved === 'dark') return saved
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+  useEffect(() => {
+    localStorage.setItem('buddy-theme', theme)
+    document.documentElement.setAttribute('data-theme', theme)
+    document.documentElement.style.colorScheme = theme
+    document.body.style.background = theme === 'dark' ? '#0A2540' : '#FFFFFF'
+    document.body.style.color = theme === 'dark' ? '#ffffff' : '#0F172A'
+  }, [theme])
+  return { theme, setTheme, isDark: theme === 'dark' }
+}
+
 export function DriverHome({ profile }: { profile: Profile }) {
   const [ride, setRide] = useState<Ride | null>(null)
   const [incoming, setIncoming] = useState<Ride | null>(null)
@@ -42,6 +58,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [showChat, setShowChat] = useState(false)
   const timer = useRef<any>(null)
   const [showFix, setShowFix] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<25 | 50 | 80 | 90>(25)
   const [allZones, setAllZones] = useState<{id:string, name:string}[]>([])
   const [selectedZones, setSelectedZones] = useState<string[]>([])
@@ -54,20 +71,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [vReg, setVReg] = useState('')
   const [vYear, setVYear] = useState('')
 
-  // FIX: Maximum pickup distance state - from profile, default 2km
   const [pickupDistance, setPickupDistance] = useState(MIN_KM)
   const [autoAccept, setAutoAccept] = useState(true)
   const [savingDistance, setSavingDistance] = useState(false)
   const pickupRef = useRef({ distance: MIN_KM, autoAccept: true })
   pickupRef.current = { distance: pickupDistance, autoAccept }
 
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('buddy-theme') as any
-    if (saved === 'light' || saved === 'dark') return saved
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  })
-  useEffect(() => { localStorage.setItem('buddy-theme', theme) }, [theme])
-  const isDark = theme === 'dark'
+  const { theme, setTheme, isDark } = useGlobalTheme()
   const THEME_BG = isDark ? '#0A2540' : '#FFFFFF'
   const THEME_BORDER = isDark ? '#1e293b' : '#E2E8F0'
   const THEME_TEXT = isDark ? '#ffffff' : '#0F172A'
@@ -84,9 +94,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setPickupDistance(clamped)
     setAutoAccept(newAuto)
     setSavingDistance(true)
-    const { error } = await supabase.from('profiles').update({ search_radius_km: clamped, auto_accept_enabled: newAuto } as any).eq('id', profile.id)
+    await supabase.from('profiles').update({ search_radius_km: clamped, auto_accept_enabled: newAuto } as any).eq('id', profile.id)
     setSavingDistance(false)
-    if (error) alert('Could not save distance: ' + error.message)
   }
 
   useEffect(() => {
@@ -98,7 +107,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       ])
       if (zones) setAllZones(zones as any)
       if (v) setVehicleInfo(v)
-      // FIX: Load pickup distance + auto-accept from profile
       if (p) {
         const d = Number((p as any).search_radius_km ?? MIN_KM)
         if (d >= MIN_KM && d <= MAX_KM) setPickupDistance(d)
@@ -132,8 +140,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const hasZones = selectedZones.length > 0
   const hasRideType = Boolean(selectedRideType)
   const needsFix = (missingFields || []).length > 0
-  const zonesMissing = (missingFields || []).includes('service_zones')
-  const rideTypeMissing = (missingFields || []).includes('ride_type')
   const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType
 
   async function saveFix() {
@@ -164,19 +170,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
         ? await supabase.from('driver_vehicles').update(payloadVehicles).eq('driver_id', profile.id)
         : await supabase.from('driver_vehicles').insert(payloadVehicles)
       if (vErr) throw vErr
-      const payloadProfiles = {
-        service_zones: selectedZones,
-        ride_type: selectedRideType,
-        vehicle_make: vMake,
-        vehicle_model: vModel,
-        vehicle_color: vColour,
-        vehicle_colour: vColour,
-        vehicle_registration: vReg,
-        vehicle_year: vYear ? Number(vYear) : null,
-        search_radius_km: pickupDistance,
-        auto_accept_enabled: autoAccept,
-      }
-      await supabase.from('profiles').update(payloadProfiles).eq('id', profile.id)
+      await supabase.from('profiles').update({ service_zones: selectedZones, ride_type: selectedRideType, vehicle_make: vMake, vehicle_model: vModel, vehicle_color: vColour, vehicle_colour: vColour, vehicle_registration: vReg, vehicle_year: vYear ? Number(vYear) : null } as any).eq('id', profile.id)
       if (reloadVehicle) await reloadVehicle()
       setShowFix(false)
       if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
@@ -222,7 +216,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       if (p.new?.status === 'pending') {
         const { data } = await supabase.from('rides').select('*').eq('id', p.new.ride_id).eq('status', 'searching').single()
         if (!data) return
-        // FIX: Respect max pickup distance - ignore if pickup too far
         const pickupLat = Number((data as any).pickup_lat)
         const pickupLng = Number((data as any).pickup_lng)
         const driverLat = lastLoc.current?.[1] ?? location[1]
@@ -230,15 +223,10 @@ export function DriverHome({ profile }: { profile: Profile }) {
         if (pickupLat && pickupLng && driverLat && driverLng) {
           const dist = getDistanceKm(driverLat, driverLng, pickupLat, pickupLng)
           if (dist > pickupRef.current.distance) {
-            // Too far - auto decline, don't show sheet
             await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', p.new.ride_id).eq('driver_id', profile.id)
             return
           }
-          // FIX: Auto-accept if toggle ON and within distance
-          if (pickupRef.current.autoAccept) {
-            await accept(p.new.ride_id)
-            return
-          }
+          if (pickupRef.current.autoAccept) { await accept(p.new.ride_id); return }
         }
         setIncoming(data as Ride)
       }
@@ -247,15 +235,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const pct = ((pickupDistance - MIN_KM) / (MAX_KM - MIN_KM)) * 100
 
-  // FIX: Pickup distance card - exact screenshot style, dark bg
   const PickupDistanceCard = (
-    <div style={{ background: '#111111', borderRadius: 24, padding: 20, color: 'white', marginBottom: 12 }}>
+    <div style={{ background: '#111111', borderRadius: 24, padding: 20, color: 'white' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontWeight: 700, fontSize: 20 }}>Maximum pickup distance</span>
-        <button
-          onClick={() => void savePickupDistance(pickupDistance, !autoAccept)}
-          style={{ width: 52, height: 32, borderRadius: 999, border: 0, background: autoAccept ? '#1a3d2a' : '#2a2a2a', position: 'relative', cursor: 'pointer' }}
-        >
+        <button onClick={() => void savePickupDistance(pickupDistance, !autoAccept)} style={{ width: 52, height: 32, borderRadius: 999, border: 0, background: autoAccept ? '#1a3d2a' : '#2a2a2a', position: 'relative', cursor: 'pointer' }}>
           <div style={{ width: 28, height: 28, borderRadius: '50%', background: autoAccept ? '#6ef0a0' : '#666', position: 'absolute', top: 2, left: autoAccept ? 22 : 2, transition: '0.2s' }} />
         </button>
       </div>
@@ -283,6 +267,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 8, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
         <NavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => supabase.auth.signOut()} />
         <button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, borderRadius: 999, padding: '8px 12px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 12 }}>{bundleCredits ?? 0} trips • {bundleCount} bundles</button>
+        <button onClick={() => setShowSettings(true)} style={{ width: 44, height: 44, borderRadius: 12, border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#F2F4F7', display: 'grid', placeItems: 'center', fontSize: 20 }}>⚙️</button>
         <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ width: 44, height: 32, borderRadius: 999, border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#F2F4F7', display: 'grid', placeItems: 'center', fontSize: 16 }}>{isDark ? '🌙' : '☀️'}</button>
       </header>
       {needsFix && (
@@ -300,13 +285,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
                   <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#12B76A' : '#98A2B3' }} />
                   <span style={{ fontSize: 14, fontWeight: 700, color: THEME_TEXT }}>{isOnline ? 'You are online' : 'You are offline'}</span>
                 </div>
-                <span style={{ fontSize: 12, color: THEME_SUB }}>{bundleCredits ?? 0} trips</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: THEME_SUB }}>{bundleCredits ?? 0} trips • Max {pickupDistance}km</span>
+                  <button onClick={() => setShowSettings(true)} style={{ fontSize: 12, padding: '4px 8px', borderRadius: 999, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, color: THEME_TEXT }}>⚙️ Settings</button>
+                </div>
               </div>
-              {PickupDistanceCard}
               <button onClick={toggleOnline} style={{ width: '100%', padding: 18, borderRadius: 100, background: isOnline ? (isDark ? '#334155' : '#1D2939') : BLUE, color: 'white', border: 0, fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,102,255,.25)' }}>
                 {isOnline ? 'GO OFFLINE' : needsFix ? 'FIX & GO ONLINE' : canGoOnline ? 'GO ONLINE' : 'WAITING APPROVAL'}
               </button>
-              <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11, color: THEME_SUB }}>POPIA • 6 months • {isDark ? 'Dark' : 'Light'} mode • Max pickup {pickupDistance}km • Auto-accept {autoAccept ? 'ON' : 'OFF'}</div>
+              <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11, color: THEME_SUB }}>POPIA • 6 months • {isDark ? 'Dark' : 'Light'} • Auto {autoAccept ? 'ON' : 'OFF'}</div>
             </div>
           ) : (
             <div style={{ padding: '0 4px 12px' }}>
@@ -321,6 +308,23 @@ export function DriverHome({ profile }: { profile: Profile }) {
         </BottomSheet>
       </div>
       {incoming && <IncomingRideSheet ride={incoming} countdown={countdown} onAccept={accept} onDecline={decline} />}
+
+      {showSettings && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 7000, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'end center' }}>
+          <div style={{ width: '100%', maxWidth: 480, background: isDark ? '#0f172a' : '#FFFFFF', borderRadius: '20px 20px 0 0', padding: 20, maxHeight: '90dvh', overflowY: 'auto', color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Settings</h3>
+              <button onClick={() => setShowSettings(false)} style={{ border: 0, background: isDark ? '#1e293b' : '#F2F4F7', borderRadius: 999, padding: '8px 14px', fontWeight: 800, color: THEME_TEXT, fontSize: 14 }}>✕ Close</button>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderRadius: 12, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, marginBottom: 12 }}>
+              <span style={{ fontWeight: 700 }}>Theme</span>
+              <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ padding: '8px 14px', borderRadius: 999, border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#F2F4F7', color: THEME_TEXT, fontWeight: 800 }}>{isDark ? '🌙 Dark' : '☀️ Light'}</button>
+            </div>
+            {PickupDistanceCard}
+          </div>
+        </div>
+      )}
+
       {showChat && ride && (<div style={{position:'fixed',inset:0,zIndex:5000,background: THEME_BG}}><button onClick={() => setShowChat(false)} style={{position:'absolute',top:12,right:12,zIndex:5001,padding:'8px 12px',borderRadius:999,border:`1px solid ${THEME_BORDER}`,background: THEME_BG,color: THEME_TEXT,fontWeight:800}}>✕ Close</button><RideChat rideId={ride.id} myId={profile.id} /></div>)}
       {showFix && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'end center' }}>
@@ -344,8 +348,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
               </div>
               <input value={vReg} onChange={e=>setVReg(e.target.value.toUpperCase())} placeholder="HCM 339 L" style={{ padding: '12px', borderRadius: 10, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, color: THEME_TEXT, fontWeight: 700 }} />
             </div>
-            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>📍 Max Pickup Distance</div>
-            {PickupDistanceCard}
             <button onClick={saveFix} disabled={savingFix} style={{ width: '100%', marginTop: 20, padding: 16, borderRadius: 100, background: BLUE, color: '#fff', border: 0, fontWeight: 900 }}>{savingFix ? 'Saving...' : 'Save & Go Online →'}</button>
           </div>
         </div>
