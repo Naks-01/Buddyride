@@ -55,6 +55,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [pickupDistance, setPickupDistance] = useState(MIN_KM)
   const [autoAccept, setAutoAccept] = useState(true)
   const [savingDistance, setSavingDistance] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [docsList, setDocsList] = useState<any[]>([])
+  const [uploadingDoc, setUploadingDoc] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const docInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const pickupRef = useRef({ distance: MIN_KM, autoAccept: true })
   pickupRef.current = { distance: pickupDistance, autoAccept }
   const { theme, setTheme, isDark } = useGlobalTheme()
@@ -69,22 +74,58 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [mapCenter] = useState<[number, number]>(POLOKWANE)
   const location: [number, number] = (gpsLoc && Array.isArray(gpsLoc) && gpsLoc.length === 2 && typeof gpsLoc[0] === 'number' && gpsLoc[0] !== 0) ? gpsLoc as [number, number] : POLOKWANE
 
+  const go = (path: string) => { setShowMenu(false); setTimeout(() => { window.location.assign(path) }, 80) }
+
+  async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return
+    setUploadingPhoto(true)
+    try {
+      const ext = file.name.split('.').pop()
+      const path = `${profile.id}/avatar-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true })
+      if (upErr) throw upErr
+      const { data } = supabase.storage.from('avatars').getPublicUrl(path)
+      await supabase.from('profiles').update({ avatar_url: data.publicUrl } as any).eq('id', profile.id)
+      window.location.reload()
+    } catch (err: any) { alert(err.message || 'Photo failed') } finally { setUploadingPhoto(false) }
+  }
+
+  async function uploadDoc(type: string, file: File) {
+    setUploadingDoc(type)
+    try {
+      const ext = file.name.split('.').pop()
+      const path = `${profile.id}/${type}-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage.from('driver_docs').upload(path, file, { upsert: true })
+      if (upErr) throw upErr
+      const { data } = supabase.storage.from('driver_docs').getPublicUrl(path)
+      const existing = docsList.find((d: any) => d.doc_type === type)
+      if (existing) {
+        await supabase.from('driver_documents').update({ file_url: data.publicUrl, status: 'pending', updated_at: new Date().toISOString() }).eq('id', existing.id)
+      } else {
+        await supabase.from('driver_documents').insert({ driver_id: profile.id, doc_type: type, file_url: data.publicUrl, status: 'pending' })
+      }
+      const { data: fresh } = await supabase.from('driver_documents').select('*').eq('driver_id', profile.id)
+      if (fresh) setDocsList(fresh)
+    } catch (e: any) { alert(e.message) } finally { setUploadingDoc(null) }
+  }
+
   async function savePickupDistance(newDist: number, newAuto: boolean) {
     const clamped = Math.min(MAX_KM, Math.max(MIN_KM, newDist))
-    setPickupDistance(clamped)
-    setAutoAccept(newAuto)
-    setSavingDistance(true)
+    setPickupDistance(clamped); setAutoAccept(newAuto); setSavingDistance(true)
     await supabase.from('profiles').update({ search_radius_km: clamped, auto_accept_enabled: newAuto } as any).eq('id', profile.id)
     setSavingDistance(false)
   }
+
   useEffect(() => {
     void (async () => {
-      const [{ data: v }, { data: zones }, { data: p }] = await Promise.all([
+      const [{ data: v }, { data: zones }, { data: p }, { data: docs }] = await Promise.all([
         supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle(),
         supabase.from('service_zones').select('id,name').order('name'),
         supabase.from('profiles').select('*').eq('id', profile.id).maybeSingle(),
+        supabase.from('driver_documents').select('*').eq('driver_id', profile.id),
       ])
       if (zones) setAllZones(zones as any)
+      if (docs) setDocsList(docs)
       if (p) {
         const d = Number((p as any).search_radius_km ?? MIN_KM)
         if (d >= MIN_KM && d <= MAX_KM) setPickupDistance(d)
@@ -127,21 +168,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
     setSavingFix(true)
     try {
       const payloadVehicles = {
-        driver_id: profile.id,
-        service_zones: selectedZones,
-        ride_type: selectedRideType,
-        vehicle_make: vMake,
-        vehicle_model: vModel,
-        vehicle_color: vColour,
-        vehicle_colour: vColour,
-        vehicle_registration: vReg,
-        vehicle_year: vYear ? Number(vYear) : null,
-        make_model: `${vMake} ${vModel}`.trim(),
-        vehicle_make_model: `${vMake} ${vModel}`.trim(),
-        colour: vColour,
-        registration: vReg,
-        year: vYear ? Number(vYear) : null,
-        updated_at: new Date().toISOString()
+        driver_id: profile.id, service_zones: selectedZones, ride_type: selectedRideType,
+        vehicle_make: vMake, vehicle_model: vModel, vehicle_color: vColour, vehicle_colour: vColour,
+        vehicle_registration: vReg, vehicle_year: vYear ? Number(vYear) : null,
+        make_model: `${vMake} ${vModel}`.trim(), vehicle_make_model: `${vMake} ${vModel}`.trim(),
+        colour: vColour, registration: vReg, year: vYear ? Number(vYear) : null, updated_at: new Date().toISOString()
       }
       const { data: existing } = await supabase.from('driver_vehicles').select('driver_id').eq('driver_id', profile.id).maybeSingle()
       const { error: vErr } = existing
@@ -151,15 +182,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
       await supabase.from('profiles').update({ service_zones: selectedZones, ride_type: selectedRideType, vehicle_make: vMake, vehicle_model: vModel, vehicle_color: vColour, vehicle_colour: vColour, vehicle_registration: vReg, vehicle_year: vYear ? Number(vYear) : null } as any).eq('id', profile.id)
       if (reloadVehicle) await reloadVehicle()
       setShowFix(false)
-      if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
+      if ((bundleCredits ?? 0) <= 0) { go('/driver/bundle'); return }
     } catch (e: any) { alert(e.message || 'Could not save') } finally { setSavingFix(false) }
   }
 
   async function toggleOnline() {
     if (!isOnline) {
       if (needsFix) { setShowFix(true); return }
-      if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
-      if (!docsOk || !verified) { alert('Waiting admin approval'); return }
+      if ((bundleCredits ?? 0) <= 0) { go('/driver/bundle'); return }
+      if (!docsOk || !verified) { alert('Waiting admin approval - check Documents in menu'); setShowMenu(true); return }
     }
     const next = !isOnline
     const { error } = await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: next, updated_at: new Date().toISOString() }, { onConflict: 'driver_id' })
@@ -170,7 +201,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   async function accept(id: string) {
     clearInterval(timer.current)
     const { error } = await supabase.rpc('accept_ride_with_bundle', { p_ride_id: id })
-    if (error) { if (String(error.message || '').includes('NO_CREDITS')) { window.location.href = '/driver/bundle'; return } alert(error.message); return }
+    if (error) { if (String(error.message || '').includes('NO_CREDITS')) { go('/driver/bundle'); return } alert(error.message); return }
     const { data } = await supabase.from('rides').select('*').eq('id', id).single()
     if (data) { setRide(data as Ride); try { const dest: [number, number] = [Number((data as any).pickup_lng), Number((data as any).pickup_lat)]; const r = await getRoute(lastLoc.current, dest); setRoute(r.geometry) } catch {} }
     reloadBundle(); setIncoming(null); setIsOnline(false)
@@ -194,15 +225,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
       if (p.new?.status === 'pending') {
         const { data } = await supabase.from('rides').select('*').eq('id', p.new.ride_id).eq('status', 'searching').single()
         if (!data) return
-        const pickupLat = Number((data as any).pickup_lat)
-        const pickupLng = Number((data as any).pickup_lng)
-        const driverLat = lastLoc.current?.[1] ?? location[1]
-        const driverLng = lastLoc.current?.[0] ?? location[0]
+        const pickupLat = Number((data as any).pickup_lat); const pickupLng = Number((data as any).pickup_lng)
+        const driverLat = lastLoc.current?.[1] ?? location[1]; const driverLng = lastLoc.current?.[0] ?? location[0]
         if (pickupLat && pickupLng && driverLat && driverLng) {
           const dist = getDistanceKm(driverLat, driverLng, pickupLat, pickupLng)
           if (dist > pickupRef.current.distance) {
-            await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', p.new.ride_id).eq('driver_id', profile.id)
-            return
+            await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', p.new.ride_id).eq('driver_id', profile.id); return
           }
           if (pickupRef.current.autoAccept) { await accept(p.new.ride_id); return }
         }
@@ -212,43 +240,78 @@ export function DriverHome({ profile }: { profile: Profile }) {
   }, [isOnline, ride])
 
   const pct = ((pickupDistance - MIN_KM) / (MAX_KM - MIN_KM)) * 100
+  const initials = (profile.full_name || 'N').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()
 
   const PickupDistanceCard = (
-    <div style={{ background: isDark ? '#111a2a' : '#ffffff', borderRadius: 24, padding: 20, color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>
+    <div style={{ background: isDark ? '#111a2a' : '#ffffff', borderRadius: 20, padding: 18, color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: 700, fontSize: 18 }}>Maximum pickup distance</span>
-        <button onClick={() => void savePickupDistance(pickupDistance, !autoAccept)} style={{ width: 52, height: 32, borderRadius: 999, border: 0, background: autoAccept ? BLUE : '#2a2a2a', position: 'relative', cursor: 'pointer' }}>
-          <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: autoAccept ? 22 : 2, transition: '0.2s' }} />
+        <span style={{ fontWeight: 700, fontSize: 15 }}>Maximum pickup distance</span>
+        <button onClick={() => void savePickupDistance(pickupDistance, !autoAccept)} style={{ width: 48, height: 28, borderRadius: 999, border: 0, background: autoAccept ? BLUE : '#2a2a2a', position: 'relative', cursor: 'pointer' }}>
+          <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: autoAccept ? 22 : 2, transition: '0.2s' }} />
         </button>
       </div>
-      <div style={{ color: THEME_SUB, fontSize: 14, marginTop: 12, lineHeight: 1.4 }}>Rides within this distance will be automatically accepted</div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 28, marginTop: 16 }}>
-        <button onClick={() => pickupDistance > MIN_KM && void savePickupDistance(pickupDistance - 1, autoAccept)} disabled={pickupDistance <= MIN_KM} style={{ width: 56, height: 56, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#f5f5f7', color: THEME_TEXT, fontSize: 28, cursor: 'pointer', opacity: pickupDistance <= MIN_KM ? 0.4 : 1 }}>—</button>
-        <div style={{ textAlign: 'center', minWidth: 70 }}><div style={{ fontSize: 48, fontWeight: 800 }}>{pickupDistance}</div><div style={{ color: THEME_SUB, fontSize: 14, marginTop: -4 }}>km</div></div>
-        <button onClick={() => pickupDistance < MAX_KM && void savePickupDistance(pickupDistance + 1, autoAccept)} disabled={pickupDistance >= MAX_KM} style={{ width: 56, height: 56, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#f5f5f7', color: THEME_TEXT, fontSize: 28, cursor: 'pointer', opacity: pickupDistance >= MAX_KM ? 0.4 : 1 }}>+</button>
+      <div style={{ color: THEME_SUB, fontSize: 12, marginTop: 8 }}>Rides within this distance will be automatically accepted</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, marginTop: 14 }}>
+        <button onClick={() => pickupDistance > MIN_KM && void savePickupDistance(pickupDistance - 1, autoAccept)} disabled={pickupDistance <= MIN_KM} style={{ width: 48, height: 48, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#F0F0F5', color: THEME_TEXT, fontSize: 24, cursor: 'pointer', opacity: pickupDistance <= MIN_KM ? 0.4 : 1 }}>—</button>
+        <div style={{ textAlign: 'center', minWidth: 60 }}><div style={{ fontSize: 42, fontWeight: 800 }}>{pickupDistance}</div><div style={{ color: THEME_SUB, fontSize: 12 }}>km</div></div>
+        <button onClick={() => pickupDistance < MAX_KM && void savePickupDistance(pickupDistance + 1, autoAccept)} disabled={pickupDistance >= MAX_KM} style={{ width: 48, height: 48, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#F0F0F5', color: THEME_TEXT, fontSize: 24, cursor: 'pointer', opacity: pickupDistance >= MAX_KM ? 0.4 : 1 }}>+</button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, padding: '0 8px' }}>
-        <div style={{ color: BLUE, fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 16 }}>{MIN_KM}</span><span style={{ fontSize: 14, marginTop: 4 }}>min</span></div>
-        <div style={{ flex: 1, margin: '0 16px', position: 'relative', height: 30, display: 'flex', alignItems: 'center' }}>
-          <div style={{ width: '100%', height: 6, background: isDark ? '#29364a' : '#E4E7EC', borderRadius: 999 }}><div style={{ width: `${pct}%`, height: 6, background: BLUE, borderRadius: 999 }} /></div>
-          <div style={{ position: 'absolute', left: `calc(${pct}% - 3px)`, top: 0, width: 6, height: 22, background: BLUE, borderRadius: 999 }} />
-        </div>
-        <div style={{ color: THEME_SUB, fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 16 }}>{MAX_KM}</span><span style={{ fontSize: 14, marginTop: 4 }}>max</span></div>
+      <div style={{ display: 'flex', alignItems: 'center', marginTop: 12 }}>
+        <span style={{ color: BLUE, fontWeight: 700, fontSize: 12 }}>{MIN_KM} min</span>
+        <div style={{ flex: 1, margin: '0 12px', height: 4, background: isDark ? '#29364a' : '#E4E7EC', borderRadius: 999 }}><div style={{ width: `${pct}%`, height: 4, background: BLUE, borderRadius: 999 }} /></div>
+        <span style={{ color: THEME_SUB, fontWeight: 700, fontSize: 12 }}>{MAX_KM} max</span>
       </div>
-      {savingDistance && <div style={{ fontSize: 11, color: BLUE, marginTop: 8, textAlign: 'center' }}>Saving...</div>}
+      {savingDistance && <div style={{ fontSize: 11, color: BLUE, marginTop: 6, textAlign: 'center' }}>Saving...</div>}
+    </div>
+  )
+
+  const DocsInBurger = (
+    <div style={{ background: isDark ? '#111a2a' : '#fff', borderRadius: 20, padding: 14, border: `1px solid ${THEME_BORDER}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{ fontWeight: 800, fontSize: 14, color: THEME_TEXT }}>📄 My Documents</span>
+        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 800, background: docsOk && verified ? '#ECFDF3' : '#FFFAEB', color: docsOk && verified ? '#12B76A' : '#F79009' }}>{docsOk && verified ? '✓ Verified' : '⏳ Pending'}</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {[
+          { id: 'license', name: "Driver's License", icon: '🪪' },
+          { id: 'id_doc', name: 'SA ID / Passport', icon: '🆔' },
+          { id: 'vehicle_disc', name: 'Vehicle Disc', icon: '🚗' },
+          { id: 'insurance', name: 'Insurance', icon: '🛡️' },
+        ].map(doc => {
+          const existing = docsList.find((d: any) => d.doc_type === doc.id)
+          const status = existing?.status || 'missing'
+          return (
+            <div key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: isDark ? '#0b1120' : '#F8FAFC', borderRadius: 12, border: `1px solid ${THEME_BORDER}` }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <span style={{ fontSize: 18 }}>{doc.icon}</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: THEME_TEXT }}>{doc.name}</div>
+                  <div style={{ fontSize: 10, color: status === 'verified' ? '#12B76A' : status === 'pending' ? '#F79009' : '#EF4444', fontWeight: 700 }}>
+                    {status === 'verified' ? '✓ Verified' : status === 'pending' ? '⏳ Pending review' : '✕ Missing'}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <input type="file" accept="image/*,.pdf" ref={(el: HTMLInputElement | null) => { docInputRefs.current[doc.id] = el }} style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadDoc(doc.id, f) }} />
+                <button onClick={() => docInputRefs.current[doc.id]?.click()} disabled={uploadingDoc === doc.id} style={{ padding: '6px 12px', borderRadius: 999, border: 0, background: existing ? (isDark ? '#1e293b' : '#EFF6FF') : BLUE, color: existing ? BLUE : '#fff', fontWeight: 800, fontSize: 11, cursor: 'pointer' }}>
+                  {uploadingDoc === doc.id ? '...' : existing ? 'Update' : 'Upload'}
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 
   return (
     <div style={{ height: '100dvh', position: 'relative', overflow: 'hidden', background: THEME_BG }}>
+      <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePhoto} />
       <div style={{ position: 'absolute', top: 56, left: 0, right: 0, bottom: 0 }}><DriverTomTomMap center={mapCenter} driverLocation={location} route={route} theme={theme} /></div>
 
-      {/* HEADER - BURGER + BUNDLE PILL - CLEAN */}
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
         <button onClick={() => setShowMenu(true)} style={{ width: 44, height: 44, borderRadius: '50%', border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#fff', display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: THEME_TEXT, cursor: 'pointer', flexShrink: 0 }}>☰</button>
-        <button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, textAlign: 'center', cursor: 'pointer' }}>
-          {bundleCredits ?? 0} trips • {bundleCount} bundles
-        </button>
+        <button onClick={() => go('/driver/bundle')} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles</button>
       </header>
 
       {needsFix && (
@@ -283,58 +346,64 @@ export function DriverHome({ profile }: { profile: Profile }) {
       </div>
       {incoming && <IncomingRideSheet ride={incoming} countdown={countdown} onAccept={accept} onDecline={decline} />}
 
-      {/* PROFESSIONAL BURGER MENU */}
       {showMenu && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 7000, display: 'flex' }}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={() => setShowMenu(false)} />
-          <div style={{ width: '85%', maxWidth: 360, height: '100%', background: isDark ? '#0f172a' : '#E6F0FF', overflowY: 'auto', boxShadow: '-4px 0 20px rgba(0,0,0,0.2)' }}>
-            <div style={{ background: isDark ? '#1e293b' : '#fff', padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${THEME_BORDER}` }}>
-              <span style={{ fontWeight: 800, color: THEME_TEXT }}>BuddyRide Driver</span>
-              <button onClick={() => setShowMenu(false)} style={{ width: 32, height: 32, borderRadius: '50%', border: 0, background: isDark ? '#334155' : '#F2F4F7', color: THEME_TEXT, fontWeight: 800, cursor: 'pointer' }}>✕</button>
+          <div style={{ width: '88%', maxWidth: 360, height: '100%', background: isDark ? '#0f172a' : '#F0F6FF', overflowY: 'auto', boxShadow: '8px 0 30px rgba(0,0,0,0.3)' }}>
+            <div style={{ background: isDark ? '#1e293b' : '#fff', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${THEME_BORDER}`, position: 'sticky', top: 0, zIndex: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 32, height: 32, background: BLUE, color: '#fff', borderRadius: 8, display: 'grid', placeItems: 'center', fontWeight: 800 }}>B</span><span style={{ fontWeight: 800, color: THEME_TEXT }}>BuddyRide Driver</span></div>
+              <button onClick={() => setShowMenu(false)} style={{ width: 36, height: 36, borderRadius: '50%', border: 0, background: isDark ? '#334155' : '#F2F4F7', color: THEME_TEXT, fontWeight: 800, cursor: 'pointer' }}>✕</button>
             </div>
-            <div style={{ margin: 16, background: isDark ? '#1e293b' : '#fff', borderRadius: 20, padding: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+
+            <div style={{ margin: 14, background: isDark ? '#1e293b' : '#fff', borderRadius: 20, padding: 16, border: `1px solid ${THEME_BORDER}` }}>
               <div style={{ display: 'flex', gap: 12 }}>
-                <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#DBEAFE', border: `2px solid ${BLUE}`, display: 'grid', placeItems: 'center', fontSize: 22, fontWeight: 800, color: BLUE }}>{(profile.full_name || 'N').charAt(0)}</div>
-                <div>
-                  <div style={{ fontWeight: 800, color: THEME_TEXT, lineHeight: 1.2 }}>{profile.full_name || 'Nakampe Trevor Mokgalaka'}</div>
-                  <span style={{ fontSize: 11, background: '#EFF6FF', color: BLUE, padding: '2px 8px', borderRadius: 999, fontWeight: 700 }}>🛡️ New</span>
-                  <div style={{ fontSize: 13, color: BLUE, fontWeight: 600, marginTop: 4 }}>Change profile photo</div>
+                <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#DBEAFE', border: `2px solid ${BLUE}`, display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: BLUE, overflow: 'hidden', flexShrink: 0 }}>
+                  {(profile as any).avatar_url ? <img src={(profile as any).avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 15, lineHeight: 1.2 }}>{profile.full_name || 'Nakampe Trevor Mokgalaka'}</div>
+                  <span style={{ fontSize: 10, background: '#EFF6FF', color: BLUE, padding: '2px 8px', borderRadius: 999, fontWeight: 800, border: `1px solid ${BLUE}33` }}>🛡️ New</span>
+                  <button onClick={() => fileRef.current?.click()} style={{ display: 'block', fontSize: 12, color: BLUE, fontWeight: 700, marginTop: 4, border: 0, background: 'transparent', cursor: 'pointer', padding: 0 }}>{uploadingPhoto ? 'Uploading...' : 'Change profile photo'}</button>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
-                {[['↗', '-', 'Driver Score'], ['⭐', '5.00', 'Rating'], ['%', '-', 'Acceptance'], ['✕', '-', 'Cancellation']].map(([icon, val, label]) => (
-                  <div key={label} style={{ background: isDark ? '#111a2a' : '#E6F0FF', borderRadius: 14, padding: 12, textAlign: 'center', border: `1px solid ${BLUE}22` }}>
-                    <div style={{ color: BLUE, fontSize: 18 }}>{icon}</div>
-                    <div style={{ fontWeight: 800, color: THEME_TEXT }}>{val}</div>
-                    <div style={{ fontSize: 11, color: THEME_SUB }}>{label}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
+                {[['↗','-','Driver Score'],['⭐','5.00','Rating'],['%','-','Acceptance'],['✕','-','Cancellation']].map(([icon,val,label]) => (
+                  <div key={label} style={{ background: isDark ? '#111a2a' : '#E6F0FF', borderRadius: 12, padding: '10px 8px', textAlign: 'center', border: `1px solid ${isDark ? '#1e293b' : '#DBEAFE'}` }}>
+                    <div style={{ color: BLUE, fontSize: 14 }}>{icon}</div><div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 14 }}>{val}</div><div style={{ fontSize: 10, color: THEME_SUB }}>{label}</div>
                   </div>
                 ))}
               </div>
-              <div style={{ fontSize: 13, color: THEME_SUB, marginTop: 12 }}>{profile.phone || '+27793051213'}</div>
+              <div style={{ fontSize: 12, color: THEME_SUB, marginTop: 10, fontWeight: 600 }}>{(profile as any).phone || profile.phone || '+27793051213'}</div>
+              <div style={{ fontSize: 11, color: THEME_SUB, marginTop: 2 }}>{vMake} {vModel} {vReg ? `• ${vReg}` : ''}</div>
             </div>
-            <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+            <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {[
-                { label: 'My Profile', icon: '👤', action: () => { setShowMenu(false); setShowFix(true) } },
-                { label: 'Earnings', icon: '💳', action: () => { setShowMenu(false); window.location.href = '/driver/earnings' } },
-                { label: 'My Trips', icon: '🚕', action: () => { setShowMenu(false); window.location.href = '/driver/trips' } },
+                { label: 'My Profile', sub: 'Vehicle, zones', icon: '👤', action: () => { setShowMenu(false); setShowFix(true) } },
+                { label: 'Earnings', sub: 'Your payouts', icon: '💳', action: () => go('/driver/earnings') },
+                { label: 'My Trips', sub: 'History & receipts', icon: '🚕', action: () => go('/driver/trips') },
+                { label: 'My Bundles', sub: `${bundleCredits ?? 0} trips left`, icon: '📦', action: () => go('/driver/bundle') },
               ].map(m => (
-                <button key={m.label} onClick={m.action} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: 0, cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 12, fontWeight: 700, color: THEME_TEXT }}><span style={{ width: 40, height: 40, background: '#DBEAFE', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 18 }}>{m.icon}</span>{m.label}</span>
+                <button key={m.label} onClick={m.action} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${THEME_BORDER}`, cursor: 'pointer', textAlign: 'left' }}>
+                  <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}><span style={{ width: 40, height: 40, background: '#DBEAFE', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 18 }}>{m.icon}</span><span><div style={{ fontWeight: 700, color: THEME_TEXT, fontSize: 14 }}>{m.label}</div><div style={{ fontSize: 11, color: THEME_SUB }}>{m.sub}</div></span></span>
                   <span style={{ color: BLUE, fontWeight: 800 }}>›</span>
                 </button>
               ))}
-              <div style={{ fontSize: 11, fontWeight: 800, color: THEME_SUB, textTransform: 'uppercase', letterSpacing: 1, marginTop: 16, padding: '0 4px' }}>Settings</div>
-              <div style={{ background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontWeight: 700, color: THEME_TEXT }}>{isDark ? '🌙 Dark Mode' : '☀️ Light Mode'}</span>
-                <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ width: 48, height: 28, borderRadius: 999, border: 0, background: isDark ? BLUE : '#E4E7EC', position: 'relative', cursor: 'pointer' }}>
-                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: isDark ? 22 : 2, transition: '0.2s' }} />
-                </button>
+
+              <div style={{ fontSize: 10, fontWeight: 800, color: THEME_SUB, textTransform: 'uppercase', letterSpacing: 1, marginTop: 12, padding: '0 4px' }}>Documents - Update Anytime</div>
+              {DocsInBurger}
+
+              <div style={{ fontSize: 10, fontWeight: 800, color: THEME_SUB, textTransform: 'uppercase', letterSpacing: 1, marginTop: 12, padding: '0 4px' }}>Settings</div>
+              <div style={{ background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${THEME_BORDER}` }}>
+                <span style={{ fontWeight: 700, color: THEME_TEXT, fontSize: 14 }}>{isDark ? '🌙 Dark Mode' : '☀️ Light Mode'}</span>
+                <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ width: 44, height: 26, borderRadius: 999, border: 0, background: isDark ? BLUE : '#E4E7EC', position: 'relative', cursor: 'pointer' }}><div style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: isDark ? 20 : 2, transition: '0.22s' }} /></button>
               </div>
               {PickupDistanceCard}
-              <button onClick={() => { setShowMenu(false); supabase.auth.signOut() }} style={{ width: '100%', background: isDark ? '#7F1D1D' : '#FEF3F2', color: '#B42318', borderRadius: 16, padding: 14, border: 0, fontWeight: 800, cursor: 'pointer', marginTop: 8 }}>Log out</button>
-              <div style={{ textAlign: 'center', fontSize: 11, color: THEME_SUB, padding: '8px 0 24px' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles • POPIA • 6 months</div>
+
+              <button onClick={() => { if (confirm('Log out?')) { setShowMenu(false); supabase.auth.signOut() } }} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', color: '#EF4444', borderRadius: 16, padding: 14, border: `1px solid ${isDark ? '#7F1D1D' : '#FECACA'}`, fontWeight: 800, cursor: 'pointer', marginTop: 10 }}>Log out</button>
+              <div style={{ textAlign: 'center', fontSize: 10, color: THEME_SUB, padding: '10px 0 20px', lineHeight: 1.5 }}>{bundleCredits ?? 0} trips • {bundleCount} bundles • POPIA<br/>6 months • {isDark ? 'Dark' : 'Light'} mode</div>
             </div>
           </div>
+          <div style={{ flex: 1, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }} onClick={() => setShowMenu(false)} />
         </div>
       )}
 
@@ -342,16 +411,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {showFix && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'end center' }}>
           <div style={{ width: '100%', maxWidth: 480, background: THEME_BG, borderRadius: '20px 20px 0 0', padding: 20, maxHeight: '85dvh', overflowY: 'auto', color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><h3 style={{ margin: 0 }}>Complete to Go Online</h3><button onClick={() => setShowFix(false)} style={{ border: 0, background: isDark ? '#1e293b' : '#F2F4F7', borderRadius: 999, padding: '6px 12px', fontWeight: 800, color: THEME_TEXT }}>✕</button></div>
-            <div style={{ fontWeight: 800, margin: '12px 0 6px' }}>📍 Service Area</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><h3 style={{ margin: 0, fontWeight: 800 }}>Complete to Go Online</h3><button onClick={() => setShowFix(false)} style={{ border: 0, background: isDark ? '#1e293b' : '#F2F4F7', borderRadius: 999, padding: '6px 12px', fontWeight: 800, color: THEME_TEXT }}>✕</button></div>
+            <div style={{ fontWeight: 800, margin: '12px 0 6px', fontSize: 13 }}>📍 Service Area</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {(allZones.length ? allZones : [{id:'polokwane',name:'Polokwane'},{id:'seshego',name:'Seshego'},{id:'mankweng',name:'Mankweng'}]).map(z => { const on = selectedZones.includes(z.id); return <button key={z.id} onClick={() => setSelectedZones(s => on ? s.filter(x => x!==z.id) : [...s, z.id])} style={{ padding: '10px 14px', borderRadius: 999, border: on ? `2px solid ${BLUE}` : `1px solid ${THEME_BORDER}`, background: on ? (isDark ? '#1e293b' : '#EFF6FF') : THEME_BG, color: on ? BLUE : THEME_TEXT, fontWeight: 800 }}>{on ? '✓ ' : ''}{z.name}</button> })}
             </div>
-            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>🚙 Ride Type</div>
+            <div style={{ fontWeight: 800, margin: '16px 0 6px', fontSize: 13 }}>🚙 Ride Type</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {CATEGORIES.map(t => { const on = selectedRideType === t.id; return <button key={t.id} onClick={() => setSelectedRideType(t.id)} style={{ padding: '12px 14px', borderRadius: 12, border: on ? `2px solid ${BLUE}` : `1px solid ${THEME_BORDER}`, background: on ? (isDark ? '#1e293b' : '#EFF6FF') : THEME_BG, color: on ? BLUE : THEME_TEXT, fontWeight: 800, textAlign: 'left' }}>{on ? '✓ ' : ''}{t.name} • {t.seats}<div style={{ fontSize: 11, fontWeight: 400, color: THEME_SUB }}>{t.desc}</div></button> })}
             </div>
-            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>🚗 Vehicle</div>
+            <div style={{ fontWeight: 800, margin: '16px 0 6px', fontSize: 13 }}>🚗 Vehicle</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <input value={vMake} onChange={e=>setVMake(e.target.value)} placeholder="Make e.g. Toyota" style={{ padding: '12px', borderRadius: 10, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, color: THEME_TEXT }} />
               <input value={vModel} onChange={e=>setVModel(e.target.value)} placeholder="Model e.g. Corolla" style={{ padding: '12px', borderRadius: 10, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, color: THEME_TEXT }} />
