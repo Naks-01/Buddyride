@@ -118,10 +118,11 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
     return () => { cancelled = true; if (channel) void supabase.removeChannel(channel) }
   }, [])
 
-  // FIX: Rejected only if profile rejected OR a doc rejected AND not re-uploaded - was any rejected doc ever = stuck rejected
   const isRejected = status.toLowerCase() === 'rejected' || !!rejectionReason || rejectedDocs.length > 0
-  const isIdentityComplete = !isRejected && !licenseExpiryMissing && (status.toLowerCase() === 'identity_complete' || (identityCount === 4 && uploadedCount >= 4 && hasIdNumbers))
-  const isIdentityPhotosOnly = !isRejected && identityCount === 4 && uploadedCount >= 4 && (!hasIdNumbers || licenseExpiryMissing)
+  // FIX: Also respect localStorage flag - DB may still say pending_verification even though identity is done
+  const hasLocalIdentityFlag = typeof window !== 'undefined' && localStorage.getItem('br_identity_complete') === '1'
+  const isIdentityComplete = !isRejected && !licenseExpiryMissing && (status.toLowerCase() === 'identity_complete' || hasLocalIdentityFlag || (identityCount === 4 && uploadedCount >= 4 && hasIdNumbers))
+  const isIdentityPhotosOnly = !isRejected && !isIdentityComplete && identityCount === 4 && uploadedCount >= 4 && (!hasIdNumbers || licenseExpiryMissing)
   const isFullPending = ['pending', 'pending_verification', 'submitted', 'under_review', 'in_review'].includes(status.toLowerCase())
   const vehicleComplete = Boolean(vehicleDetails.year && vehicleDetails.make_model.trim() && vehicleDetails.colour.trim() && vehicleDetails.registration.trim())
   const zonesComplete = selectedZones.length > 0
@@ -131,13 +132,23 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
   if (!vehicleComplete) missingVehicleItems.push('Vehicle Details (Year + Make/Model + Colour + Registration)')
   if (!zonesComplete) missingVehicleItems.push('Service Area (pick at least 1 zone)')
   if (!rideTypeComplete) missingVehicleItems.push('Ride Type')
-  // FIX: Use onApproved / callback, not window.location.href - was full page reload losing auth state
   const goFixDocuments = () => { window.location.href = '/driver/onboarding' }
   const goViewDocuments = () => { window.location.href = '/driver/onboarding' }
-  const enterApp = () => { if (onApproved) onApproved(); else window.location.href = '/driver' }
+  // FIX: DO NOT call onApproved() - onApproved in App.tsx does refreshProfile() which fetches pending_verification from DB and bounces back to this page. Go direct to /driver, App.tsx will read br_identity_complete flag.
+  const enterApp = () => {
+    try {
+      localStorage.setItem('br_identity_complete', '1')
+      // Background DB sync - fire and forget, never block / never refresh
+      supabase.auth.getUser().then(({ data }) => {
+        const id = data.user?.id
+        if (id) supabase.from('profiles').update({ verification_status: 'identity_complete' } as any).eq('id', id).then(() => {})
+      })
+    } catch {}
+    window.location.assign('/driver')
+  }
 
   return (
-    <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F8F9FA', color: '#182230', fontFamily: 'Inter, sans-serif' }}>
+    <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: '#F8F9FA', color: '#182230', fontFamily: 'Inter, sans-serif', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any, touchAction: 'pan-y' as any }}>
       <section style={{ width: 'min(100%, 480px)', padding: 32, borderRadius: 16, background: '#fff', textAlign: 'center', boxShadow: '0 5px 18px rgba(20,33,50,.06)' }}>
         {error && <div style={{ background: '#FEF3F2', border: '1px solid #FECDCA', padding: 12, borderRadius: 10, marginBottom: 12, textAlign: 'left', fontSize: 13, color: '#b42318' }}>{error}</div>}
         {isIdentityPhotosOnly && (
@@ -163,7 +174,7 @@ export function DriverPendingPage({ onApproved }: { onApproved?: () => void }) {
               {rideTypeComplete && <div style={{ marginTop: 4, color: '#067647' }}>🚙 Ride Type: {selectedRideType}</div>}
               <div style={{ marginTop: 8, color: BLUE_DARK, fontWeight: 700 }}>Go Online is blocked until all {TOTAL_EXPECTED} docs + Vehicle + Zones + Ride Type + Admin approval + Bundle.</div>
             </div>
-            <button onClick={enterApp} style={{ marginTop: 20, width: '100%', padding: 14, border: 0, borderRadius: 12, background: '#16A34A', color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer' }}>🚀 Enter App - Finish Rest Inside →</button>
+            <button onClick={enterApp} style={{ marginTop: 20, width: '100%', padding: 14, border: 0, borderRadius: 12, background: '#16A34A', color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer', touchAction: 'manipulation' }}>🚀 Enter App - Finish Rest Inside →</button>
             <button onClick={goViewDocuments} style={{ marginTop: 10, width: '100%', padding: 14, border: '1px solid #d0d5dd', borderRadius: 12, background: '#fff', color: '#344054', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Continue Uploading Docs</button>
           </>
         )}
