@@ -12,6 +12,7 @@ import { useVehicleCheck } from '../hooks/useVehicleCheck'
 import { useDocsCheck } from '../hooks/useDocsCheck'
 import { IncomingRideSheet } from '../hooks/IncomingRideSheet'
 import { useGlobalTheme } from '../hooks/useGlobalTheme'
+import { REQUIRED_DOCS, normalizeDocType } from '../lib/driverDocuments'
 
 const EXPIRE = 15
 const BLUE = '#0066FF'
@@ -23,6 +24,30 @@ const CATEGORIES = [
 ]
 const MIN_KM = 2
 const MAX_KM = 5
+
+// SINGLE SOURCE OF TRUTH - SAME AS ONBOARDING
+const ALL_DOCS = REQUIRED_DOCS.map(d => ({
+  id: normalizeDocType(d.type),
+  label: d.label,
+  rawType: d.type,
+  expiryRequired: (d as any).expiryRequired || false,
+  helper: (d as any).helper || '',
+}))
+
+const IDENTITY_TYPES = new Set(['profile_photo','selfie','sa_id','drivers_license'].map(normalizeDocType))
+const IDENTITY_DOCS = ALL_DOCS.filter(d => IDENTITY_TYPES.has(d.id))
+const REST_DOCS = ALL_DOCS.filter(d => !IDENTITY_TYPES.has(d.id))
+
+function getDocIcon(id: string) {
+  if (id.includes('photo') || id === 'profile_photo') return '👤'
+  if (id === 'selfie') return '🤳'
+  if (id.includes('vehicle')) return '🚗'
+  if (id === 'prdp' || id.includes('prdp') || id.includes('pdp')) return '🎫'
+  if (id === 'drivers_license' || id === 'sa_id') return '🪪'
+  if (id.includes('criminal') || id.includes('police')) return '👮'
+  if (id.includes('inspection') || id.includes('safety')) return '✅'
+  return '📄'
+}
 
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371
@@ -45,7 +70,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [sheetSnap, setSheetSnap] = useState<25 | 50 | 80 | 90>(25)
   const [allZones, setAllZones] = useState<{id:string, name:string}[]>([])
   const [selectedZones, setSelectedZones] = useState<string[]>([])
-  const [selectedRideType, setSelectedRideType] = useState('buddy_plus')
+  const [selectedRideType, setSelectedRideType] = useState('buddy_lite')
   const [savingFix, setSavingFix] = useState(false)
   const [vMake, setVMake] = useState('')
   const [vModel, setVModel] = useState('')
@@ -77,7 +102,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const go = (path: string) => { setShowMenu(false); setTimeout(() => { window.location.assign(path) }, 80) }
 
-  // FIXED: No reload, updates instantly
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     setUploadingPhoto(true)
@@ -89,11 +113,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
       const { data } = supabase.storage.from('avatars').getPublicUrl(path)
       await supabase.from('profiles').update({ avatar_url: data.publicUrl } as any).eq('id', profile.id)
       setAvatarUrl(data.publicUrl)
-      alert('Photo updated!')
     } catch (err: any) { alert('Photo failed: ' + (err.message || '')) } finally { setUploadingPhoto(false); if (e.target) e.target.value = '' }
   }
 
-  // FIXED: Better error + status handling
   async function uploadDoc(type: string, file: File) {
     setUploadingDoc(type)
     try {
@@ -102,18 +124,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
       const { error: upErr } = await supabase.storage.from('driver_docs').upload(path, file, { upsert: true })
       if (upErr) throw upErr
       const { data } = supabase.storage.from('driver_docs').getPublicUrl(path)
-      const existing = docsList.find((d: any) => d.doc_type === type)
+      const existing = docsList.find((d: any) => normalizeDocType(d.doc_type || d.document_type) === type)
       if (existing) {
-        const { error: updErr } = await supabase.from('driver_documents').update({ file_url: data.publicUrl, status: 'pending', updated_at: new Date().toISOString() }).eq('id', existing.id)
-        if (updErr) throw updErr
+        await supabase.from('driver_documents').update({ file_url: data.publicUrl, document_url: `${'driver_docs'}:${path}`, status: 'pending', updated_at: new Date().toISOString() }).eq('id', existing.id)
       } else {
-        const { error: insErr } = await supabase.from('driver_documents').insert({ driver_id: profile.id, doc_type: type, file_url: data.publicUrl, status: 'pending' })
-        if (insErr) throw insErr
+        await supabase.from('driver_documents').insert({ driver_id: profile.id, doc_type: type, document_type: type, file_url: data.publicUrl, document_url: `driver_docs:${path}`, status: 'pending' })
       }
       const { data: fresh } = await supabase.from('driver_documents').select('*').eq('driver_id', profile.id)
       if (fresh) setDocsList(fresh)
-      alert(`${type} uploaded - pending review`)
-    } catch (e: any) { console.error(e); alert('Upload failed: ' + (e.message || '')) } finally { setUploadingDoc(null) }
+    } catch (e: any) { alert('Upload failed: ' + e.message) } finally { setUploadingDoc(null) }
   }
 
   async function savePickupDistance(newDist: number, newAuto: boolean) {
@@ -273,50 +292,74 @@ export function DriverHome({ profile }: { profile: Profile }) {
     </div>
   )
 
-  // FIXED: Badge uses real docsList, not hook that lies
-  const DOC_TYPES = [
-    { id: 'license', name: "Driver's License", icon: '🪪' },
-    { id: 'id_doc', name: 'SA ID / Passport', icon: '🆔' },
-    { id: 'vehicle_disc', name: 'Vehicle Disc', icon: '🚗' },
-    { id: 'insurance', name: 'Insurance', icon: '🛡️' },
-  ]
-  const verifiedCount = DOC_TYPES.filter(t => docsList.find((d: any) => d.doc_type === t.id && d.status === 'verified')).length
-  const pendingCount = DOC_TYPES.filter(t => docsList.find((d: any) => d.doc_type === t.id && d.status === 'pending')).length
-  const docsAllVerified = verifiedCount === DOC_TYPES.length
-  const docsOverallLabel = docsAllVerified ? '✓ Verified' : docsList.length === 0 ? '✕ Missing' : pendingCount > 0 ? '⏳ Pending' : '✕ Missing'
+  // MATCH ONBOARDING LOGIC
+  const getDocStatus = (docId: string) => {
+    const found = docsList.find((d: any) => normalizeDocType(d.doc_type || d.document_type) === docId)
+    if (!found) return 'missing'
+    return String(found.status || 'pending').toLowerCase()
+  }
+
+  const identityDoneCount = IDENTITY_DOCS.filter(d => getDocStatus(d.id) !== 'missing').length
+  const identityVerifiedCount = IDENTITY_DOCS.filter(d => getDocStatus(d.id) === 'verified').length
+  const restDoneCount = REST_DOCS.filter(d => getDocStatus(d.id) !== 'missing').length
+  const restVerifiedCount = REST_DOCS.filter(d => getDocStatus(d.id) === 'verified').length
+  const totalDone = identityDoneCount + restDoneCount
+  const totalCount = ALL_DOCS.length
 
   const DocsInBurger = (
-    <div style={{ background: isDark ? '#111a2a' : '#fff', borderRadius: 20, padding: 14, border: `1px solid ${THEME_BORDER}` }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <span style={{ fontWeight: 800, fontSize: 14, color: THEME_TEXT }}>📄 My Documents</span>
-        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 800, background: docsAllVerified ? '#ECFDF3' : '#FFFAEB', color: docsAllVerified ? '#12B76A' : '#F79009', border: `1px solid ${docsAllVerified ? '#ABEFC6' : '#FEDF89'}` }}>{docsOverallLabel} {verifiedCount}/4</span>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {DOC_TYPES.map(doc => {
-          const existing = docsList.find((d: any) => d.doc_type === doc.id)
-          const status = existing?.status || 'missing'
-          return (
-            <div key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: isDark ? '#0b1120' : '#F8FAFC', borderRadius: 12, border: `1px solid ${THEME_BORDER}` }}>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                <span style={{ fontSize: 18 }}>{doc.icon}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* STEP 1 - IDENTITY DONE */}
+      <div style={{ background: isDark ? '#111a2a' : '#fff', borderRadius: 20, padding: 14, border: `1px solid ${THEME_BORDER}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <span style={{ fontWeight: 800, fontSize: 13, color: THEME_TEXT }}>✅ Step 1 - Identity</span>
+          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, fontWeight: 800, background: identityDoneCount === IDENTITY_DOCS.length ? '#ECFDF3' : '#EFF6FF', color: identityDoneCount === IDENTITY_DOCS.length ? '#12B76A' : BLUE, border: `1px solid ${identityDoneCount === IDENTITY_DOCS.length ? '#ABEFC6' : '#DBEAFE'}` }}>{identityDoneCount}/{IDENTITY_DOCS.length} Done</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {IDENTITY_DOCS.map(doc => {
+            const status = getDocStatus(doc.id)
+            const existing = docsList.find((d: any) => normalizeDocType(d.doc_type || d.document_type) === doc.id)
+            return (
+              <div key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: status === 'verified' ? '#ECFDF3' : isDark ? '#0b1120' : '#F8FAFC', borderRadius: 10, border: `1px solid ${status === 'verified' ? '#ABEFC6' : THEME_BORDER}` }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: 14 }}>{getDocIcon(doc.id)}</span>
+                  <div><div style={{ fontWeight: 700, fontSize: 11, color: THEME_TEXT }}>{doc.label}</div><div style={{ fontSize: 9, color: status === 'verified' ? '#12B76A' : status === 'pending' ? '#F79009' : '#EF4444', fontWeight: 700 }}>{status === 'verified' ? '✓ Verified' : status === 'pending' ? '⏳ Pending' : '✕ Missing'}</div></div>
+                </div>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: THEME_TEXT }}>{doc.name}</div>
-                  <div style={{ fontSize: 10, color: status === 'verified' ? '#12B76A' : status === 'pending' ? '#F79009' : '#EF4444', fontWeight: 700 }}>
-                    {status === 'verified' ? '✓ Verified' : status === 'pending' ? '⏳ Pending review' : '✕ Missing'}
-                  </div>
+                  <input type="file" accept="image/*,.pdf" ref={(el) => { docInputRefs.current[doc.id] = el }} style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadDoc(doc.id, f) }} />
+                  <button onClick={() => docInputRefs.current[doc.id]?.click()} disabled={uploadingDoc === doc.id} style={{ padding: '4px 8px', borderRadius: 999, border: 0, background: existing ? '#EFF6FF' : BLUE, color: existing ? BLUE : '#fff', fontWeight: 800, fontSize: 9 }}>{uploadingDoc === doc.id ? '...' : existing ? 'Update' : 'Upload'}</button>
                 </div>
               </div>
-              <div>
-                <input type="file" accept="image/*,.pdf" ref={(el: HTMLInputElement | null) => { docInputRefs.current[doc.id] = el }} style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadDoc(doc.id, f) }} />
-                <button onClick={() => docInputRefs.current[doc.id]?.click()} disabled={uploadingDoc === doc.id} style={{ padding: '6px 12px', borderRadius: 999, border: 0, background: existing ? (isDark ? '#1e293b' : '#EFF6FF') : BLUE, color: existing ? BLUE : '#fff', fontWeight: 800, fontSize: 11, cursor: 'pointer' }}>
-                  {uploadingDoc === doc.id ? '...' : existing ? 'Update' : 'Upload'}
-                </button>
-              </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
       </div>
-      {docsList.length === 0 && <div style={{ fontSize: 11, color: THEME_SUB, marginTop: 8, textAlign: 'center' }}>Upload all 4 to go online</div>}
+
+      {/* STEP 2 - REST TO GO ONLINE - THIS GIVES ENERGY */}
+      <div style={{ background: isDark ? '#111a2a' : '#fff', borderRadius: 20, padding: 14, border: `2px solid ${BLUE}30` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <span style={{ fontWeight: 800, fontSize: 13, color: THEME_TEXT }}>🚀 Step 2 - Finish to Go Online</span>
+          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, fontWeight: 800, background: restDoneCount === REST_DOCS.length ? '#ECFDF3' : '#FFFAEB', color: restDoneCount === REST_DOCS.length ? '#12B76A' : '#F79009' }}>{restDoneCount}/{REST_DOCS.length} {totalDone}/{totalCount} total</span>
+        </div>
+        <div style={{ fontSize: 11, color: THEME_SUB, marginBottom: 10, fontWeight: 600, background: isDark ? '#0b1120' : '#EFF6FF', padding: '6px 10px', borderRadius: 8, border: `1px solid ${THEME_BORDER}` }}>💡 You are already inside the App! Finish these to unlock GO ONLINE - Keep 100% fare</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
+          {REST_DOCS.map(doc => {
+            const status = getDocStatus(doc.id)
+            const existing = docsList.find((d: any) => normalizeDocType(d.doc_type || d.document_type) === doc.id)
+            return (
+              <div key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: status === 'verified' ? '#ECFDF3' : isDark ? '#0b1120' : '#F8FAFC', borderRadius: 10, border: `1px solid ${status === 'verified' ? '#ABEFC6' : THEME_BORDER}` }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
+                  <span style={{ fontSize: 14 }}>{getDocIcon(doc.id)}</span>
+                  <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 11, color: THEME_TEXT, lineHeight: 1.2 }}>{doc.label}</div><div style={{ fontSize: 9, color: status === 'verified' ? '#12B76A' : status === 'pending' ? '#F79009' : '#EF4444', fontWeight: 700 }}>{status === 'verified' ? '✓ Verified' : status === 'pending' ? '⏳ Pending review' : '✕ Missing - tap Upload'}</div></div>
+                </div>
+                <div style={{ marginLeft: 8 }}>
+                  <input type="file" accept="image/*,.pdf" ref={(el) => { docInputRefs.current[doc.id] = el }} style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadDoc(doc.id, f) }} />
+                  <button onClick={() => docInputRefs.current[doc.id]?.click()} disabled={uploadingDoc === doc.id} style={{ padding: '5px 10px', borderRadius: 999, border: 0, background: status === 'missing' ? BLUE : isDark ? '#1e293b' : '#EFF6FF', color: status === 'missing' ? '#fff' : BLUE, fontWeight: 800, fontSize: 10, cursor: 'pointer' }}>{uploadingDoc === doc.id ? '...' : status === 'missing' ? 'Upload' : 'Update'}</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 
@@ -327,7 +370,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
         <button onClick={() => setShowMenu(true)} style={{ width: 44, height: 44, borderRadius: '50%', border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#fff', display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: THEME_TEXT, cursor: 'pointer', flexShrink: 0 }}>☰</button>
-        <button onClick={() => go('/driver/bundle')} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles</button>
+        <button onClick={() => go('/driver/bundle')} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles • {totalDone}/{totalCount} docs</button>
       </header>
 
       {needsFix && (
@@ -340,12 +383,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme}>
           {!ride ? (
             <div style={{ padding: '0 4px 12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#12B76A' : '#98A2B3' }} />
                 <span style={{ fontSize: 14, fontWeight: 700, color: THEME_TEXT }}>{isOnline ? 'You are online' : 'You are offline'}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: totalDone === totalCount ? '#12B76A' : BLUE, background: totalDone === totalCount ? '#ECFDF3' : '#EFF6FF', padding: '2px 8px', borderRadius: 999 }}>{totalDone}/{totalCount} docs • {restVerifiedCount}/{REST_DOCS.length} verified</span>
               </div>
               <button onClick={toggleOnline} style={{ width: '100%', padding: 18, borderRadius: 100, background: isOnline ? (isDark ? '#334155' : '#1D2939') : BLUE, color: 'white', border: 0, fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,102,255,.25)' }}>
-                {isOnline ? 'GO OFFLINE' : needsFix ? 'FIX & GO ONLINE' : canGoOnline ? 'GO ONLINE' : 'WAITING APPROVAL'}
+                {isOnline ? 'GO OFFLINE' : needsFix ? 'FIX & GO ONLINE' : canGoOnline ? 'GO ONLINE' : `UPLOAD ${totalCount - totalDone} DOCS TO GO ONLINE`}
               </button>
             </div>
           ) : (
@@ -377,46 +421,31 @@ export function DriverHome({ profile }: { profile: Profile }) {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 15, lineHeight: 1.2 }}>{profile.full_name || 'Nakampe Trevor Mokgalaka'}</div>
-                  <span style={{ fontSize: 10, background: '#EFF6FF', color: BLUE, padding: '2px 8px', borderRadius: 999, fontWeight: 800, border: `1px solid ${BLUE}33` }}>🛡️ New</span>
+                  <span style={{ fontSize: 10, background: '#EFF6FF', color: BLUE, padding: '2px 8px', borderRadius: 999, fontWeight: 800, border: `1px solid ${BLUE}33` }}>🛡️ Inside App - Step 2</span>
                   <button onClick={() => fileRef.current?.click()} style={{ display: 'block', fontSize: 12, color: BLUE, fontWeight: 700, marginTop: 4, border: 0, background: 'transparent', cursor: 'pointer', padding: 0 }}>{uploadingPhoto ? 'Uploading...' : 'Change profile photo'}</button>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
-                {[['↗','-','Driver Score'],['⭐','5.00','Rating'],['%','-','Acceptance'],['✕','-','Cancellation']].map(([icon,val,label]) => (
-                  <div key={label} style={{ background: isDark ? '#111a2a' : '#E6F0FF', borderRadius: 12, padding: '10px 8px', textAlign: 'center', border: `1px solid ${isDark ? '#1e293b' : '#DBEAFE'}` }}>
-                    <div style={{ color: BLUE, fontSize: 14 }}>{icon}</div><div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 14 }}>{val}</div><div style={{ fontSize: 10, color: THEME_SUB }}>{label}</div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 12, color: THEME_SUB, marginTop: 10, fontWeight: 600 }}>{(profile as any).phone || profile.phone || '+27793051213'}</div>
-              <div style={{ fontSize: 11, color: THEME_SUB, marginTop: 2 }}>{vMake} {vModel} {vReg ? `• ${vReg}` : ''}</div>
+              <div style={{ fontSize: 12, color: THEME_SUB, marginTop: 10, fontWeight: 600 }}>{(profile as any).phone || profile.phone || ''} • {vMake} {vModel} {vReg ? `• ${vReg}` : ''}</div>
+              <div style={{ marginTop: 8, height: 6, background: isDark ? '#1e293b' : '#EAECF0', borderRadius: 99 }}><div style={{ width: `${Math.round(totalDone/totalCount*100)}%`, height: 6, background: BLUE, borderRadius: 99 }} /></div>
+              <div style={{ fontSize: 10, color: THEME_SUB, marginTop: 4, fontWeight: 700 }}>{totalDone}/{totalCount} docs - {restDoneCount}/{REST_DOCS.length} rest to Go Online</div>
             </div>
 
             <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {DocsInBurger}
+              <div style={{ fontSize: 10, fontWeight: 800, color: THEME_SUB, textTransform: 'uppercase', letterSpacing: 1, marginTop: 8, padding: '0 4px' }}>Quick Actions</div>
               {[
                 { label: 'My Profile', sub: 'Vehicle, zones', icon: '👤', action: () => { setShowMenu(false); setShowFix(true) } },
                 { label: 'Earnings', sub: 'Your payouts', icon: '💳', action: () => go('/driver/earnings') },
-                { label: 'My Trips', sub: 'History & receipts', icon: '🚕', action: () => go('/driver/trips') },
+                { label: 'My Trips', sub: 'History', icon: '🚕', action: () => go('/driver/trips') },
                 { label: 'My Bundles', sub: `${bundleCredits ?? 0} trips left`, icon: '📦', action: () => go('/driver/bundle') },
               ].map(m => (
-                <button key={m.label} onClick={m.action} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${THEME_BORDER}`, cursor: 'pointer', textAlign: 'left' }}>
-                  <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}><span style={{ width: 40, height: 40, background: '#DBEAFE', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 18 }}>{m.icon}</span><span><div style={{ fontWeight: 700, color: THEME_TEXT, fontSize: 14 }}>{m.label}</div><div style={{ fontSize: 11, color: THEME_SUB }}>{m.sub}</div></span></span>
+                <button key={m.label} onClick={m.action} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${THEME_BORDER}`, cursor: 'pointer', textAlign: 'left' }}>
+                  <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}><span style={{ width: 36, height: 36, background: '#DBEAFE', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 16 }}>{m.icon}</span><span><div style={{ fontWeight: 700, color: THEME_TEXT, fontSize: 13 }}>{m.label}</div><div style={{ fontSize: 10, color: THEME_SUB }}>{m.sub}</div></span></span>
                   <span style={{ color: BLUE, fontWeight: 800 }}>›</span>
                 </button>
               ))}
-
-              <div style={{ fontSize: 10, fontWeight: 800, color: THEME_SUB, textTransform: 'uppercase', letterSpacing: 1, marginTop: 12, padding: '0 4px' }}>Documents - Update Anytime</div>
-              {DocsInBurger}
-
-              <div style={{ fontSize: 10, fontWeight: 800, color: THEME_SUB, textTransform: 'uppercase', letterSpacing: 1, marginTop: 12, padding: '0 4px' }}>Settings</div>
-              <div style={{ background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${THEME_BORDER}` }}>
-                <span style={{ fontWeight: 700, color: THEME_TEXT, fontSize: 14 }}>{isDark ? '🌙 Dark Mode' : '☀️ Light Mode'}</span>
-                <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ width: 44, height: 26, borderRadius: 999, border: 0, background: isDark ? BLUE : '#E4E7EC', position: 'relative', cursor: 'pointer' }}><div style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: isDark ? 20 : 2, transition: '0.22s' }} /></button>
-              </div>
               {PickupDistanceCard}
-
-              <button onClick={() => { if (confirm('Log out?')) { setShowMenu(false); supabase.auth.signOut() } }} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', color: '#EF4444', borderRadius: 16, padding: 14, border: `1px solid ${isDark ? '#7F1D1D' : '#FECACA'}`, fontWeight: 800, cursor: 'pointer', marginTop: 10 }}>Log out</button>
-              <div style={{ textAlign: 'center', fontSize: 10, color: THEME_SUB, padding: '10px 0 20px', lineHeight: 1.5 }}>{bundleCredits ?? 0} trips • {bundleCount} bundles • POPIA<br/>6 months • {isDark ? 'Dark' : 'Light'} mode</div>
+              <button onClick={() => { if (confirm('Log out?')) { setShowMenu(false); supabase.auth.signOut() } }} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', color: '#EF4444', borderRadius: 16, padding: 14, border: `1px solid ${isDark ? '#7F1D1D' : '#FECACA'}`, fontWeight: 800, cursor: 'pointer', marginTop: 6 }}>Log out</button>
             </div>
           </div>
           <div style={{ flex: 1, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }} onClick={() => setShowMenu(false)} />
