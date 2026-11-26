@@ -49,12 +49,19 @@ function Brand({ compact = false }: { compact?: boolean }) {
   </div>
 }
 
-// FIX: Status FIRST, path SECOND.
 function driverScreenFor(status: string | null | undefined, path: string): 'onboarding' | 'pending' | 'home' | 'bundle' {
   const p = String(path || '/').replace(/\/+$/, '') || '/'
   const v = String(status || '').toLowerCase().trim()
   if (p === '/driver/bundle' || p === '/driver/bundles' || p === '/driver/buy-bundle') return 'bundle'
   if (p.startsWith('/driver/navigation/')) return 'home'
+  try {
+    if (localStorage.getItem('br_identity_complete') === '1') {
+      if (['pending', 'pending_verification', 'submitted', 'under_review', 'in_review', 'review', 'not_started'].includes(v)) {
+        if (p === '/driver/pending') return 'home'
+        if (p === '/driver' || p === '/driver/' || p.startsWith('/driver')) return 'home'
+      }
+    }
+  } catch {}
   if (p === '/driver/pending') return 'pending'
   if (v === '' || v === 'not_started' || v === 'rejected') return 'onboarding'
   if (v === 'identity_complete') return 'home'
@@ -144,9 +151,9 @@ export default function App() {
           throw new Error('This administrator profile is not authorized for the configured administrator account.')
         }
       }
-      // FIX: If user pressed Enter App before, respect localStorage even if DB still says not_started
       try {
-        if (localStorage.getItem('br_identity_complete') === '1' && result.role === 'driver' && String((result as any).verification_status || '').toLowerCase() === 'not_started') {
+        const vs = String((result as any).verification_status || '').toLowerCase()
+        if (localStorage.getItem('br_identity_complete') === '1' && result.role === 'driver' && ['not_started', 'pending', 'pending_verification', 'submitted', 'under_review', 'in_review', 'review'].includes(vs)) {
           result = { ...result, verification_status: 'identity_complete' } as Profile
         }
       } catch {}
@@ -286,9 +293,9 @@ export default function App() {
     if (!current) return
     const fresh = await getProfile(current.id)
     if (fresh) {
-      // FIX: Don't let stale DB overwrite identity_complete - if we already entered app, keep it
       try {
-        if (localStorage.getItem('br_identity_complete') === '1' && String((fresh as any).verification_status || '').toLowerCase() === 'not_started') {
+        const vs = String((fresh as any).verification_status || '').toLowerCase()
+        if (localStorage.getItem('br_identity_complete') === '1' && ['not_started', 'pending', 'pending_verification', 'submitted', 'under_review', 'in_review', 'review'].includes(vs)) {
           fresh.verification_status = 'identity_complete' as any
         }
       } catch {}
@@ -297,13 +304,10 @@ export default function App() {
     return fresh
   }, [])
 
-  // FIX: DO NOT call refreshProfile() here - it was overwriting identity_complete back to not_started, so press did nothing.
-  // Now: set local flag + optimistic profile + navigate instantly. DB sync happens in background, never blocks.
   const handleDriverEnterApp = useCallback(() => {
     try { localStorage.setItem('br_identity_complete','1') } catch {}
     setProfile(prev => prev ? { ...prev, verification_status: 'identity_complete' } as Profile : prev)
     navigateDriverPath('/driver', true)
-    // Background DB sync - fire and forget, never await
     try {
       const id = profileRef.current?.id
       if (id) {
@@ -345,7 +349,7 @@ export default function App() {
         return <DriverOnboarding profile={profile} onDashboard={handleDriverEnterApp} />
       }
       if (screen === 'pending') {
-        return <DriverPendingPage onApproved={async () => { await refreshProfile(); navigateDriverPath('/driver', true) }} />
+        return <DriverPendingPage onApproved={handleDriverEnterApp} />
       }
       if (screen === 'bundle') {
         const v = String((profile as any).verification_status || '').toLowerCase()
@@ -355,8 +359,6 @@ export default function App() {
         }
         return <Suspense fallback={<main className="splash splash-intro" style={{ background: appBg, color: appText }}>Loading bundles…</main>}><DriverBundlePurchase profile={profile} onBack={() => navigateDriverPath('/driver', true)} /></Suspense>
       }
-      // FIX: Don't let DriverDashboardGuard bounce you back to onboarding if DB is stale.
-      // If we just pressed Enter App, Guard should see identity_complete profile we set above.
       return <DriverDashboardGuard profile={profile} onRequireOnboarding={() => navigateDriverPath('/driver/onboarding', true)}>
         <Suspense fallback={<main className="splash splash-intro" style={{ background: appBg, color: appText }}>Loading driver tools…</main>}><DriverHome profile={profile} /></Suspense>
       </DriverDashboardGuard>
