@@ -17,7 +17,6 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light'
   const dragStartRef = useRef<{ y: number; height: number } | null>(null)
   const liveHeightRef = useRef<number>(snapPoint)
   const isDark = theme === 'dark'
-  // FIX: Blue Lite - light = white, dark = navy (was #121212 black, broke Lite)
   const surface = isDark ? '#0A2540' : '#ffffff'
   const text = isDark ? '#ffffff' : '#111827'
   const border = isDark ? '#1e293b' : '#E4E7EC'
@@ -31,13 +30,8 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light'
   }
 
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
-    dragStartRef.current = {
-      y: event.clientY,
-      height: liveHeightRef.current,
-    }
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    } catch {}
+    dragStartRef.current = { y: event.clientY, height: liveHeightRef.current }
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
   }
 
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
@@ -68,9 +62,6 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light'
     liveHeightRef.current = snapPoint
   }
 
-  // FIX: No more 90dvh + translateY trick - height IS the snap height
-  // Old: height 90dvh + translateY = huge invisible white sheet = double button look
-
   return (
     <section
       className={`uber-bottom-sheet uber-bottom-sheet--${theme}`}
@@ -88,15 +79,13 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light'
         borderRadius: '28px 28px 0 0',
         boxShadow: isDark ? '0 -8px 32px rgba(10,37,64,.4)' : '0 -8px 32px rgba(0,0,0,.12)',
         backdropFilter: 'blur(24px)',
-        transition: dragHeight === null
-          ? `height 400ms cubic-bezier(.32,.72,0,1)`
-          : 'none',
+        transition: dragHeight === null ? `height 400ms cubic-bezier(.32,.72,0,1)` : 'none',
         touchAction: 'pan-y',
         pointerEvents: 'auto',
       }}
     >
+      {/* FIX: Removed .uber-bottom-sheet button { border-radius: 14px } - it was killing Bolt pill 100px */}
       <style>{`
-        .uber-bottom-sheet button { border-radius: 14px; }
         .uber-bottom-sheet--dark .ride-card,
         .uber-bottom-sheet--dark .ride-status,
         .uber-bottom-sheet--dark .fare-card {

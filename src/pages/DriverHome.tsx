@@ -43,7 +43,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [vReg, setVReg] = useState('')
   const [vYear, setVYear] = useState('')
 
-  // DAY/NIGHT MODE
+  // DAY/NIGHT
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('buddy-theme') as any
     if (saved === 'light' || saved === 'dark') return saved
@@ -67,12 +67,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
       const [{ data: v }, { data: zones }, { data: p }] = await Promise.all([
         supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle(),
         supabase.from('service_zones').select('id,name').order('name'),
-        supabase.from('profiles').select('service_zones,ride_type,vehicle_make,vehicle_model,vehicle_year,vehicle_color,vehicle_colour,vehicle_registration').eq('id', profile.id).single(),
+        supabase.from('profiles').select('*').eq('id', profile.id).maybeSingle(),
       ])
       if (zones) setAllZones(zones as any)
       if (v) setVehicleInfo(v)
-      const zonesFromV = Array.isArray((v as any)?.service_zones) ? (v as any).service_zones : []
-      const zonesFromP = Array.isArray((p as any)?.service_zones) ? (p as any).service_zones : []
+      const zonesFromV = Array.isArray((v as any)?.service_zones) ? (v as any).service_zones : typeof (v as any)?.service_zones === 'string' ? [(v as any).service_zones] : []
+      const zonesFromP = Array.isArray((p as any)?.service_zones) ? (p as any).service_zones : typeof (p as any)?.service_zones === 'string' ? [(p as any).service_zones] : []
       const rawZones = zonesFromV.length ? zonesFromV : zonesFromP
       if (rawZones.length && zones) {
         const normalized = rawZones.map((z: string) => {
@@ -98,11 +98,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const hasZones = selectedZones.length > 0
   const hasRideType = Boolean(selectedRideType)
-  const zonesMissing = !hasZones
-  const rideTypeMissing = !hasRideType
-  const otherMissing = (missingFields || []).filter((f: string) => f !== 'service_zones' && f !== 'ride_type')
-  const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType && (bundleCredits ?? 0) > 0
-  const needsFix = zonesMissing || rideTypeMissing || otherMissing.length > 0
+  // FIXED: Use hook missingFields directly - no double filtering
+  const needsFix = (missingFields || []).length > 0
+  const zonesMissing = (missingFields || []).includes('service_zones')
+  const rideTypeMissing = (missingFields || []).includes('ride_type')
+  const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType
 
   async function saveFix() {
     if (!hasZones) { alert('Pick at least 1 Service Area'); return }
@@ -145,10 +145,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       await supabase.from('profiles').update(payloadProfiles).eq('id', profile.id)
       if (reloadVehicle) await reloadVehicle()
       setShowFix(false)
-      if ((bundleCredits ?? 0) <= 0) {
-        window.location.assign('/driver/bundle')
-        return
-      }
+      if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
     } catch (e: any) { alert(e.message || 'Could not save') } finally { setSavingFix(false) }
   }
 
@@ -195,21 +192,17 @@ export function DriverHome({ profile }: { profile: Profile }) {
   return (
     <div style={{ height: '100dvh', position: 'relative', overflow: 'hidden', background: THEME_BG }}>
       <div style={{ position: 'absolute', top: 56, left: 0, right: 0, bottom: 0 }}><DriverTomTomMap center={location} driverLocation={location} route={route} theme={theme} /></div>
-      
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 8, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
         <NavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => supabase.auth.signOut()} />
         <button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, borderRadius: 999, padding: '8px 12px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 12 }}>{bundleCredits ?? 0} trips • {bundleCount} bundles</button>
         <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ width: 44, height: 32, borderRadius: 999, border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#F2F4F7', display: 'grid', placeItems: 'center', fontSize: 16 }}>{isDark ? '🌙' : '☀️'}</button>
       </header>
-
       {needsFix && (
         <div onClick={() => setShowFix(true)} style={{ position: 'relative', zIndex: 250, margin: '8px 12px 0', padding: '10px 14px', borderRadius: 999, background: isDark ? '#7F1D1D' : '#FEF3F2', color: isDark ? '#FECACA' : '#B42318', fontSize: 12, fontWeight: 700, border: `1px solid ${isDark ? '#991B1B' : '#FECACA'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
-          <span>⚠️ Fix: {zonesMissing ? 'Area ' : ''}{rideTypeMissing ? 'RideType ' : ''}{otherMissing.length ? missingLabels.join(', ') : ''}</span>
+          <span>⚠️ Fix: {missingLabels.join(', ')}</span>
           <span style={{ background: BLUE, color: '#fff', padding: '4px 10px', borderRadius: 999, fontSize: 11 }}>FIX →</span>
         </div>
       )}
-
-      {/* BOLT LOW SINGLE SHEET - 25% */}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60 }}>
         <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme}>
           {!ride ? (
@@ -238,10 +231,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
           )}
         </BottomSheet>
       </div>
-
       {incoming && <IncomingRideSheet ride={incoming} countdown={countdown} onAccept={accept} onDecline={decline} />}
       {showChat && ride && (<div style={{position:'fixed',inset:0,zIndex:5000,background: THEME_BG}}><button onClick={() => setShowChat(false)} style={{position:'absolute',top:12,right:12,zIndex:5001,padding:'8px 12px',borderRadius:999,border:`1px solid ${THEME_BORDER}`,background: THEME_BG,color: THEME_TEXT,fontWeight:800}}>✕ Close</button><RideChat rideId={ride.id} myId={profile.id} /></div>)}
-      
       {showFix && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'end center' }}>
           <div style={{ width: '100%', maxWidth: 480, background: THEME_BG, borderRadius: '20px 20px 0 0', padding: 20, maxHeight: '85dvh', overflowY: 'auto', color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>

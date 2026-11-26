@@ -51,34 +51,28 @@ export function useVehicleCheck(driverId: string) {
     setLoading(true)
     setError('')
     try {
-      const [{ data: prof, error: pErr }, { data: veh }] = await Promise.all([
-        supabase.from('profiles').select('service_zones,ride_type,vehicle_make,vehicle_model,vehicle_year,vehicle_color,vehicle_colour,vehicle_registration,vehicle_seats').eq('id', driverId).single(),
+      const [{ data: prof }, { data: veh }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', driverId).maybeSingle(),
         supabase.from('driver_vehicles').select('*').eq('driver_id', driverId).maybeSingle()
       ])
       if (reqId !== reqIdRef.current) return
-      if (pErr) throw pErr
-
       const p: any = prof || {}
       const v: any = veh || {}
-
-      const zonesArray: string[] = Array.isArray(v.service_zones) && v.service_zones.length ? v.service_zones
-        : Array.isArray(p.service_zones) && p.service_zones.length ? p.service_zones : []
-
-      // FIX STEP 1: Check ALL naming variants for make/model/color
-      const makeModelRaw = v.make_model || v.vehicle_make_model || p.vehicle_make_model || ''
+      const rawZones = v.service_zones ?? p.service_zones ?? null
+      const zonesArray: string[] = Array.isArray(rawZones) ? rawZones
+        : typeof rawZones === 'string' && rawZones.length ? [rawZones] : []
+      const makeModelRaw = v.make_model || v.vehicle_make_model || p.vehicle_make_model || p.make_model || ''
       const [makeFromModel, ...modelRest] = String(makeModelRaw).split(' ').filter(Boolean)
       const merged: VehicleInfo = {
         service_zones: zonesArray.length ? zonesArray : null,
         ride_type: v.ride_type || p.ride_type || null,
-        vehicle_make: p.vehicle_make || v.vehicle_make || makeFromModel || null,
-        vehicle_model: p.vehicle_model || v.vehicle_model || modelRest.join(' ') || null,
-        vehicle_year: p.vehicle_year || v.vehicle_year || v.year || null,
-        // FIX: Added v.vehicle_color + v.vehicle_colour + v.color
-        vehicle_color: p.vehicle_color || p.vehicle_colour || v.vehicle_color || v.vehicle_colour || v.colour || v.color || null,
-        vehicle_registration: p.vehicle_registration || v.registration || v.vehicle_registration || null,
-        vehicle_seats: p.vehicle_seats || v.vehicle_seats || v.seats || null,
+        vehicle_make: v.vehicle_make || p.vehicle_make || makeFromModel || null,
+        vehicle_model: v.vehicle_model || p.vehicle_model || modelRest.join(' ') || null,
+        vehicle_year: v.vehicle_year || v.year || p.vehicle_year || p.year || null,
+        vehicle_color: v.vehicle_color || v.vehicle_colour || v.colour || v.color || p.vehicle_color || p.vehicle_colour || p.colour || p.color || null,
+        vehicle_registration: v.vehicle_registration || v.registration || p.vehicle_registration || p.registration || null,
+        vehicle_seats: v.vehicle_seats || v.seats || p.vehicle_seats || p.seats || null,
       }
-
       setVehicle(merged)
       const miss = REQUIRED_FIELDS.filter(f => {
         const val = (merged as any)[f]
@@ -90,16 +84,12 @@ export function useVehicleCheck(driverId: string) {
     } catch (e: any) {
       if (reqId !== reqIdRef.current) return
       setError(e?.message || 'Could not check vehicle')
-      setVehicle(null)
-      setMissing([...REQUIRED_FIELDS])
-      setMissingLabels(REQUIRED_FIELDS.map(f => FIELD_LABELS[f] || f))
     } finally {
       if (reqId === reqIdRef.current) setLoading(false)
     }
   }, [driverId])
 
   useEffect(() => { void load() }, [load])
-
   useEffect(() => {
     if (!driverId) return
     const ch = supabase.channel(`vehicle-${driverId}`)
@@ -115,7 +105,7 @@ export function useVehicleCheck(driverId: string) {
     missingLabels,
     loading,
     error,
-    vehicleOk: vehicle != null && missing.length === 0,
+    vehicleOk: missing.length === 0,
     reload: load,
     reloadVehicle: load,
   }
