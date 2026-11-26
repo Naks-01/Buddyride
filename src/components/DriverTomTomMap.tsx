@@ -12,6 +12,7 @@ type Props = {
   followDriver?: boolean
   theme?: string
   onMapMove?: () => void
+  bottomOffset?: number // FIX: px of bottom sheet, passed from DriverHome
 }
 
 function parseRoute(route: any): [number, number][] {
@@ -41,9 +42,6 @@ function lerpAngle(a: number, b: number, t: number) {
 function getMapStyle(theme: string | undefined) {
   const isDark = theme === 'dark'
   const tomtomKey = import.meta.env.VITE_TOMTOM_API_KEY as string | undefined
-
-  // FIX: CARTO now requires API key and shows "API KEY REQUIRED"
-  // Use TomTom tiles (you already use TomTom for routing) OR free OSM fallback
   if (tomtomKey) {
     const tomtomStyle = isDark ? 'night' : 'main'
     return {
@@ -60,8 +58,6 @@ function getMapStyle(theme: string | undefined) {
       layers: [{ id: 'tomtom', type: 'raster', source: 'tomtom' }],
     } as any
   }
-
-  // Fallback: free OSM - no API key needed, never shows API KEY REQUIRED
   return {
     version: 8,
     sources: {
@@ -101,7 +97,7 @@ function drawRoute(map: maplibregl.Map, route: any, isDark: boolean) {
   map.addLayer({ id: routeId, type: 'line', source: routeId, paint: { 'line-color': '#0066FF', 'line-width': 6 } })
 }
 
-export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, onMapMove, theme = 'light' }: Props) {
+export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, followDriver = true, onMapMove, theme = 'light', bottomOffset = 0 }: Props) {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const markerRef = useRef<maplibregl.Marker | null>(null)
@@ -118,9 +114,15 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   useEffect(() => { onMapMoveRef.current = onMapMove }, [onMapMove])
   useEffect(() => { routeRef.current = route }, [route])
 
+  // FIX: Calculate real visible center - only ONE offset, not two
+  // Map container is FULL height (bottom:0), padding = bottom sheet height only
+  // So icon sits in center of VISIBLE map (above sheet), not top
+  function getPadding() {
+    return { top: 56, bottom: bottomOffset, left: 0, right: 0 } // 56 = header, bottom = sheet
+  }
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
-    // Default Polokwane if center is 0,0
     const safeCenter: [number, number] = center && center[0] !== 0 && center[1] !== 0 ? center : [29.4587, -23.9045]
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -130,11 +132,22 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       attributionControl: false,
     })
     mapRef.current = map
-    map.setPadding({ top: 0, bottom: 220, left: 0, right: 0 })
+    map.setPadding(getPadding())
     map.on('movestart', (e: any) => { if (e.originalEvent) onMapMoveRef.current?.() })
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); map.remove(); mapRef.current = null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // FIX: When sheet opens/closes, update padding so icon stays centered
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    map.setPadding(getPadding())
+    if (currentPos.current && followRef.current) {
+      map.easeTo({ center: currentPos.current, padding: getPadding(), duration: 300 })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bottomOffset])
 
   useEffect(() => {
     const map = mapRef.current
@@ -144,8 +157,8 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     const bearingNow = map.getBearing()
     map.setStyle(getMapStyle(theme))
     map.once('style.load', () => {
-      map.setPadding({ top: 0, bottom: 220, left: 0, right: 0 })
-      map.jumpTo({ center: [centerNow.lng, centerNow.lat], zoom: zoomNow, bearing: bearingNow })
+      map.setPadding(getPadding())
+      map.jumpTo({ center: [centerNow.lng, centerNow.lat], zoom: zoomNow, bearing: bearingNow, padding: getPadding() })
       drawRoute(map, routeRef.current, theme === 'dark')
       if (markerRef.current && currentPos.current) {
         markerRef.current.addTo(map)
@@ -170,7 +183,7 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       markerElRef.current = el
       currentPos.current = lngLat; currentBearing.current = bearing
       markerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(lngLat).addTo(map)
-      map.easeTo({ center: lngLat, duration: 500 })
+      map.easeTo({ center: lngLat, padding: getPadding(), duration: 500 })
       return
     }
     const start = currentPos.current || lngLat
@@ -186,7 +199,7 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
       currentPos.current = [lng, lat]; currentBearing.current = b
       markerRef.current?.setLngLat([lng, lat])
       if (markerElRef.current) markerElRef.current.style.transform = `rotate(${b}deg)`
-      if (followRef.current) map.easeTo({ center: [lng, lat], duration: 300 })
+      if (followRef.current) map.easeTo({ center: [lng, lat], padding: getPadding(), duration: 300 })
       if (t < 1) animRef.current = requestAnimationFrame(animate)
     }
     animRef.current = requestAnimationFrame(animate)
@@ -200,7 +213,8 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
   }, [route, isDark])
 
   return (
-    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 190, width: '100%', background: isDark ? '#0e0e10' : '#F8F9FA', overflow: 'hidden' }}>
+    // FIX: bottom: 0 NOT 190 - was double offset. Container is full height, padding does the centering.
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', background: isDark ? '#0e0e10' : '#F8F9FA', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       <div style={{ position: 'absolute', top: 80, right: 12, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button onClick={() => mapRef.current?.zoomIn()} style={{ width: 44, height: 44, borderRadius: 12, background: isDark ? '#1c1c1e' : '#ffffff', color: isDark ? 'white' : '#111111', border: `1px solid ${isDark ? '#333' : '#ddd'}`, fontSize: 22, fontWeight: 900, display: 'grid', placeItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.14)' }}>+</button>
