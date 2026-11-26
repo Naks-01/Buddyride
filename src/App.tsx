@@ -16,7 +16,7 @@ import LandingPage from './pages/LandingPage'
 import { DriverOnboarding } from './pages/DriverOnboarding'
 import { DriverDashboardGuard } from './pages/DriverDashboardGuard'
 import { DriverPendingPage } from './pages/DriverPendingPage'
-import { getDriverEntryPath } from './lib/driverRouting'
+import { getDriverEntryPath } from './lib/driverRouting.mjs'
 import TermsPage from './pages/TermsPage'
 import PrivacyPage from './pages/PrivacyPage'
 
@@ -87,8 +87,6 @@ export default function App() {
   const [otpSent, setOtpSent] = useState(false)
   const loadingProfileRef = useRef(false)
   const lastLoadedUserRef = useRef<string | null>(null)
-  const theme = 'light' as const
-  const isDark = false
   const appBg = '#f5f5f7'
   const appCard = '#ffffff'
   const appText = '#111827'
@@ -179,7 +177,6 @@ export default function App() {
       }).catch(()=>{})
     }
   }, [appBg, appText])
-
   useEffect(() => { const t = window.setTimeout(() => setSplashVisible(false), 1900); return () => window.clearTimeout(t) }, [])
   useEffect(() => {
     const handlePopState = () => { setDriverPath(window.location.pathname); setCurrentPath(window.location.pathname) }

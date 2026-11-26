@@ -1,66 +1,75 @@
 // driverRouting.mjs - pure JS, NO TypeScript types allowed in .mjs
 
-/**
- * @param {string} role
- * @param {string | null | undefined} verificationStatus
- * @param {string} currentPath
- * @returns {string | null}
- */
+function normalizePath(raw) {
+  // FIX: Strip query + hash - was "/driver/dashboard?tab=earnings" not matching, caused redirect loop
+  const withoutQuery = String(raw || '/').split('?')[0].split('#')[0]
+  const path = withoutQuery.replace(/\/+$/, '') || '/'
+  return path
+}
+
+function normalizeStatus(raw) {
+  return String(raw ?? 'not_started').toLowerCase().trim().replace(/\s+/g, '_')
+}
+
 export function getDriverEntryPath(role, verificationStatus, currentPath) {
   if (role !== 'driver') return null
 
-  const path = String(currentPath || '/').replace(/\/+$/, '') || '/'
-  if (path.startsWith('/driver/navigation/') || path === '/driver/navigation') return null
+  const path = normalizePath(currentPath)
+  const status = normalizeStatus(verificationStatus)
 
-  // FIX: Never kick driver out of bundle purchase - they paid to get in
-  if (path === '/driver/bundle' || path === '/driver/bundles' || path === '/driver/buy-bundle') return null
-
-  const status = String(verificationStatus || 'not_started').toLowerCase().trim()
-
-  // FIXED: identity_complete = INSIDE APP - /driver Home - finish rest inside
-  if (status === 'identity_complete') {
-    if (path === '/' || path === '/driver/onboarding' || path === '/driver/pending' || path === '/driver-pending' || path === '/driver/dashboard') {
-      return '/driver'
-    }
+  // FIX: Allow ALL driver pages - was only 4 paths, /driver/earnings / /driver/profile redirected in a loop
+  if (
+    path === '/driver/onboarding' ||
+    path.startsWith('/driver/dashboard') ||
+    path === '/driver' ||
+    path.startsWith('/driver/') // any /driver/* page is safe, don't redirect
+  ) {
     return null
   }
 
-  // Approved / verified -> /driver Home
-  if (status === 'approved' || status === 'verified' || status === 'active') {
-    if (path === '/' || path === '/driver/onboarding' || path === '/driver/pending' || path === '/driver-pending' || path === '/driver/dashboard') {
-      return '/driver'
-    }
-    return null
-  }
-
-  // Pending after FULL submit (15/15) -> /driver/pending
-  if (status === 'pending' || status === 'pending_verification' || status === 'submitted' || status === 'under_review' || status === 'in_review') {
-    if (path === '/driver/pending' || path === '/driver-pending') return null
-    return '/driver/pending'
-  }
-
-  // New / rejected -> onboarding
-  if (status === 'not_started' || status === '' || status === 'null' || status === 'undefined' || status === 'rejected' || status === 'failed' || status === 'incomplete') {
-    if (path === '/driver/onboarding') return null
+  // Never started / incomplete -> onboarding
+  if (status === 'not_started' || status === '' || status === 'null' || status === 'undefined' || status === 'incomplete' || status === 'draft') {
     return '/driver/onboarding'
   }
 
-  return null
+  // Rejected / failed / suspended -> onboarding to fix docs
+  if (status === 'rejected' || status === 'failed' || status === 'suspended' || status === 'blocked') {
+    return '/driver/onboarding'
+  }
+
+  // Pending / under review / verified / approved -> dashboard, guard inside handles pending UI
+  if (
+    status === 'pending' ||
+    status === 'pending_verification' ||
+    status === 'under_review' ||
+    status === 'in_review' ||
+    status === 'review' ||
+    status === 'submitted' ||
+    status === 'verified' ||
+    status === 'approved' ||
+    status === 'active' ||
+    status === 'verified_driver'
+  ) {
+    return '/driver/dashboard'
+  }
+
+  // Unknown status -> onboarding is safe default
+  return '/driver/onboarding'
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
 export function isDriverOnboardingPath(path) {
-  return String(path || '') === '/driver/onboarding'
+  return normalizePath(path) === '/driver/onboarding'
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
 export function isDriverDashboardPath(path) {
-  const p = String(path || '')
-  return p === '/driver/dashboard' || p === '/driver'
+  const p = normalizePath(path)
+  return p === '/driver/dashboard' || p === '/driver' || p.startsWith('/driver/dashboard/')
+}
+
+export function shouldBlockDriverOnline(verificationStatus, docsOk, vehicleOk) {
+  // FIX: Helper - was scattered logic in Dashboard, some drivers went online with docsOk=false
+  const status = normalizeStatus(verificationStatus)
+  if (!['verified', 'approved', 'active', 'verified_driver'].includes(status)) return true
+  if (!docsOk || !vehicleOk) return true
+  return false
 }
