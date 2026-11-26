@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 type FareRule = { id: string, category: string, base_fare: number, per_km: number, per_min: number, min_fare: number, max_fare: number, commission_percent: number, active: boolean, _isNew?: boolean }
-type BundlePrice = { id: string, trips: number, price: number, label: string, category: 'buddy_lite' | 'buddy_plus' | 'buddy_max', active: boolean, _isNew?: boolean }
+type BundlePrice = { id: string, trips: number, price: number, label: string, category: 'buddy_lite' | 'buddy_plus' | 'buddy_max', active: boolean, popular?: boolean, _isNew?: boolean }
+
+function normalizeCategory(raw: string | null | undefined): 'buddy_lite' | 'buddy_plus' | 'buddy_max' {
+  const v = String(raw || '').toLowerCase().trim()
+  if (v === 'go' || v === 'economy' || v === 'buddy' || v === 'buddy_lite') return 'buddy_lite'
+  if (v === 'xl' || v === 'buddy_xl' || v === 'buddy_family' || v === 'family' || v === 'buddy_max') return 'buddy_max'
+  return 'buddy_plus'
+}
 
 export function AdminSettings({ onBack }: { onBack: () => void }) {
   const [rules, setRules] = useState<FareRule[]>([])
@@ -17,12 +24,12 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
     async function load() {
       const [fareRes, bundleRes] = await Promise.all([
         supabase.from('fare_rules').select('id,category,base_fare,per_km,per_min,min_fare,max_fare,commission_percent,active').order('category'),
-        supabase.from('bundle_prices').select('id,trips,price,label,category,active').order('trips'),
+        supabase.from('bundle_prices').select('id,trips,price,label,category,active,popular').order('category').order('trips'),
       ])
       if (fareRes.error) setMessage(`Could not load fare_rules: ${fareRes.error.message} — Run: UPDATE fare_rules SET commission_percent=0;`)
       else setRules((fareRes.data || []).map((r: any) => ({ id: r.id, category: r.category, base_fare: Number(r.base_fare ?? 0), per_km: Number(r.per_km ?? 0), per_min: Number(r.per_min ?? 0), min_fare: Number(r.min_fare ?? 0), max_fare: Number(r.max_fare ?? 0), commission_percent: 0, active: r.active ?? true })))
       if (bundleRes.error) setMessage((prev) => prev + ` | Bundle prices: ${bundleRes.error.message}`)
-      else setBundles((bundleRes.data || []).map((b: any) => ({ id: b.id, trips: Number(b.trips ?? 0), price: Number(b.price ?? 0), label: b.label || `${b.trips} trips`, category: b.category || 'buddy_plus', active: b.active ?? true })))
+      else setBundles((bundleRes.data || []).map((b: any) => ({ id: b.id, trips: Number(b.trips ?? 0), price: Number(b.price ?? 0), label: b.label || b.name || `${b.trips} trips`, category: normalizeCategory(b.category), active: b.active ?? true, popular: b.popular ?? false })))
       setLoading(false)
     }
     void load()
@@ -32,20 +39,39 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
     setSaving(true); setMessage('')
     const invalid = rules.find(c => [c.base_fare, c.per_km, c.per_min, c.min_fare, c.max_fare].some(v => Number.isNaN(v) || v < 0) || (c.max_fare > 0 && c.min_fare > c.max_fare) || !c.category.trim())
     if (invalid) { setMessage(`Check ${invalid.category || 'a category'}: All fares must be 0 or more, Min cannot be > Max (0 = no cap), name cannot be empty.`); setSaving(false); return }
-    const invalidBundle = bundles.find(b => !b.label.trim() || !b.category || Number.isNaN(b.trips) || Number.isNaN(b.price) || b.trips <= 0 || b.price <= 0)
-    if (invalidBundle) { setMessage(`Check bundle ${invalidBundle.label}: Trips and Price must be > 0.`); setSaving(false); return }
+    // FIX: Only validate bundles that are not new-empty - was blocking save when you clicked + Add Bundle but hadn't filled it yet
+    const invalidBundle = bundles.filter(b => !b._isNew || b.label.trim() || b.trips > 0 || b.price > 0).find(b => !b.label.trim() || !b.category || Number.isNaN(b.trips) || Number.isNaN(b.price) || b.trips <= 0 || b.price <= 0)
+    if (invalidBundle) { setMessage(`Check bundle ${invalidBundle.label || '(new)'}: Trips and Price must be > 0, Label required.`); setSaving(false); return }
     try {
-      // FIX: Insert new rows without ID, update existing by ID - was upserting fake rule_ IDs, creating duplicate rows
       for (const r of rules) {
-        const payload = { category: r.category, base_fare: r.base_fare, per_km: r.per_km, per_min: r.per_min, min_fare: r.min_fare, max_fare: r.max_fare, commission_percent: 0, active: r.active }
+        const payload = { category: r.category.trim(), base_fare: r.base_fare, per_km: r.per_km, per_min: r.per_min, min_fare: r.min_fare, max_fare: r.max_fare, commission_percent: 0, active: r.active }
         if (r._isNew) { const { error, data } = await supabase.from('fare_rules').insert(payload as any).select('id').single(); if (error) throw error; if (data) r.id = data.id; r._isNew = false }
         else { const { error } = await supabase.from('fare_rules').update(payload as any).eq('id', r.id); if (error) throw error }
       }
       for (const b of bundles) {
-        const payload = { trips: b.trips, price: b.price, label: b.label, name: b.label, category: b.category, active: b.active }
-        if (b._isNew) { const { error, data } = await supabase.from('bundle_prices').insert(payload as any).select('id').single(); if (error) throw error; if (data) b.id = data.id; b._isNew = false }
-        else { const { error } = await supabase.from('bundle_prices').update(payload as any).eq('id', b.id); if (error) throw error }
+        // FIX: Skip empty new bundles instead of failing whole save
+        if (b._isNew && !b.label.trim() && b.trips === 0 && b.price === 0) continue
+        // FIX: Try with name first, fallback without name if column doesn't exist - was failing whole save
+        const basePayload: any = { trips: b.trips, price: b.price, label: b.label.trim(), category: normalizeCategory(b.category), active: b.active, popular: b.popular ?? false }
+        const withName = { ...basePayload, name: b.label.trim() }
+        if (b._isNew) {
+          let { error, data } = await supabase.from('bundle_prices').insert(withName as any).select('id').single()
+          if (error && /name|column/i.test(error.message)) {
+            const retry = await supabase.from('bundle_prices').insert(basePayload as any).select('id').single()
+            error = retry.error; data = retry.data
+          }
+          if (error) throw error; if (data) b.id = data.id; b._isNew = false
+        } else {
+          let { error } = await supabase.from('bundle_prices').update(withName as any).eq('id', b.id)
+          if (error && /name|column/i.test(error.message)) {
+            const retry = await supabase.from('bundle_prices').update(basePayload as any).eq('id', b.id)
+            error = retry.error
+          }
+          if (error) throw error
+        }
       }
+      // Remove empty new bundles from UI after save
+      setBundles(prev => prev.filter(b => !(b._isNew && !b.label.trim())))
       setMessage(`✅ Saved. Fare rules and bundle prices saved. Drivers keep 100% of fares.`)
     } catch (error) { setMessage(`Could not save: ${error instanceof Error ? error.message : String(error)}`) } finally { setSaving(false) }
   }
@@ -59,12 +85,13 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
       return { ...r, [field]: Number.isNaN(num) ? 0 : num }
     }))
   }
-  function updateBundle(id: string, field: 'trips' | 'price' | 'label' | 'category' | 'active', value: string | boolean) {
+  function updateBundle(id: string, field: 'trips' | 'price' | 'label' | 'category' | 'active' | 'popular', value: string | boolean) {
     setBundles(current => current.map(b => {
       if (b.id !== id) return b
       if (field === 'label') return { ...b, label: String(value) }
-      if (field === 'category') return { ...b, category: value as BundlePrice['category'] }
+      if (field === 'category') return { ...b, category: normalizeCategory(String(value)) }
       if (field === 'active') return { ...b, active: Boolean(value) }
+      if (field === 'popular') return { ...b, popular: Boolean(value) }
       const num = value === '' ? 0 : Number(value)
       return { ...b, [field]: Number.isNaN(num) ? 0 : num }
     }))
@@ -73,12 +100,12 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
     setRules(prev => [...prev, { id: `new_${Date.now()}`, category: 'New Category', base_fare: 20, per_km: 8, per_min: 1, min_fare: 30, max_fare: 0, commission_percent: 0, active: true, _isNew: true }])
   }
   function addBundle() {
-    setBundles(prev => [...prev, { id: `new_${Date.now()}`, trips: 0, price: 0, label: '', category: 'buddy_plus', active: false, _isNew: true }])
+    // FIX: Prefill with valid values so Save doesn't get blocked
+    setBundles(prev => [...prev, { id: `new_${Date.now()}`, trips: 10, price: 150, label: '10 Trips', category: 'buddy_plus', active: true, popular: false, _isNew: true }])
   }
   async function deleteRule(id: string) {
     const target = rules.find(r => r.id === id)
     if (!target || !confirm(`Delete fare ${target.category}?`)) return
-    // FIX: Check _isNew, not id prefix - was startsWith('rule_') but new IDs were randomUUID, delete never hit DB
     if (!target._isNew) { const { error } = await supabase.from('fare_rules').delete().eq('id', id); if (error) { setMessage(`Could not delete: ${error.message}`); return } }
     setRules(prev => prev.filter(r => r.id !== id)); setMessage('Fare deleted.')
   }
@@ -116,6 +143,7 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 6 }}>
               <span style={{ fontSize: 12, color: '#86efac', fontWeight: 700 }}>Bundle price per trip: R{perTripCost(b).toFixed(2)}</span>
               <label style={{ fontSize: 12 }}><input type="checkbox" checked={b.active} onChange={e => updateBundle(b.id, 'active', e.target.checked)} /> Active</label>
+              <label style={{ fontSize: 12 }}><input type="checkbox" checked={b.popular || false} onChange={e => updateBundle(b.id, 'popular', e.target.checked)} /> ⭐ Popular</label>
               <button onClick={() => void deleteBundle(b.id)} style={{ padding: '6px 12px', borderRadius: 8, background: '#7f1d1d', color: 'white', border: 0, cursor: 'pointer' }}>Delete bundle</button>
             </div>
           </div>
@@ -150,7 +178,7 @@ export function AdminSettings({ onBack }: { onBack: () => void }) {
         <p>Drivers receive 100% of the fare. Platform revenue comes from paid bundle purchases.</p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button onClick={addRule} style={{ marginTop: '14px', padding: '12px 20px', borderRadius: 10, background: '#0ea5e9', color: 'white', fontWeight: 800, border: 0, cursor: 'pointer' }}>+ Add Category</button>
-          <button disabled={saving || rules.length === 0} onClick={() => void save()} style={{ marginTop: '14px', padding: '12px 20px', borderRadius: 10, background: '#22c55e', color: 'black', fontWeight: 800, border: 0, cursor: 'pointer' }}>{saving ? 'Saving…' : 'Save fare + bundle settings'}</button>
+          <button disabled={saving} onClick={() => void save()} style={{ marginTop: '14px', padding: '12px 20px', borderRadius: 10, background: '#22c55e', color: 'black', fontWeight: 800, border: 0, cursor: 'pointer' }}>{saving ? 'Saving…' : 'Save fare + bundle settings'}</button>
         </div>
       </section>
     </>}

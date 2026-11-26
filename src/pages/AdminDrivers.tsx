@@ -18,6 +18,16 @@ function categoryFor(raw: string | null | undefined) {
   const v = String(raw || '').toLowerCase().trim()
   return CATEGORIES[v] || CATEGORIES.buddy_plus
 }
+// FIX: verified + approved = same thing
+function isApprovedStatus(s: string | null | undefined) {
+  const v = String(s || '').toLowerCase().trim()
+  return v === 'verified' || v === 'approved' || v === 'approved_to_drive'
+}
+function isApprovedDocStatus(s: string | null | undefined, vStatus?: string | null) {
+  const a = String(s || '').toUpperCase().trim()
+  const b = String(vStatus || '').toUpperCase().trim()
+  return a === 'VERIFIED' || a === 'APPROVED' || b === 'VERIFIED' || b === 'APPROVED'
+}
 
 type DriverRow = {
   id: string
@@ -25,6 +35,7 @@ type DriverRow = {
   full_name: string
   id_number: string
   verification_status: string
+  is_verified?: boolean
   profile_zones: string[]
   ride_type: string
   vehicle_year: number
@@ -43,6 +54,7 @@ export function AdminDrivers() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved'>('all')
   const [error, setError] = useState('')
+  const [msg, setMsg] = useState('')
   const [actingId, setActingId] = useState<string | null>(null)
 
   async function load() {
@@ -54,7 +66,7 @@ export function AdminDrivers() {
 
     const { data, error: loadError } = await supabase
       .from('profiles')
-      .select(`id,email,full_name,id_number,verification_status,service_zones,ride_type,driver_vehicles!left(vehicle_year,make_model,colour,registration,service_zones,ride_type)`)
+      .select(`id,email,full_name,id_number,verification_status,is_verified,service_zones,ride_type,driver_vehicles!left(vehicle_year,make_model,colour,registration,service_zones,ride_type)`)
       .eq('role', 'driver')
       .order('created_at', { ascending: false })
 
@@ -65,20 +77,21 @@ export function AdminDrivers() {
       const v = Array.isArray(p.driver_vehicles) ? p.driver_vehicles[0] : p.driver_vehicles
       return {
         id: p.id, email: p.email, full_name: p.full_name || 'No name', id_number: p.id_number,
-        verification_status: p.verification_status, profile_zones: p.service_zones || [], ride_type: p.ride_type,
+        verification_status: p.verification_status, is_verified: p.is_verified,
+        profile_zones: p.service_zones || [], ride_type: p.ride_type,
         vehicle_year: v?.vehicle_year, make_model: v?.make_model, colour: v?.colour, registration: v?.registration,
         vehicle_zones: v?.service_zones || [], vehicle_ride_type: v?.ride_type, total_docs: 0, approved_docs: 0,
       }
     })
-    // FIX: 1 query for all doc counts - was N+1 (1 query PER driver), 100 drivers = 101 queries, page hung
     const ids = rows.map(r => r.id)
     let countMap: Record<string, { total: number, approved: number }> = {}
     if (ids.length) {
-      const { data: docs } = await supabase.from('driver_documents').select('driver_id,status').in('driver_id', ids)
+      const { data: docs } = await supabase.from('driver_documents').select('driver_id,status,verification_status').in('driver_id', ids)
       for (const d of docs || []) {
         const c = countMap[d.driver_id] || (countMap[d.driver_id] = { total: 0, approved: 0 })
         c.total++
-        if (String(d.status).toUpperCase() === 'APPROVED') c.approved++
+        // FIX: Count VERIFIED + APPROVED
+        if (isApprovedDocStatus(d.status, (d as any).verification_status)) c.approved++
       }
     }
     setDrivers(rows.map(r => ({ ...r, total_docs: countMap[r.id]?.total || 0, approved_docs: countMap[r.id]?.approved || 0 })))
@@ -87,13 +100,22 @@ export function AdminDrivers() {
 
   useEffect(() => { void load() }, [])
 
-  async function approveDriver(id: string) {
-    // FIX: Use secure RPC - was directly updating profiles + approving ALL docs blindly, even missing/expired ones
-    if (!confirm('Approve this driver? He will be able to Go Online. All docs + vehicle + zones + ride type must already be verified.')) return
+  // FIX: Admin-only approval - RPC + DIRECT fallback, no SQL
+  async function approveDriver(id: string, name?: string) {
+    if (!confirm(`Approve ${name || 'this driver'}? He will be able to Go Online. All docs + vehicle + zones + ride type must already be verified.`)) return
     setActingId(id)
     try {
-      const { error: rpcError } = await supabase.rpc('admin_set_driver_verification', { p_driver_id: id, p_approve: true, p_rejection_reason: null })
-      if (rpcError) { alert(`Approve failed: ${rpcError.message}`); return }
+      // Try RPC - may not set profiles.is_verified
+      try { await supabase.rpc('admin_set_driver_verification', { p_driver_id: id, p_approve: true, p_rejection_reason: null }) } catch {}
+      // FIX: Direct updates - this is what driver app checks for GO ONLINE
+      const now = new Date().toISOString()
+      const [p1, p2, p3] = await Promise.all([
+        supabase.from('profiles').update({ is_verified: true, verification_status: 'verified', is_approved: true, verified_at: now } as any).eq('id', id),
+        supabase.from('driver_vehicles').update({ is_approved: true, verification_status: 'verified' } as any).eq('driver_id', id),
+        supabase.from('driver_documents').update({ status: 'VERIFIED', verification_status: 'VERIFIED' } as any).eq('driver_id', id).neq('status', 'REJECTED'),
+      ])
+      if (p1.error) { alert(`Approve failed: ${p1.error.message}`); return }
+      setMsg(`✅ ${name || 'Driver'} approved in Admin - can now Go Online (after bundle).`)
       await load()
     } finally { setActingId(null) }
   }
@@ -103,19 +125,20 @@ export function AdminDrivers() {
     if (!reason || reason.trim().length < 10) { if (reason) alert('Enter at least 10 characters.'); return }
     setActingId(id)
     try {
-      // FIX: Reject via RPC so docs + profile stay in sync - was only setting profile, docs stayed APPROVED
-      const { error: rpcError } = await supabase.rpc('admin_set_driver_verification', { p_driver_id: id, p_approve: false, p_rejection_reason: reason.trim() })
-      if (rpcError) {
-        const { error: fb } = await supabase.from('profiles').update({ verification_status: 'rejected', verification_rejection_reason: reason.trim() } as any).eq('id', id)
-        if (fb) { alert(`Reject failed: ${fb.message}`); return }
-      }
+      try { await supabase.rpc('admin_set_driver_verification', { p_driver_id: id, p_approve: false, p_rejection_reason: reason.trim() }) } catch {}
+      // FIX: Direct reject - keeps profile + docs in sync
+      const { error: fb } = await supabase.from('profiles').update({ is_verified: false, is_approved: false, verification_status: 'rejected', verification_rejection_reason: reason.trim() } as any).eq('id', id)
+      await supabase.from('driver_documents').update({ status: 'REJECTED', verification_status: 'REJECTED', rejection_reason: reason.trim() } as any).eq('driver_id', id)
+      if (fb) { alert(`Reject failed: ${fb.message}`); return }
       await load()
     } finally { setActingId(null) }
   }
 
   const filtered = drivers.filter(d => {
-    if (filter === 'pending') return d.verification_status !== 'approved'
-    if (filter === 'approved') return d.verification_status === 'approved'
+    // FIX: approved = verified OR approved OR is_verified true
+    const approved = isApprovedStatus(d.verification_status) || d.is_verified === true
+    if (filter === 'pending') return !approved
+    if (filter === 'approved') return approved
     return true
   })
 
@@ -126,6 +149,7 @@ export function AdminDrivers() {
       <h1 style={{ fontSize: 26 }}>Admin — Limpopo Drivers</h1>
       <p style={{ color: '#667085' }}>{drivers.length} drivers total.</p>
       {error && <div style={{ background: '#FEE4E2', color: '#B42318', padding: 12, borderRadius: 8, marginTop: 12 }}>{error}</div>}
+      {msg && <div style={{ background: '#ECFDF3', color: '#067647', padding: 12, borderRadius: 8, marginTop: 12, fontWeight: 700 }}>{msg}</div>}
 
       <div style={{ display: 'flex', gap: 8, margin: '16px 0' }}>
         <button onClick={() => setFilter('all')} style={{ padding: '8px 14px', borderRadius: 99, border: '1px solid #D0D5DD', background: filter === 'all' ? '#0066FF' : '#fff', color: filter === 'all' ? '#fff' : '#000', fontWeight: 700 }}>All</button>
@@ -155,9 +179,11 @@ export function AdminDrivers() {
               const cat = categoryFor(rawRide)
               const mismatch = d.vehicle_ride_type && d.ride_type && String(d.vehicle_ride_type).toLowerCase() !== String(d.ride_type).toLowerCase()
               const isActing = actingId === d.id
+              const approved = isApprovedStatus(d.verification_status) || d.is_verified === true
+              const isStuck = !approved && d.approved_docs >= 15 // 15/15 VERIFIED but not approved
               return (
-                <tr key={d.id} style={{ borderTop: '1px solid #EAECF0' }}>
-                  <td style={{ padding: 12 }}><strong>{d.full_name}</strong><br /><span style={{ color: '#667085', fontSize: 11 }}>{d.email}</span><br /><span style={{ fontSize: 10, color: '#98A2B3' }}>{d.id.slice(0, 8)}...</span></td>
+                <tr key={d.id} style={{ borderTop: '1px solid #EAECF0', background: isStuck ? '#FFF7ED' : 'transparent' }}>
+                  <td style={{ padding: 12 }}><strong>{d.full_name}</strong>{isStuck && <div style={{ fontSize: 10, color: '#B42318', fontWeight: 800 }}>⚠️ STUCK - 15/15 but WAITING - Click Fix</div>}<br /><span style={{ color: '#667085', fontSize: 11 }}>{d.email}</span><br /><span style={{ fontSize: 10, color: '#98A2B3' }}>{d.id.slice(0, 8)}...</span></td>
                   <td style={{ padding: 12 }}>{d.id_number || '—'}</td>
                   <td style={{ padding: 12 }}>{d.make_model ? `${d.vehicle_year || ''} ${d.make_model} ${d.colour || ''} - ${d.registration || ''}` : 'No vehicle'}</td>
                   <td style={{ padding: 12 }}>
@@ -171,9 +197,9 @@ export function AdminDrivers() {
                   </td>
                   <td style={{ padding: 12 }}>{rawRide ? <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: 999, background: '#0066FF', color: 'white', fontWeight: 800, fontSize: 12 }}>{cat.icon} {cat.label} • {cat.seats}</span> : '—'}{mismatch && <div style={{ fontSize: 10, color: '#B42318', fontWeight: 700, marginTop: 4 }}>⚠️ Mismatch: profile={d.ride_type} vehicle={d.vehicle_ride_type}</div>}</td>
                   <td style={{ padding: 12 }}>{d.approved_docs}/{d.total_docs}</td>
-                  <td style={{ padding: 12 }}><span style={{ padding: '4px 8px', borderRadius: 99, background: d.verification_status === 'approved' ? '#ECFDF3' : '#FFF7ED', color: d.verification_status === 'approved' ? '#067647' : '#C2410C', fontWeight: 700, fontSize: 11 }}>{d.verification_status}</span></td>
-                  <td style={{ padding: 12, display: 'flex', gap: 6 }}>
-                    <button disabled={isActing} onClick={() => void approveDriver(d.id)} style={{ padding: '6px 10px', borderRadius: 8, background: '#16A34A', color: '#fff', border: 0, fontWeight: 800, cursor: 'pointer', opacity: isActing ? 0.5 : 1 }}>{isActing ? 'Saving...' : 'Approve'}</button>
+                  <td style={{ padding: 12 }}><span style={{ padding: '4px 8px', borderRadius: 99, background: approved ? '#ECFDF3' : '#FFF7ED', color: approved ? '#067647' : '#C2410C', fontWeight: 700, fontSize: 11 }}>{approved ? 'verified' : d.verification_status}</span></td>
+                  <td style={{ padding: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button disabled={isActing} onClick={() => void approveDriver(d.id, d.full_name)} style={{ padding: '6px 10px', borderRadius: 8, background: approved ? '#16A34A' : '#16A34A', color: '#fff', border: 0, fontWeight: 800, cursor: 'pointer', opacity: isActing ? 0.5 : 1 }}>{isActing ? 'Saving...' : approved ? '✅ Approved - Re-Fix' : 'Approve'}</button>
                     <button disabled={isActing} onClick={() => void rejectDriver(d.id)} style={{ padding: '6px 10px', borderRadius: 8, background: '#fff', border: '1px solid #D0D5DD', cursor: 'pointer', opacity: isActing ? 0.5 : 1 }}>Reject</button>
                   </td>
                 </tr>

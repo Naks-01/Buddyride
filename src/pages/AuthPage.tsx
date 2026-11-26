@@ -9,6 +9,20 @@ type Props = {
   onAuthSuccess: () => void
 }
 
+function normalizePhone(raw: string) {
+  let d = raw.replace(/\D/g, '')
+  if (d.startsWith('0')) d = '27' + d.slice(1)
+  if (d.length === 9) d = '27' + d
+  return d
+}
+function isValidSAPhone(raw: string) {
+  const d = normalizePhone(raw)
+  return /^27[6-8][0-9]{8}$/.test(d)
+}
+function isValidEmail(e: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim().toLowerCase())
+}
+
 export function AuthPage({ initialMode = 'login', onAuthSuccess }: Props) {
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode)
   const [role, setRole] = useState<'passenger' | 'driver'>(
@@ -32,11 +46,14 @@ export function AuthPage({ initialMode = 'login', onAuthSuccess }: Props) {
     e.preventDefault()
     setError('')
     setSuccess('')
+    if (loading) return
     setLoading(true)
     try {
+      const cleanEmail = email.trim().toLowerCase()
       if (mode === 'login') {
-        if (!email.trim() || !password) throw new Error('Enter email and password.')
-        await signIn(email, password)
+        if (!isValidEmail(cleanEmail)) throw new Error('Enter a valid email.')
+        if (!password) throw new Error('Enter email and password.')
+        await signIn(cleanEmail, password)
         try { localStorage.removeItem('buddyride_pending_role') } catch {}
         onAuthSuccess()
         return
@@ -44,30 +61,41 @@ export function AuthPage({ initialMode = 'login', onAuthSuccess }: Props) {
 
       // signup
       if (!fullName.trim()) throw new Error('Enter your full name.')
-      if (!email.trim()) throw new Error('Enter email.')
-      if (!phone.trim()) throw new Error('Enter SA mobile number (e.g. 064 101 8991).')
+      if (fullName.trim().split(/\s+/).length < 2) throw new Error('Enter full name - first + surname (e.g. Trevor Mokgalaka).')
+      if (!isValidEmail(cleanEmail)) throw new Error('Enter a valid email.')
+      if (!isValidSAPhone(phone)) throw new Error('Enter valid SA mobile (e.g. 064 101 8991 or +27 64 101 8991).')
       if (password.length < 6) throw new Error('Password must be at least 6 characters.')
+      if (cleanEmail === 'buddyride@outlook.com') throw new Error('This email is reserved for admin. Use Login, not Signup.')
 
       try { localStorage.setItem('buddyride_pending_role', role) } catch {}
-      const user = await signUp(email, password, role, fullName, phone)
-      // Supabase may require email confirmation - if session exists, go straight to app
+      // FIX: Pass normalized phone + clean email
+      const user = await signUp(cleanEmail, password, role, fullName.trim(), normalizePhone(phone))
+      // FIX: Only call onAuthSuccess if we actually have a session/user
+      // Was: setTimeout(onAuthSuccess, 800) even with email confirmation ON = app loaded with no profile
       if (user) {
         setSuccess(
           role === 'driver'
             ? 'Driver account created! Check your email to confirm, then finish onboarding to Go Online.'
             : 'Account created! Check email to confirm, then request your first ride.'
         )
-        // If email confirmation OFF, onAuthSuccess will load profile
+        // Give Supabase a moment to create session, then let App check session
         setTimeout(() => onAuthSuccess(), 800)
       } else {
         setSuccess('Check your email to confirm your account, then login.')
+        // FIX: Switch to login automatically so user doesn't get stuck
+        setTimeout(() => switchMode('login'), 2000)
       }
     } catch (err: any) {
       const msg = err?.message || String(err)
-      if (msg.toLowerCase().includes('already registered') || msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('duplicate')) {
+      if (msg.toLowerCase().includes('already registered') || msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('duplicate') || msg.toLowerCase().includes('user already')) {
         setError('This email is already registered. Switch to Login instead.')
+        setTimeout(() => switchMode('login'), 1200)
       } else if (msg.toLowerCase().includes('reserved for admin')) {
         setError('This email is reserved for admin. Use Login, not Signup.')
+      } else if (msg.toLowerCase().includes('invalid login') || msg.toLowerCase().includes('invalid email') || msg.toLowerCase().includes('invalid password')) {
+        setError('Wrong email or password. Try again or Sign Up if you have no account.')
+      } else if (msg.toLowerCase().includes('email not confirmed') || msg.toLowerCase().includes('not confirmed')) {
+        setError('Email not confirmed yet. Check your inbox / spam for BuddyRide confirmation link, then Login.')
       } else {
         setError(msg)
       }
@@ -124,6 +152,7 @@ export function AuthPage({ initialMode = 'login', onAuthSuccess }: Props) {
               <label style={{ display: 'grid', gap: 6, fontSize: 13, fontWeight: 700, color: '#111827' }}>
                 SA Mobile Number
                 <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="064 101 8991" inputMode="tel" style={{ padding: '12px 14px', borderRadius: 12, border: '1px solid #D0D5DD', background: '#fff', color: '#111827', fontSize: 15 }} />
+                <span style={{ fontSize: 11, color: '#98A2B3', fontWeight: 400 }}>Saved as +27 format for WhatsApp + Admin</span>
               </label>
             </>
           )}

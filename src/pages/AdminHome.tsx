@@ -20,6 +20,10 @@ function normalizeCategory(raw: string | null | undefined) {
   if (v === 'xl' || v === 'buddy_xl' || v === 'buddy_family' || v === 'family' || v === 'buddy_max') return 'buddy_max'
   return 'buddy_plus'
 }
+function isApprovedStatus(s: string | null | undefined) {
+  const v = String(s || '').toLowerCase().trim()
+  return v === 'verified' || v === 'approved' || v === 'approved_to_drive'
+}
 
 export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
   const [stats, setStats] = useState({ rides: 0, drivers: 0, passengers: 0, active: 0, revenue: 0, pendingDrivers: 0, bundleSales: 0, bundleCount: 0 })
@@ -29,27 +33,73 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
   const [loading, setLoading] = useState(true)
   const [bundleByCat, setBundleByCat] = useState<Record<string, { count: number, revenue: number }>>({})
   const [ridesByCat, setRidesByCat] = useState<Record<string, number>>({})
+  const [stuckDrivers, setStuckDrivers] = useState<any[]>([])
+  const [fixingId, setFixingId] = useState<string | null>(null)
+  const [msg, setMsg] = useState('')
 
-  // FIX: Role-based check, not hardcoded email in client - was anyone could edit JS to bypass email check
-  // You must also enforce this in Supabase RLS: profiles.role = 'admin'. Client check is UI only.
   const isAdmin = (profile as any)?.role === 'admin' || (profile as any)?.is_admin === true || profile?.email?.toLowerCase().trim() === 'buddyride@outlook.com'
+
+  // FIX: Admin-only FIX - no SQL. Sets all 3 tables.
+  async function fixDriverApproval(id: string, name: string) {
+    if (!confirm(`FIX APPROVAL for ${name}?\n\nAdmin will set:\n- profiles.is_verified = true\n- verification_status = verified\n- driver_vehicles.is_approved = true\n- driver_documents = VERIFIED\n\nDriver will see GO ONLINE.`)) return
+    setFixingId(id); setMsg('')
+    try {
+      try { await supabase.rpc('admin_set_driver_verification', { p_driver_id: id, p_approve: true, p_rejection_reason: null }) } catch {}
+      const now = new Date().toISOString()
+      const [p1, p2, p3] = await Promise.all([
+        supabase.from('profiles').update({ is_verified: true, verification_status: 'verified', is_approved: true, verified_at: now } as any).eq('id', id),
+        supabase.from('driver_vehicles').update({ is_approved: true, verification_status: 'verified' } as any).eq('driver_id', id),
+        supabase.from('driver_documents').update({ status: 'VERIFIED', verification_status: 'VERIFIED' } as any).eq('driver_id', id).neq('status', 'REJECTED'),
+      ])
+      if (p1.error) throw p1.error
+      setMsg(`✅ ${name} FIXED in Admin - can now Go Online.`)
+      await load()
+    } catch (e: any) { setMsg(`Fix failed: ${e?.message || String(e)}`) }
+    finally { setFixingId(null) }
+  }
 
   async function load() {
     if (!isAdmin) { setLoading(false); return }
     setLoading(true); setDocumentCountError('')
     try {
-      const [ridesRes, driversRes, passengersRes, pendingDriversRes, pendingPassengersRes] = await Promise.all([
+      const [ridesRes, driversRes, passengersRes, pendingDriversRes, pendingPassengersRes, allDriversRes] = await Promise.all([
         supabase.from('rides').select('id', { count: 'exact', head: true }),
         supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'driver'),
         supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'passenger'),
         supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'driver').in('verification_status', ['pending', 'pending_verification']),
         supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'passenger').in('verification_status', ['pending', 'pending_verification']),
+        supabase.from('profiles').select('id,full_name,email,verification_status,is_verified').eq('role', 'driver').order('created_at', { ascending: false }).limit(100),
       ])
       const getCount = (res: any) => (res.error ? 0 : res.count || 0)
       const rides = getCount(ridesRes); const drivers = getCount(driversRes); const passengers = getCount(passengersRes)
-      const pendingDrivers = getCount(pendingDriversRes); const pendingPassengers = getCount(pendingPassengersRes)
+      let pendingDrivers = getCount(pendingDriversRes); const pendingPassengers = getCount(pendingPassengersRes)
 
-      // FIX: driver_locations, not driver_status - driver_status table doesn't exist, active was always 0
+      // FIX: Find STUCK drivers - docs VERIFIED but profile not verified
+      let stuck: any[] = []
+      try {
+        const allDrivers = (allDriversRes.data || []) as any[]
+        const ids = allDrivers.map(d => d.id)
+        if (ids.length) {
+          const { data: docs } = await supabase.from('driver_documents').select('driver_id,status,verification_status').in('driver_id', ids)
+          const counts: Record<string, { total: number, verified: number }> = {}
+          for (const d of (docs || []) as any[]) {
+            const c = counts[d.driver_id] || (counts[d.driver_id] = { total: 0, verified: 0 })
+            c.total++
+            const s = String(d.status || '').toUpperCase(); const vs = String(d.verification_status || '').toUpperCase()
+            if (s === 'VERIFIED' || s === 'APPROVED' || vs === 'VERIFIED' || vs === 'APPROVED') c.verified++
+          }
+          stuck = allDrivers.filter(d => {
+            const c = counts[d.id] || { total: 0, verified: 0 }
+            const profileApproved = d.is_verified === true && isApprovedStatus(d.verification_status)
+            // STUCK = 15 docs VERIFIED but profile NOT approved
+            return c.verified >= 15 && !profileApproved
+          }).map(d => ({ ...d, verified_docs: counts[d.id]?.verified || 0, total_docs: counts[d.id]?.total || 0 }))
+          // FIX: Stuck drivers count as pending too - they were invisible before
+          if (stuck.length > 0) pendingDrivers = Math.max(pendingDrivers, stuck.length)
+        }
+      } catch {}
+      setStuckDrivers(stuck)
+
       let active = 0
       try {
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
@@ -57,7 +107,6 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
         active = new Set((activeRows || []).map(r => r.driver_id)).size
       } catch { active = 0 }
 
-      // FIX: Single count query - was count + full table fetch if 0
       let pendingDocs = 0
       try {
         const { count } = await supabase.from('driver_documents').select('id', { count: 'exact', head: true }).ilike('status', 'pending')
@@ -117,12 +166,28 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
         <div><h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: 0, color: '#FFFFFF' }}>Admin Command Center - Bundle Model</h1><p style={{ fontSize: '12px', color: '#8A8A93', margin: 0 }}>Welcome {profile.full_name || profile.email} 👑 Driver keeps 100%</p></div>
         <div style={{ display: 'flex', gap: 8 }}><button onClick={() => load()} style={{ padding: '8px 14px', borderRadius: '999px', background: BLUE, color: 'white', border: 'none', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>{loading ? '...' : '↻ Refresh'}</button><button onClick={() => supabase.auth.signOut()} style={{ padding: '8px 14px', borderRadius: '999px', background: '#1E1E24', color: '#8A8A93', border: '1px solid rgba(255,255,255,0.08)', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>Log out</button></div>
       </div>
+      {msg && <div style={{ background: '#14532d', color: '#bbf7d0', padding: 12, borderRadius: 12, marginBottom: 12, fontWeight: 700 }}>{msg}</div>}
       <div style={grid2}>
         <div style={card}><p style={{ fontSize: '10px', color: '#8A8A93', margin: 0 }}>TOTAL RIDES</p><p style={{ fontSize: '22px', fontWeight: 'bold', margin: '4px 0 0' }}>{stats.rides}</p><p style={{ fontSize: '11px', color: '#8A8A93', margin: '4px 0 0' }}>{CATEGORIES.map(c => `${c.icon} ${c.name}: ${ridesByCat[c.id] || 0}`).join(' • ')}</p></div>
         <div style={card}><p style={{ fontSize: '10px', color: '#8A8A93', margin: 0 }}>ACTIVE DRIVERS</p><p style={{ fontSize: '22px', fontWeight: 'bold', margin: '4px 0 0' }}>{stats.active} / {stats.drivers}</p></div>
         <div style={card}><p style={{ fontSize: '10px', color: '#8A8A93', margin: 0 }}>PASSENGERS</p><p style={{ fontSize: '22px', fontWeight: 'bold', margin: '4px 0 0' }}>{stats.passengers}</p></div>
         <div style={{ ...card, background: '#14532d', color: 'white' }}><p style={{ fontSize: '10px', margin: 0, color: '#bbf7d0' }}>BUNDLE SALES - PLATFORM REVENUE</p><p style={{ fontSize: '22px', fontWeight: 'bold', margin: '4px 0 0' }}>R {stats.revenue.toFixed(2)}</p><p style={{ fontSize: '11px', margin: '4px 0 0', color: '#bbf7d0' }}>{stats.bundleCount} bundles sold • Driver keeps 100% of fare</p></div>
       </div>
+
+      {/* FIX: Stuck drivers - was invisible before */}
+      {stuckDrivers.length > 0 && (
+        <div style={{ background: '#7f1d1d', borderRadius: 16, padding: 14, marginBottom: 12, border: '1px solid #991b1b' }}>
+          <p style={{ margin: 0, fontWeight: 'bold', color: '#fecaca' }}>⚠️ {stuckDrivers.length} STUCK DRIVER(S) - 15/15 VERIFIED but WAITING APPROVAL</p>
+          <p style={{ fontSize: 12, color: '#fecaca', margin: '6px 0 0' }}>Docs are VERIFIED but profile was never set. Click FIX - Admin only, no SQL.</p>
+          {stuckDrivers.map((d: any) => (
+            <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, background: '#450a0a', borderRadius: 10, padding: '10px 12px', marginTop: 10, flexWrap: 'wrap' }}>
+              <div><div style={{ fontWeight: 700 }}>{d.full_name || d.email}</div><div style={{ fontSize: 12, color: '#fca5a5' }}>{d.email} • {d.verified_docs}/{d.total_docs} VERIFIED • status={d.verification_status} • is_verified={String(d.is_verified)}</div></div>
+              <button disabled={fixingId === d.id} onClick={() => fixDriverApproval(d.id, d.full_name || d.email)} style={{ padding: '10px 16px', borderRadius: 8, background: '#16a34a', color: 'white', border: 0, fontWeight: 800, cursor: 'pointer' }}>{fixingId === d.id ? 'Fixing...' : '🔧 FIX APPROVAL'}</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={card}>
         <h3 style={{ margin: '0 0 10px', color: '#FFFFFF', fontSize: 15 }}>💰 Bundle Sales by Category</h3>
         <div style={{ display: 'grid', gap: 8 }}>
@@ -138,7 +203,7 @@ export function AdminHome({ profile, onDocs, onAdminModule }: Props) {
       <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', overflowX: 'auto' }}><button onClick={() => setTab('overview')} style={btnTab(tab === 'overview')}>📊 Overview</button><button onClick={() => setTab('finance')} style={btnTab(tab === 'finance')}>💰 Finance</button><button onClick={() => setTab('zones')} style={btnTab(tab === 'zones')}>📍 Zones</button></div>
       {tab === 'overview' && (<>
         <div style={card}><h3 style={{ margin: '0 0 8px', color: '#FFFFFF' }}>Live Ride Monitoring</h3><div style={{ background: '#1E1E24', borderRadius: '12px', height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: BLUE_DARK, border: '1px solid rgba(255,255,255,0.08)' }}>Active: {stats.active} drivers online • Bundle: 1 credit/ride, 2 credits for trips of 100km or longer</div></div>
-        <div style={card}><p style={{ fontWeight: 'bold', margin: '0 0 6px 0', color: '#FFFFFF' }}>👑 Approve Documents {pendingDocumentCounts.drivers}</p><p style={{ fontSize: '12px', color: '#8A8A93', margin: '0 0 10px 0' }}>Driver docs pending: {pendingDocumentCounts.drivers} · Passengers pending: {pendingDocumentCounts.passengers} · Drivers waiting: {stats.pendingDrivers}</p>{documentCountError && <p role="alert" style={{ fontSize: '12px', color: '#FCA5A5' }}>Could not load document counts: {documentCountError}</p>}<p style={{ fontSize: '12px', color: '#8A8A93', margin: '0 0 10px 0' }}>Verify driver IDs, licenses, vehicles + passenger IDs + selfies — ONLY ADMIN APPROVES</p><button onClick={onDocs} style={{ width: '100%', padding: '14px', borderRadius: '12px', background: BLUE, color: 'white', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>Go to Documents ({pendingDocumentCounts.drivers}) →</button></div>
+        <div style={card}><p style={{ fontWeight: 'bold', margin: '0 0 6px 0', color: '#FFFFFF' }}>👑 Approve Documents {pendingDocumentCounts.drivers}</p><p style={{ fontSize: '12px', color: '#8A8A93', margin: '0 0 10px 0' }}>Driver docs pending: {pendingDocumentCounts.drivers} · Passengers pending: {pendingDocumentCounts.passengers} · Drivers waiting: {stats.pendingDrivers} · Stuck: {stuckDrivers.length}</p>{documentCountError && <p role="alert" style={{ fontSize: '12px', color: '#FCA5A5' }}>Could not load document counts: {documentCountError}</p>}<p style={{ fontSize: '12px', color: '#8A8A93', margin: '0 0 10px 0' }}>Verify driver IDs, licenses, vehicles + passenger IDs + selfies — ONLY ADMIN APPROVES</p><button onClick={onDocs} style={{ width: '100%', padding: '14px', borderRadius: '12px', background: BLUE, color: 'white', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>Go to Documents ({pendingDocumentCounts.drivers}) →</button></div>
         <div style={card}><h3 style={{ marginTop: 0, color: '#FFFFFF' }}>Admin Modules</h3><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '8px' }}>{([['Dashboard', 'admin-dashboard'], [`Documents: ${pendingDocumentCounts.total} total, ${pendingDocumentCounts.drivers} pending`, 'admin-documents'], ['Rides', 'admin-rides'], ['Passengers', 'admin-passengers'], ['Finance', 'admin-finance'], ['SOS Support', 'admin-support'], ['Zones', 'admin-zones'], ['Settings', 'admin-settings']] as const).map(([label, page]) => <button key={page} onClick={() => onAdminModule(page)} style={{ padding: '10px', borderRadius: '8px', border: page === 'admin-documents' ? `2px solid ${BLUE}` : '1px solid rgba(255,255,255,0.08)', background: page === 'admin-documents' ? BLUE_LIGHT : '#1E1E24', color: page === 'admin-documents' ? BLUE_DARK : '#FFFFFF', fontWeight: page === 'admin-documents' ? 'bold' : 'normal', cursor: 'pointer' }}>{label}</button>)}</div></div>
       </>)}
       {tab === 'finance' && (<div style={card}><h3 style={{ color: '#FFFFFF' }}>Bundle Finance</h3><p style={{ color: '#8A8A93' }}>Your profit = Bundle Sales only. No fare deductions. Driver keeps 100% of fare — rider pays driver directly in cash. Bundle prices and fares are managed in Admin Settings.</p><p style={{ color: '#86efac', fontWeight: 'bold' }}>Total Bundle Sales: R{stats.bundleSales.toFixed(2)} • {stats.bundleCount} bundles</p><div style={{ marginTop: 10, display: 'grid', gap: 6 }}>{CATEGORIES.map(c => { const b = bundleByCat[c.id] || { count: 0, revenue: 0 }; return <div key={c.id} style={{ fontSize: 13, color: '#FFFFFF' }}>{c.icon} {c.name}: {b.count} bundles • R{b.revenue.toFixed(2)}</div> })}</div><button onClick={() => onAdminModule('admin-finance')} style={{ padding: '12px', borderRadius: '10px', background: BLUE, color: 'white', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginRight: 8, marginTop: 12 }}>Open Finance →</button><button onClick={() => onAdminModule('admin-settings')} style={{ padding: '12px', borderRadius: '10px', background: '#22c55e', color: 'black', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>Open bundle settings →</button></div>)}

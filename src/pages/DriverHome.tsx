@@ -21,6 +21,17 @@ const CATEGORIES = [
   { id: 'buddy_plus', name: 'Buddy Plus', seats: '4 seats', desc: 'Standard • Most rides • Base 25 / R8 per km' },
   { id: 'buddy_max', name: 'Buddy Max', seats: '6-7 seats', desc: 'XL • Groups & luggage • Base 40 / R12 per km' },
 ]
+// FIX: Max pickup distance - 2km to 5km only, like screenshot
+const MIN_KM = 2
+const MAX_KM = 5
+
+function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 
 export function DriverHome({ profile }: { profile: Profile }) {
   const [ride, setRide] = useState<Ride | null>(null)
@@ -43,7 +54,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [vReg, setVReg] = useState('')
   const [vYear, setVYear] = useState('')
 
-  // DAY/NIGHT
+  // FIX: Maximum pickup distance state - from profile, default 2km
+  const [pickupDistance, setPickupDistance] = useState(MIN_KM)
+  const [autoAccept, setAutoAccept] = useState(true)
+  const [savingDistance, setSavingDistance] = useState(false)
+  const pickupRef = useRef({ distance: MIN_KM, autoAccept: true })
+  pickupRef.current = { distance: pickupDistance, autoAccept }
+
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('buddy-theme') as any
     if (saved === 'light' || saved === 'dark') return saved
@@ -62,6 +79,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const { location: gpsLoc, lastLoc } = useDriverLocation(profile.id, isOnline, !!ride)
   const location: [number, number] = (gpsLoc && Array.isArray(gpsLoc) && gpsLoc.length === 2 && typeof gpsLoc[0] === 'number' && gpsLoc[0] !== 0) ? gpsLoc as [number, number] : POLOKWANE
 
+  async function savePickupDistance(newDist: number, newAuto: boolean) {
+    const clamped = Math.min(MAX_KM, Math.max(MIN_KM, newDist))
+    setPickupDistance(clamped)
+    setAutoAccept(newAuto)
+    setSavingDistance(true)
+    const { error } = await supabase.from('profiles').update({ search_radius_km: clamped, auto_accept_enabled: newAuto } as any).eq('id', profile.id)
+    setSavingDistance(false)
+    if (error) alert('Could not save distance: ' + error.message)
+  }
+
   useEffect(() => {
     void (async () => {
       const [{ data: v }, { data: zones }, { data: p }] = await Promise.all([
@@ -71,6 +98,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
       ])
       if (zones) setAllZones(zones as any)
       if (v) setVehicleInfo(v)
+      // FIX: Load pickup distance + auto-accept from profile
+      if (p) {
+        const d = Number((p as any).search_radius_km ?? MIN_KM)
+        if (d >= MIN_KM && d <= MAX_KM) setPickupDistance(d)
+        setAutoAccept((p as any).auto_accept_enabled ?? true)
+      }
       const zonesFromV = Array.isArray((v as any)?.service_zones) ? (v as any).service_zones : typeof (v as any)?.service_zones === 'string' ? [(v as any).service_zones] : []
       const zonesFromP = Array.isArray((p as any)?.service_zones) ? (p as any).service_zones : typeof (p as any)?.service_zones === 'string' ? [(p as any).service_zones] : []
       const rawZones = zonesFromV.length ? zonesFromV : zonesFromP
@@ -98,7 +131,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const hasZones = selectedZones.length > 0
   const hasRideType = Boolean(selectedRideType)
-  // FIXED: Use hook missingFields directly - no double filtering
   const needsFix = (missingFields || []).length > 0
   const zonesMissing = (missingFields || []).includes('service_zones')
   const rideTypeMissing = (missingFields || []).includes('ride_type')
@@ -141,6 +173,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
         vehicle_colour: vColour,
         vehicle_registration: vReg,
         vehicle_year: vYear ? Number(vYear) : null,
+        search_radius_km: pickupDistance,
+        auto_accept_enabled: autoAccept,
       }
       await supabase.from('profiles').update(payloadProfiles).eq('id', profile.id)
       if (reloadVehicle) await reloadVehicle()
@@ -185,9 +219,63 @@ export function DriverHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!isOnline || ride) return
     const ch = createRealtimeChannel(`offers-${profile.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'ride_requests', filter: `driver_id=eq.${profile.id}` }, async (p: any) => {
-      if (p.new?.status === 'pending') { const { data } = await supabase.from('rides').select('*').eq('id', p.new.ride_id).eq('status', 'searching').single(); if (data) setIncoming(data as Ride) }
+      if (p.new?.status === 'pending') {
+        const { data } = await supabase.from('rides').select('*').eq('id', p.new.ride_id).eq('status', 'searching').single()
+        if (!data) return
+        // FIX: Respect max pickup distance - ignore if pickup too far
+        const pickupLat = Number((data as any).pickup_lat)
+        const pickupLng = Number((data as any).pickup_lng)
+        const driverLat = lastLoc.current?.[1] ?? location[1]
+        const driverLng = lastLoc.current?.[0] ?? location[0]
+        if (pickupLat && pickupLng && driverLat && driverLng) {
+          const dist = getDistanceKm(driverLat, driverLng, pickupLat, pickupLng)
+          if (dist > pickupRef.current.distance) {
+            // Too far - auto decline, don't show sheet
+            await supabase.from('ride_requests').update({ status: 'declined' }).eq('ride_id', p.new.ride_id).eq('driver_id', profile.id)
+            return
+          }
+          // FIX: Auto-accept if toggle ON and within distance
+          if (pickupRef.current.autoAccept) {
+            await accept(p.new.ride_id)
+            return
+          }
+        }
+        setIncoming(data as Ride)
+      }
     }).subscribe(); return () => { supabase.removeChannel(ch) }
   }, [isOnline, ride])
+
+  const pct = ((pickupDistance - MIN_KM) / (MAX_KM - MIN_KM)) * 100
+
+  // FIX: Pickup distance card - exact screenshot style, dark bg
+  const PickupDistanceCard = (
+    <div style={{ background: '#111111', borderRadius: 24, padding: 20, color: 'white', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontWeight: 700, fontSize: 20 }}>Maximum pickup distance</span>
+        <button
+          onClick={() => void savePickupDistance(pickupDistance, !autoAccept)}
+          style={{ width: 52, height: 32, borderRadius: 999, border: 0, background: autoAccept ? '#1a3d2a' : '#2a2a2a', position: 'relative', cursor: 'pointer' }}
+        >
+          <div style={{ width: 28, height: 28, borderRadius: '50%', background: autoAccept ? '#6ef0a0' : '#666', position: 'absolute', top: 2, left: autoAccept ? 22 : 2, transition: '0.2s' }} />
+        </button>
+      </div>
+      <div style={{ color: '#8a8a8a', fontSize: 16, marginTop: 16, lineHeight: 1.4 }}>Rides within this distance will be<br />automatically accepted</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 28, marginTop: 20 }}>
+        <button onClick={() => pickupDistance > MIN_KM && void savePickupDistance(pickupDistance - 1, autoAccept)} disabled={pickupDistance <= MIN_KM} style={{ width: 60, height: 60, borderRadius: '50%', border: 0, background: '#242424', color: 'white', fontSize: 30, cursor: 'pointer', opacity: pickupDistance <= MIN_KM ? 0.4 : 1 }}>—</button>
+        <div style={{ textAlign: 'center', minWidth: 70 }}><div style={{ fontSize: 52, fontWeight: 800 }}>{pickupDistance}</div><div style={{ color: '#8a8a8a', fontSize: 16, marginTop: -4 }}>km</div></div>
+        <button onClick={() => pickupDistance < MAX_KM && void savePickupDistance(pickupDistance + 1, autoAccept)} disabled={pickupDistance >= MAX_KM} style={{ width: 60, height: 60, borderRadius: '50%', border: 0, background: '#242424', color: 'white', fontSize: 30, cursor: 'pointer', opacity: pickupDistance >= MAX_KM ? 0.4 : 1 }}>+</button>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, padding: '0 8px' }}>
+        <div style={{ color: '#6ef0a0', fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 18 }}>{MIN_KM}</span><span style={{ fontSize: 16, marginTop: 4 }}>min</span></div>
+        <div style={{ flex: 1, margin: '0 16px', position: 'relative', height: 30, display: 'flex', alignItems: 'center' }}>
+          <div style={{ width: '100%', height: 6, background: '#222', borderRadius: 999 }}><div style={{ width: `${pct}%`, height: 6, background: '#6ef0a0', borderRadius: 999 }} /></div>
+          <div style={{ position: 'absolute', left: `calc(${pct}% - 3px)`, top: 0, width: 6, height: 22, background: '#6ef0a0', borderRadius: 999 }} />
+        </div>
+        <div style={{ color: '#8a8a8a', fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 18 }}>{MAX_KM}</span><span style={{ fontSize: 16, marginTop: 4 }}>max</span></div>
+      </div>
+      {savingDistance && <div style={{ fontSize: 11, color: '#6ef0a0', marginTop: 8, textAlign: 'center' }}>Saving...</div>}
+    </div>
+  )
 
   return (
     <div style={{ height: '100dvh', position: 'relative', overflow: 'hidden', background: THEME_BG }}>
@@ -214,10 +302,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
                 </div>
                 <span style={{ fontSize: 12, color: THEME_SUB }}>{bundleCredits ?? 0} trips</span>
               </div>
+              {PickupDistanceCard}
               <button onClick={toggleOnline} style={{ width: '100%', padding: 18, borderRadius: 100, background: isOnline ? (isDark ? '#334155' : '#1D2939') : BLUE, color: 'white', border: 0, fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,102,255,.25)' }}>
                 {isOnline ? 'GO OFFLINE' : needsFix ? 'FIX & GO ONLINE' : canGoOnline ? 'GO ONLINE' : 'WAITING APPROVAL'}
               </button>
-              <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11, color: THEME_SUB }}>POPIA • 6 months • {isDark ? 'Dark' : 'Light'} mode</div>
+              <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11, color: THEME_SUB }}>POPIA • 6 months • {isDark ? 'Dark' : 'Light'} mode • Max pickup {pickupDistance}km • Auto-accept {autoAccept ? 'ON' : 'OFF'}</div>
             </div>
           ) : (
             <div style={{ padding: '0 4px 12px' }}>
@@ -255,6 +344,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
               </div>
               <input value={vReg} onChange={e=>setVReg(e.target.value.toUpperCase())} placeholder="HCM 339 L" style={{ padding: '12px', borderRadius: 10, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, color: THEME_TEXT, fontWeight: 700 }} />
             </div>
+            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>📍 Max Pickup Distance</div>
+            {PickupDistanceCard}
             <button onClick={saveFix} disabled={savingFix} style={{ width: '100%', marginTop: 20, padding: 16, borderRadius: 100, background: BLUE, color: '#fff', border: 0, fontWeight: 900 }}>{savingFix ? 'Saving...' : 'Save & Go Online →'}</button>
           </div>
         </div>

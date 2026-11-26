@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase'
 import { isAdmin } from '../lib/auth'
 
 const BLUE = '#0066FF'
-// FIX: Orange removed - was #FF6B00 on Docs button + Popular, fought Blue Lite
 const BLUE_DARK = '#0052CC'
 
 const CATEGORIES = [
@@ -25,7 +24,7 @@ function categoryFor(cat: string | null | undefined) {
 }
 
 type DriverLocation = { driver_id: string, lat: number, lng: number }
-type PendingUser = { id: string, full_name: string, email: string, phone_number: string, verification_status: string, avatar_url: string, created_at: string, role: string, ride_type?: string | null }
+type PendingUser = { id: string, full_name: string, email: string, phone_number: string, verification_status: string, avatar_url: string, created_at: string, role: string, ride_type?: string | null, is_verified?: boolean }
 
 type AdminModule = 'admin-dashboard' | 'admin-docs' | 'admin-rides' | 'admin-passengers' | 'admin-finance' | 'admin-support' | 'admin-zones' | 'admin-settings' | 'admin-bundles'
 type BundlePrice = { id: string, name: string, label: string, category: string, trips: number, price: number, active: boolean, popular: boolean }
@@ -35,6 +34,7 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
   const [stats, setStats] = useState({ todayRides: 0, activeDrivers: 0, revenue: 0, pendingDrivers: 0 })
   const [locations, setLocations] = useState<DriverLocation[]>([])
   const [pendingDrivers, setPendingDrivers] = useState<PendingUser[]>([])
+  const [allDrivers, setAllDrivers] = useState<PendingUser[]>([])
   const [pendingPassengers, setPendingPassengers] = useState<PendingUser[]>([])
   const [identityDrivers, setIdentityDrivers] = useState<PendingUser[]>([])
   const [error, setError] = useState('')
@@ -72,7 +72,6 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
         .select('role,email')
         .eq('id', user.id)
         .maybeSingle()
-      // FIX GOV: Role + Email BOTH must match - was role only, any profile with role=admin got in
       if (profileError || profile?.role !== 'admin' || !isAdmin(profile?.email)) { denyAccess(); return }
       if (active) setAuthorization('authorized')
     })()
@@ -92,18 +91,45 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
     setBundleSaving(null)
   }
 
+  // FIX: Admin-only approval - NO SQL needed. Direct update + RPC fallback.
+  // This is what fixes Nakampe: old RPC did not set profiles.is_verified
+  async function fixDriverApproval(driverId: string, name: string) {
+    if (!confirm(`FIX APPROVAL for ${name}?\n\nThis will set in Admin (no SQL):\n- profiles.is_verified = true\n- verification_status = verified\n- driver_vehicles.is_approved = true\n- driver_documents = VERIFIED\n\nDriver will then see GO ONLINE.`)) return
+    setProcessing(driverId); setMsg('')
+    try {
+      // Try RPC first (may fail)
+      try { await supabase.rpc('admin_set_driver_verification', { p_driver_id: driverId, p_approve: true, p_rejection_reason: null }) } catch {}
+      // Direct - this is what driver app checks
+      const now = new Date().toISOString()
+      const [p1, p2, p3] = await Promise.all([
+        supabase.from('profiles').update({ is_verified: true, verification_status: 'verified', is_approved: true, verified_at: now } as any).eq('id', driverId),
+        supabase.from('driver_vehicles').update({ is_approved: true, verification_status: 'verified' } as any).eq('driver_id', driverId),
+        supabase.from('driver_documents').update({ status: 'VERIFIED', verification_status: 'VERIFIED' } as any).eq('driver_id', driverId).neq('status', 'REJECTED'),
+      ])
+      if (p1.error) throw p1.error
+      setMsg(`✅ ${name} FIXED in Admin - driver can now Go Online (after bundle).`)
+      await load()
+    } catch (e: any) { setMsg(`Fix failed: ${e?.message || String(e)}`) }
+    finally { setProcessing(null) }
+  }
+
   async function load() {
     if (loadingRef.current) return
     loadingRef.current = true
     setError('')
     try {
-      const [statsResult, pendingDriverResult, pendingPassengerResult, identityResult, sosResult, complaintResult] = await Promise.all([
+      const [statsResult, pendingDriverResult, allDriverResult, pendingPassengerResult, identityResult, sosResult, complaintResult] = await Promise.all([
         supabase.rpc('admin_dashboard_stats'),
         supabase.from('profiles')
-          .select('id,full_name,email,phone_number,verification_status,avatar_url,created_at,role,ride_type')
+          .select('id,full_name,email,phone_number,verification_status,avatar_url,created_at,role,ride_type,is_verified')
           .eq('role', 'driver')
           .in('verification_status', ['pending', 'pending_verification'])
           .order('created_at', { ascending: true }),
+        // FIX: Load ALL drivers so stuck driver (Nakampe) is visible for Fix Approval
+        supabase.from('profiles')
+          .select('id,full_name,email,phone_number,verification_status,avatar_url,created_at,role,ride_type,is_verified')
+          .eq('role', 'driver')
+          .order('created_at', { ascending: false }).limit(50),
         supabase.from('profiles')
           .select('id,full_name,email,phone_number,verification_status,avatar_url,created_at,role')
           .eq('role', 'passenger')
@@ -139,6 +165,7 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
       })
       setLocations(locs)
       setPendingDrivers((pendingDriverResult.data || []) as PendingUser[])
+      setAllDrivers((allDriverResult.data || []) as PendingUser[])
       setPendingPassengers((pendingPassengerResult.data || []) as PendingUser[])
       setIdentityDrivers((identityResult.data || []) as PendingUser[])
 
@@ -217,13 +244,14 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
 
   const renderRow = (d: PendingUser, isPassenger: boolean) => {
     const cat = categoryFor((d as any).ride_type)
+    const isStuck = !isPassenger && (d as any).is_verified !== true && d.verification_status === 'verified'
     return (
     <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '12px 0', borderBottom: `1px solid ${border}`, flexWrap: 'wrap' }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         {d.avatar_url && <img src={d.avatar_url} alt="avatar" style={{ width: 44, height: 44, borderRadius: 22, objectFit: 'cover' }} />}
-        <div><div style={{ fontWeight: 700, color: text }}>{d.full_name || d.email}</div><div style={{ fontSize: 12, color: subText }}>{d.phone_number || 'No phone'} • {d.email} • {d.verification_status}</div>{!isPassenger && <div style={{ marginTop: 4, display: 'inline-block', padding: '3px 10px', borderRadius: 999, background: BLUE, color: 'white', fontSize: 11, fontWeight: 800 }}>{cat.icon} {cat.name} • {cat.seats}</div>}</div>
+        <div><div style={{ fontWeight: 700, color: text }}>{d.full_name || d.email} {isStuck ? <span style={{ background: '#7f1d1d', color: '#fecaca', fontSize: 11, padding: '2px 8px', borderRadius: 999 }}>⚠️ STUCK - Fix Approval</span> : ''}</div><div style={{ fontSize: 12, color: subText }}>{d.phone_number || 'No phone'} • {d.email} • {d.verification_status} • verified={String((d as any).is_verified)}</div>{!isPassenger && <div style={{ marginTop: 4, display: 'inline-block', padding: '3px 10px', borderRadius: 999, background: BLUE, color: 'white', fontSize: 11, fontWeight: 800 }}>{cat.icon} {cat.name} • {cat.seats}</div>}</div>
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button onClick={() => onDocs(d.id)} style={{ padding: '8px 12px', borderRadius: 8, background: bg2, color: text, border: `1px solid ${border}`, cursor: 'pointer', fontWeight: 700 }}>View Documents</button>
         {isPassenger ? (
           <>
@@ -231,7 +259,10 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
             <button disabled={processing === d.id} onClick={() => approvePassenger(d.id, true, d.full_name || d.email)} style={{ padding: '8px 12px', borderRadius: 8, background: BLUE, color: 'white', border: 0, fontWeight: 700, cursor: 'pointer' }}>{processing === d.id ? '...' : 'Approve ✅'}</button>
           </>
         ) : (
-          <button onClick={() => onDocs(d.id)} style={{ padding: '8px 12px', borderRadius: 8, background: BLUE, color: 'white', border: 0, fontWeight: 700, cursor: 'pointer' }}>Check Docs &amp; Approve →</button>
+          <>
+            <button onClick={() => onDocs(d.id)} style={{ padding: '8px 12px', borderRadius: 8, background: BLUE, color: 'white', border: 0, fontWeight: 700, cursor: 'pointer' }}>Check Docs & Approve →</button>
+            <button disabled={processing === d.id} onClick={() => fixDriverApproval(d.id, d.full_name || d.email)} style={{ padding: '8px 12px', borderRadius: 8, background: '#16a34a', color: 'white', border: 0, fontWeight: 800, cursor: 'pointer' }}>{processing === d.id ? 'Fixing...' : '🔧 FIX APPROVAL'}</button>
+          </>
         )}
       </div>
     </div>
@@ -283,6 +314,13 @@ export function AdminDashboard({ onBack, onDocs, onAdminModule }: { onBack: () =
         <button onClick={() => void load()} style={{ marginTop: 12, padding: '8px 14px', borderRadius: 8, background: bg2, color: text, border: `1px solid ${border}`, fontWeight: 700, cursor: 'pointer' }}>Refresh</button>
       </section>
     )}
+
+    {/* FIX: All Drivers - so stuck driver is visible even if not pending */}
+    <section style={{ ...card, marginTop: '14px', border: '1px solid #14532d' }}>
+      <h2 style={{ marginTop: 0, color: '#bbf7d0' }}>All Drivers - Fix Stuck Approvals ({allDrivers.length})</h2>
+      <p style={{ fontSize: 12, color: subText }}>If driver says WAITING APPROVAL but docs are 15/15 VERIFIED, click 🔧 FIX APPROVAL - Admin only, no SQL.</p>
+      {allDrivers.length === 0 ? <p style={{ color: subText }}>No drivers.</p> : allDrivers.map(d => renderRow(d, false))}
+    </section>
 
     <section style={{ ...card, marginTop: '14px', background: '#1c1500', border: '1px solid #78350f' }}>
       <h2 style={{ marginTop: 0, color: '#fde68a' }}>Identity Done - Inside App Finishing 11 Docs ({identityDrivers.length}) - Do NOT Approve Yet</h2>

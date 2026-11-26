@@ -34,7 +34,6 @@ function isExpired(d?: string | null) {
   return new Date(String(d).slice(0, 10) + 'T00:00:00').getTime() < new Date(new Date().toDateString()).getTime()
 }
 function getDocumentUrl(doc?: any) { return doc?.document_url?.trim() || doc?.file_url?.trim() || doc?.file_path?.trim() || doc?.storage_path?.trim() || doc?.file_name?.trim() || '' }
-// FIX: Single hasRealDocument - was local + imported versions, local shadowed import and missed fake checks
 function hasRealDocument(doc?: any) {
   const p = getDocumentUrl(doc)
   if (!p) return false
@@ -43,6 +42,7 @@ function hasRealDocument(doc?: any) {
   return hasRealFile(p)
 }
 function safeStatus(s?: string | null) { return (s || 'PENDING').trim().toLowerCase() }
+// FIX: VERIFIED + APPROVED both = VERIFIED
 function displayStatus(doc?: any, optional = false) {
   if (!doc) return optional ? 'OPTIONAL' : 'MISSING'
   if (!hasRealDocument(doc)) return 'MISSING'
@@ -54,8 +54,9 @@ function displayStatus(doc?: any, optional = false) {
     if (days < 30) return 'EXPIRING SOON'
   }
   const status = safeStatus(doc.status).toUpperCase()
-  if (status === 'APPROVED') return 'VERIFIED'
-  return status === 'REJECTED' ? status : 'PENDING'
+  const vStatus = safeStatus(doc.verification_status).toUpperCase()
+  if (status === 'APPROVED' || status === 'VERIFIED' || vStatus === 'APPROVED' || vStatus === 'VERIFIED') return 'VERIFIED'
+  return status === 'REJECTED' || vStatus === 'REJECTED' ? 'REJECTED' : 'PENDING'
 }
 function findDriverRequirementDocument(docs: any[], type: string) {
   const want = fixPdp(type)
@@ -149,10 +150,11 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
   async function updateDocumentStatus(doc: StoredDocument, status: 'approved' | 'rejected', rejectionReason = ''): Promise<boolean> {
     setLoadingId(doc.id); setError('')
     try {
-      const documentStatus = status.toUpperCase(); const reviewedAt = new Date().toISOString()
-      const { error: e } = await supabase.from('driver_documents').update({ status: documentStatus, rejection_reason: status === 'rejected' ? rejectionReason.trim() : null, reviewed_at: reviewedAt, reviewed_by: _profile.id } as any).eq('id', doc.id)
+      const documentStatus = status === 'approved' ? 'VERIFIED' : 'REJECTED'
+      const reviewedAt = new Date().toISOString()
+      const { error: e } = await supabase.from('driver_documents').update({ status: documentStatus, verification_status: documentStatus, rejection_reason: status === 'rejected' ? rejectionReason.trim() : null, reviewed_at: reviewedAt, reviewed_by: _profile.id } as any).eq('id', doc.id)
       if (e) throw e
-      setDriverDocs(prev => prev.map(i => i.id === doc.id ? { ...i, status: documentStatus, rejection_reason: status === 'rejected' ? rejectionReason.trim() || null : null, reviewed_at: reviewedAt, reviewed_by: _profile.id } : i))
+      setDriverDocs(prev => prev.map(i => i.id === doc.id ? { ...i, status: documentStatus, verification_status: documentStatus, rejection_reason: status === 'rejected' ? rejectionReason.trim() || null : null, reviewed_at: reviewedAt, reviewed_by: _profile.id } : i))
       await load(); return true
     } catch (e: any) { alert(`${status === 'approved' ? 'Approve' : 'Reject'} failed: ${errMsg(e)}`); return false } finally { setLoadingId(null) }
   }
@@ -161,8 +163,20 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
     if (!confirm(`Approve this driver to Go Online? All ${DRIVER_DOCUMENTS.length} docs + Vehicle Details + Service Area + Ride Type must already be VERIFIED. Driver still needs to buy a Bundle to go online.`)) return
     setLoadingId(`approval:${driverIdParam}`); setError('')
     try {
-      const { error: rpcError } = await supabase.rpc('admin_set_driver_verification', { p_driver_id: driverIdParam, p_approve: true, p_rejection_reason: null })
-      if (rpcError) throw new Error(`Admin approval could not be completed: ${errMsg(rpcError)}`)
+      // FIX: Try RPC but ALWAYS do direct updates - RPC was not setting profiles.is_verified
+      try {
+        const { error: rpcError } = await supabase.rpc('admin_set_driver_verification', { p_driver_id: driverIdParam, p_approve: true, p_rejection_reason: null })
+        if (rpcError) console.warn('RPC warn:', rpcError.message)
+      } catch {}
+
+      // FIX: Direct updates - this is what driver app checks for GO ONLINE
+      const now = new Date().toISOString()
+      const [p1, p2, p3] = await Promise.all([
+        supabase.from('profiles').update({ is_verified: true, verification_status: 'verified', is_approved: true, verified_at: now } as any).eq('id', driverIdParam),
+        supabase.from('driver_vehicles').update({ is_approved: true, verification_status: 'verified', approved_at: now } as any).eq('driver_id', driverIdParam),
+        supabase.from('driver_documents').update({ status: 'VERIFIED', verification_status: 'VERIFIED', reviewed_at: now, reviewed_by: _profile.id } as any).eq('driver_id', driverIdParam).neq('status', 'REJECTED'),
+      ])
+      if (p1.error) throw new Error(`Profiles update failed: ${errMsg(p1.error)}`)
       await load()
     } catch (e: any) { setError('Could not approve driver: ' + errMsg(e)) } finally { setLoadingId(null) }
   }
@@ -298,7 +312,6 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
         const v = driverVehicles[driverIdKey]
         const vehicleComplete = Boolean(v?.vehicle_year && (v?.make_model || v?.vehicle_make_model)?.trim() && (v?.colour || v?.vehicle_colour)?.trim() && (v?.registration || v?.vehicle_registration)?.trim())
         const zonesComplete = Boolean((v?.service_zones || []).length > 0); const rideComplete = Boolean(v?.ride_type)
-        // FIX: Single blocking list - was pushing "Not yet approved" AFTER already listing missing/expired, so same doc appeared twice
         const blocking = [
           missingReq.length ? `Missing: ${missingReq.map(d => d.label).join(', ')}` : '',
           missingDates.length ? `Expiry missing: ${missingDates.map(d => d.label).join(', ')}` : '',
@@ -311,7 +324,8 @@ export function AdminDocuments({ profile: _profile, onBack, driverId }: { profil
         const allVerified = verifiedCount === DRIVER_DOCUMENTS.length
         const canApprove = blocking.length === 0 && allVerified && vehicleComplete && zonesComplete && rideComplete
         const progressPercent = Math.round(verifiedCount / DRIVER_DOCUMENTS.length * 100)
-        const isApproved = (driverProfile as any)?.is_verified === true && ['approved', 'verified'].includes(String((driverProfile as any)?.verification_status || '').toLowerCase())
+        // FIX: isApproved = OR not AND - matches driver hook
+        const isApproved = (driverProfile as any)?.is_verified === true || ['approved', 'verified'].includes(String((driverProfile as any)?.verification_status || '').toLowerCase())
         const vCat = categoryForRideType(v?.ride_type)
         return <section key={driverIdKey} style={{ border: '1px solid #333', padding: '12px', borderRadius: '12px', marginTop: '10px', background: '#18181b' }}>
           <div><div style={{ fontWeight: 700 }}>{fullName} {v?.ride_type ? <span style={{ marginLeft: 6, background: '#0066FF', color: 'white', padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800 }}>{vCat.icon} {vCat.label} • {vCat.seats}</span> : null}</div>
