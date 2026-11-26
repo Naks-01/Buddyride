@@ -1,6 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core';
-import { StatusBar, Style } from '@capacitor/status-bar';
 import { AdminHome } from './pages/AdminHome'
 import { supabase, type Profile, type Role } from './lib/supabase'
 import { getProfile, signUp as createAccount, sendSmsOtp, verifySmsOtp } from './lib/auth'
@@ -17,7 +16,7 @@ import LandingPage from './pages/LandingPage'
 import { DriverOnboarding } from './pages/DriverOnboarding'
 import { DriverDashboardGuard } from './pages/DriverDashboardGuard'
 import { DriverPendingPage } from './pages/DriverPendingPage'
-import { getDriverEntryPath } from './lib/driverRouting.mjs'
+import { getDriverEntryPath } from './lib/driverRouting'
 import TermsPage from './pages/TermsPage'
 import PrivacyPage from './pages/PrivacyPage'
 
@@ -88,7 +87,6 @@ export default function App() {
   const [otpSent, setOtpSent] = useState(false)
   const loadingProfileRef = useRef(false)
   const lastLoadedUserRef = useRef<string | null>(null)
-  // FIX PRODUCTION: BLUE LITE ONLY - no dark mode, matches main.tsx + DriverHome + PassengerHome
   const theme = 'light' as const
   const isDark = false
   const appBg = '#f5f5f7'
@@ -163,7 +161,6 @@ export default function App() {
     } finally { setLoading(false); loadingProfileRef.current = false }
   }, [navigateDriverPath])
 
-  // FIX: Force Lite theme + StatusBar Light for production
   useEffect(() => {
     try {
       document.documentElement.setAttribute('data-theme', 'light')
@@ -175,11 +172,14 @@ export default function App() {
       localStorage.setItem('buddyride-theme', 'light')
     } catch {}
     if (Capacitor.isNativePlatform()) {
-      StatusBar.setOverlaysWebView({ overlay: false }).catch(()=>{});
-      StatusBar.setBackgroundColor({ color: '#f5f5f7' }).catch(()=>{});
-      StatusBar.setStyle({ style: Style.Light }).catch(()=>{});
+      import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
+        StatusBar.setOverlaysWebView({ overlay: false }).catch(()=>{});
+        StatusBar.setBackgroundColor({ color: '#f5f5f7' }).catch(()=>{});
+        StatusBar.setStyle({ style: Style.Light }).catch(()=>{});
+      }).catch(()=>{})
     }
   }, [appBg, appText])
+
   useEffect(() => { const t = window.setTimeout(() => setSplashVisible(false), 1900); return () => window.clearTimeout(t) }, [])
   useEffect(() => {
     const handlePopState = () => { setDriverPath(window.location.pathname); setCurrentPath(window.location.pathname) }
