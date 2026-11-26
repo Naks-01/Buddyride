@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 // BUNDLE MODEL: No commission. Driver keeps 100%. Profit = Bundle sales.
 
@@ -13,6 +13,15 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
   const logoFailed = logoIndex >= logoCandidates.length
 
   const driverKeeps = 100
+
+  // FIX: Landing stuck - splash left body overflow:hidden, 100vh cut off on mobile Chrome
+  useEffect(() => {
+    document.documentElement.style.overflow = 'auto'
+    document.documentElement.style.height = 'auto'
+    document.body.style.overflow = 'auto'
+    document.body.style.height = 'auto'
+    document.body.style.position = 'static'
+  }, [])
 
   const handleDriverClick = () => {
     try { localStorage.setItem('buddyride_pending_role', 'driver') } catch {}
@@ -33,7 +42,7 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
   }
 
   return (
-    <div style={{ background: "white", minHeight: "100vh", display: "flex", flexDirection: "column", fontFamily: "Inter, sans-serif" }}>
+    <div style={{ background: "white", minHeight: "100dvh", display: "flex", flexDirection: "column", fontFamily: "Inter, sans-serif", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
       <div style={{ background: "white", padding: 24, display: "flex", flexDirection: "column", alignItems: "center", borderBottom: "1px solid #eee" }}>
         {!logoFailed ? (
           <img src={logoCandidates[logoIndex]} alt="BuddyRide" style={{ width: 110, height: 110, objectFit: "contain" }} onError={() => setLogoIndex(i => i + 1)} />
@@ -153,7 +162,7 @@ export default function LandingPage({ onLogin, onDriverLogin }: { onLogin: () =>
         </div>
       </div>
 
-      <div style={{ background: "#0a0a0a", padding: "14px 16px", textAlign: "center" }}>
+      <div style={{ background: "#0a0a0a", padding: "14px 16px", textAlign: "center", paddingBottom: "max(14px, env(safe-area-inset-bottom))" }}>
         <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: "#9CA3AF", letterSpacing: "0.02em" }}>
           BuddyRide (Pty) Ltd was developed and registered by Mokgalaka Nakampe Trevor. It is 100% Black-owned.
         </p>
