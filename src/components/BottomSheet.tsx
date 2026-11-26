@@ -12,7 +12,7 @@ type BottomSheetProps = {
 
 const SNAP_POINTS: BottomSheetSnapPoint[] = [25, 50, 80, 90]
 
-export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light', fitToSnap = false }: BottomSheetProps) {
+export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light', fitToSnap = true }: BottomSheetProps) {
   const [dragHeight, setDragHeight] = useState<number | null>(null)
   const dragStartRef = useRef<{ y: number; height: number } | null>(null)
   const liveHeightRef = useRef<number>(snapPoint)
@@ -68,7 +68,8 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light'
     liveHeightRef.current = snapPoint
   }
 
-  const translateY = 90 - height
+  // FIX: No more 90dvh + translateY trick - height IS the snap height
+  // Old: height 90dvh + translateY = huge invisible white sheet = double button look
 
   return (
     <section
@@ -77,8 +78,8 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light'
         position: 'absolute',
         inset: 'auto 0 0',
         zIndex: 60,
-        height: fitToSnap ? `${height}dvh` : '90dvh',
-        transform: fitToSnap ? 'none' : `translateY(${translateY}dvh)`,
+        height: `${height}dvh`,
+        transform: 'none',
         overflowY: 'auto',
         overscrollBehavior: 'contain',
         background: surface,
@@ -88,7 +89,7 @@ export function BottomSheet({ children, snapPoint, onSnapChange, theme = 'light'
         boxShadow: isDark ? '0 -8px 32px rgba(10,37,64,.4)' : '0 -8px 32px rgba(0,0,0,.12)',
         backdropFilter: 'blur(24px)',
         transition: dragHeight === null
-          ? `${fitToSnap ? 'height' : 'transform'} 400ms cubic-bezier(.32,.72,0,1)`
+          ? `height 400ms cubic-bezier(.32,.72,0,1)`
           : 'none',
         touchAction: 'pan-y',
         pointerEvents: 'auto',
