@@ -210,7 +210,7 @@ export function DriverBundlePurchase({ profile, onBack }: { profile: Profile; on
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <strong style={{ fontSize: 16 }}>{bundle.name} - {bundle.trips} trips</strong>
-                    <div style={{ fontSize: 12, color: '#667085', marginTop: 2 }}>{bundle.saving} • {selectedCatInfo.name} • Expires 31 days</div>
+                    <div style={{ fontSize: 12, color: '#667085', marginTop: 2 }}>{selectedCatInfo.name} • Expires 31 days</div>
                   </div>
                   <strong style={{ fontSize: 20 }}>R{bundle.price}</strong>
                 </div>
