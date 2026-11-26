@@ -39,9 +39,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [selectedRideType, setSelectedRideType] = useState('buddy_plus')
   const [savingFix, setSavingFix] = useState(false)
   const [vehicleInfo, setVehicleInfo] = useState<any>(null)
+  // STEP 2: Vehicle inputs
+  const [vMake, setVMake] = useState('')
+  const [vModel, setVModel] = useState('')
+  const [vColour, setVColour] = useState('')
+  const [vReg, setVReg] = useState('')
+  const [vYear, setVYear] = useState('')
 
   const { bundleCredits, bundleCount, reloadBundle } = useBundle(profile.id)
-  const { missingFields, missingLabels, vehicleOk, reloadVehicle } = useVehicleCheck(profile.id) as any
+  const { missingFields, missingLabels, vehicleOk, reloadVehicle, vehicle } = useVehicleCheck(profile.id) as any
   const { docsOk, verified } = useDocsCheck(profile.id)
   const { location: gpsLoc, lastLoc } = useDriverLocation(profile.id, isOnline, !!ride)
   const location: [number, number] = (gpsLoc && Array.isArray(gpsLoc) && gpsLoc.length === 2 && typeof gpsLoc[0] === 'number' && gpsLoc[0] !== 0) ? gpsLoc as [number, number] : POLOKWANE
@@ -51,72 +57,100 @@ export function DriverHome({ profile }: { profile: Profile }) {
       const [{ data: v }, { data: zones }, { data: p }] = await Promise.all([
         supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle(),
         supabase.from('service_zones').select('id,name').order('name'),
-        supabase.from('profiles').select('service_zones,ride_type').eq('id', profile.id).single(),
+        supabase.from('profiles').select('service_zones,ride_type,vehicle_make,vehicle_model,vehicle_year,vehicle_color,vehicle_colour,vehicle_registration').eq('id', profile.id).single(),
       ])
       if (zones) setAllZones(zones as any)
       if (v) setVehicleInfo(v)
       const zonesFromV = Array.isArray((v as any)?.service_zones) ? (v as any).service_zones : []
       const zonesFromP = Array.isArray((p as any)?.service_zones) ? (p as any).service_zones : []
       const rawZones = zonesFromV.length ? zonesFromV : zonesFromP
-      // FIX: DB may store NAMES ('Seshego') but UI uses IDS ('seshego' / uuid) - normalize to IDs
       if (rawZones.length && zones) {
         const normalized = rawZones.map((z: string) => {
-          const match = (zones as any).find((zz: any) => zz.id === z || zz.name === z || zz.name?.toLowerCase() === String(z).toLowerCase() || zz.id?.toLowerCase() === String(z).toLowerCase())
+          const match = (zones as any).find((zz: any) => zz.id === z || zz.name === z || zz.name?.toLowerCase() === String(z).toLowerCase())
           return match ? match.id : z
         })
         setSelectedZones(normalized)
-      } else if (rawZones.length) {
-        setSelectedZones(rawZones)
-      }
+      } else if (rawZones.length) setSelectedZones(rawZones)
       const rt = (v as any)?.ride_type || (p as any)?.ride_type
-      // FIX: DB may store display name 'Buddy Lite' - normalize to id 'buddy_lite'
       if (rt) {
-        const found = CATEGORIES.find(c => c.id === rt || c.name === rt || c.name?.toLowerCase() === String(rt).toLowerCase())
+        const found = CATEGORIES.find(c => c.id === rt || c.name === rt || String(rt).toLowerCase() === c.name.toLowerCase())
         if (found) setSelectedRideType(found.id)
       }
+      // STEP 2: Prefill vehicle from DB or hook
+      const mergedV: any = { ...(p || {}), ...(v || {}), ...(vehicle || {}) }
+      if (mergedV.vehicle_make || mergedV.make_model) setVMake(mergedV.vehicle_make || String(mergedV.make_model || '').split(' ')[0] || '')
+      if (mergedV.vehicle_model) setVModel(mergedV.vehicle_model)
+      else if (mergedV.make_model && String(mergedV.make_model).split(' ').length > 1) setVModel(String(mergedV.make_model).split(' ').slice(1).join(' '))
+      if (mergedV.vehicle_color || mergedV.vehicle_colour || mergedV.colour || mergedV.color) setVColour(mergedV.vehicle_color || mergedV.vehicle_colour || mergedV.colour || mergedV.color)
+      if (mergedV.vehicle_registration || mergedV.registration) setVReg(mergedV.vehicle_registration || mergedV.registration)
+      if (mergedV.vehicle_year || mergedV.year) setVYear(String(mergedV.vehicle_year || mergedV.year))
     })()
-  }, [profile.id])
+  }, [profile.id, vehicle])
 
   const hasZones = selectedZones.length > 0
   const hasRideType = Boolean(selectedRideType)
-  // FIX: LOOP FIX - trust LOCAL state after user picks, not stale missingFields from hook
-  // missingFields lags Supabase by 1-2s and caused infinite "Complete to Go Online" loop
+  // STEP 2: Loop fix - trust local for zones/ride_type, but vehicle still needs hook
   const zonesMissing = !hasZones
   const rideTypeMissing = !hasRideType
-  // Only other missing fields (not zones/ride_type) should block
-  const otherMissing = (missingFields || []).filter((f: string) => f !== 'service_zones' && f !== 'ride_type' && f !== 'service_area')
+  const otherMissing = (missingFields || []).filter((f: string) => f !== 'service_zones' && f !== 'ride_type')
   const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType && (bundleCredits ?? 0) > 0
 
   async function saveFix() {
     if (!hasZones) { alert('Pick at least 1 Service Area'); return }
     if (!hasRideType) { alert('Pick a Ride Type'); return }
+    if (!vMake || !vModel || !vReg) { alert('Fill Vehicle Make, Model, Registration'); return }
     setSavingFix(true)
     try {
-      const { data: existing } = await supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle()
-      const { error: vErr } = await supabase.from('driver_vehicles').upsert(
-        { ...(existing || {}), driver_id: profile.id, service_zones: selectedZones, ride_type: selectedRideType, updated_at: new Date().toISOString() },
-        { onConflict: 'driver_id' }
-      )
+      const payloadVehicles = {
+        driver_id: profile.id,
+        service_zones: selectedZones,
+        ride_type: selectedRideType,
+        vehicle_make: vMake,
+        vehicle_model: vModel,
+        vehicle_color: vColour,
+        vehicle_colour: vColour,
+        vehicle_registration: vReg,
+        vehicle_year: vYear ? Number(vYear) : null,
+        make_model: `${vMake} ${vModel}`.trim(),
+        vehicle_make_model: `${vMake} ${vModel}`.trim(),
+        colour: vColour,
+        registration: vReg,
+        year: vYear ? Number(vYear) : null,
+        updated_at: new Date().toISOString()
+      }
+      const { data: existing } = await supabase.from('driver_vehicles').select('driver_id').eq('driver_id', profile.id).maybeSingle()
+      const { error: vErr } = existing
+        ? await supabase.from('driver_vehicles').update(payloadVehicles).eq('driver_id', profile.id)
+        : await supabase.from('driver_vehicles').insert(payloadVehicles)
       if (vErr) throw vErr
-      const { error: pErr } = await supabase.from('profiles').update({ service_zones: selectedZones, ride_type: selectedRideType }).eq('id', profile.id)
-      if (pErr) throw pErr
+
+      const payloadProfiles = {
+        service_zones: selectedZones,
+        ride_type: selectedRideType,
+        vehicle_make: vMake,
+        vehicle_model: vModel,
+        vehicle_color: vColour,
+        vehicle_colour: vColour,
+        vehicle_registration: vReg,
+        vehicle_year: vYear ? Number(vYear) : null,
+      }
+      const { error: pErr } = await supabase.from('profiles').update(payloadProfiles).eq('id', profile.id)
+      if (pErr) console.warn('profiles update', pErr)
+
       if (reloadVehicle) await reloadVehicle()
       setShowFix(false)
-      // FIX: After save, if no bundles, go to bundle page - don't stay on loop
       if ((bundleCredits ?? 0) <= 0) {
-        alert(`✅ ${CATEGORIES.find(c=>c.id===selectedRideType)?.name} saved - now buy a bundle to Go Online`)
+        alert(`✅ ${CATEGORIES.find(c=>c.id===selectedRideType)?.name} + Vehicle saved - now buy bundle`)
         window.location.assign('/driver/bundle')
         return
       }
-      alert(`✅ ${CATEGORIES.find(c=>c.id===selectedRideType)?.name} saved - you can now Go Online`)
-    } catch (e: any) { alert(e.message || 'Could not save - try again') } finally { setSavingFix(false) }
+      alert(`✅ Saved - you can now Go Online`)
+    } catch (e: any) { alert(e.message || 'Could not save') } finally { setSavingFix(false) }
   }
 
   async function toggleOnline() {
     if (!isOnline) {
-      if (zonesMissing || rideTypeMissing) { setShowFix(true); return }
-      // FIX: only block on OTHER missing fields, not stale zones/ride_type
-      if (otherMissing.length > 0) { setShowFix(true); return }
+      if (zonesMissing || rideTypeMissing || otherMissing.length > 0) { setShowFix(true); return }
       if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
       if (!docsOk || !verified) { alert('Waiting admin approval - docs still under review'); return }
     }
@@ -161,21 +195,18 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <NavigationMenu profile={profile} theme="light" onThemeChange={() => {}} onSignOut={() => supabase.auth.signOut()} />
         <button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, borderRadius: 999, padding: '8px 12px', border: '1px solid #DBEAFE', background: '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 12 }}>{bundleCredits ?? 0} trips • {bundleCount} bundles</button>
       </header>
-      {(zonesMissing || rideTypeMissing) && (
+      {(zonesMissing || rideTypeMissing || otherMissing.length > 0) && (
         <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 12, borderRadius: 12, background: '#FEF3F2', color: '#B42318', fontSize: 13, fontWeight: 700, border: '1px solid #FECACA' }}>
-          ⚠️ Complete to Go Online: {zonesMissing ? 'Service Area ' : ''}{zonesMissing && rideTypeMissing ? '• ' : ''}{rideTypeMissing ? 'Ride Type' : ''}
+          ⚠️ Complete to Go Online: {zonesMissing ? 'Service Area ' : ''}{rideTypeMissing ? 'Ride Type ' : ''}{otherMissing.length ? missingLabels.filter((l: string) => l !== 'Service Area' && l !== 'Ride Type').join(', ') : ''}
           {vehicleInfo && <div style={{ color: '#067647', marginTop: 4, fontSize: 12 }}>🚗 {vehicleInfo.vehicle_year || vehicleInfo.year} {vehicleInfo.make_model || vehicleInfo.vehicle_make_model} • {vehicleInfo.colour || vehicleInfo.vehicle_colour} • {vehicleInfo.registration || vehicleInfo.vehicle_registration}</div>}
           <button onClick={() => setShowFix(true)} style={{ marginTop: 8, width: '100%', background: BLUE, color: '#fff', border: 0, borderRadius: 8, padding: '10px', fontWeight: 900 }}>Fix Service Area & Ride Type →</button>
         </div>
-      )}
-      {otherMissing.length > 0 && !zonesMissing && !rideTypeMissing && (
-        <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 10, borderRadius: 12, background: '#FEF2F2', color: '#B42318', fontSize: 12, fontWeight: 800, border: '1px solid #FECACA' }}>⚠️ Missing: {(missingLabels?.length ? missingLabels : otherMissing).join(', ')} <button onClick={() => setShowFix(true)} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button></div>
       )}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60 }}>
         <BottomSheet snapPoint={50} onSnapChange={() => {}}>
           {!ride ? (
             <div style={{ textAlign: 'center' }}>
-              <button onClick={toggleOnline} style={{ width: '100%', padding: 16, borderRadius: 14, background: (canGoOnline || zonesMissing || rideTypeMissing) ? (isOnline ? '#B42318' : BLUE) : '#94A3B8', color: 'white', border: 0, fontWeight: 900 }}>{isOnline ? 'GO OFFLINE' : (zonesMissing || rideTypeMissing) ? 'FIX & GO ONLINE →' : canGoOnline ? 'GO ONLINE • BLUE' : 'Waiting Approval'}</button>
+              <button onClick={toggleOnline} style={{ width: '100%', padding: 16, borderRadius: 14, background: (canGoOnline || zonesMissing || rideTypeMissing || otherMissing.length>0) ? (isOnline ? '#B42318' : BLUE) : '#94A3B8', color: 'white', border: 0, fontWeight: 900 }}>{isOnline ? 'GO OFFLINE' : (zonesMissing || rideTypeMissing || otherMissing.length>0) ? 'FIX & GO ONLINE →' : canGoOnline ? 'GO ONLINE • BLUE' : 'Waiting Approval'}</button>
               <div style={{ marginTop: 8, fontSize: 11, color: '#64748B' }}>POPIA: Trip data kept 6 months • Compliant</div>
             </div>
           ) : (
@@ -186,11 +217,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
                 <button onClick={() => setShowChat(true)} style={{ padding: 12, borderRadius: 10, background: '#F8FAFF', border: `1px solid ${BORDER}` }}>💬</button>
                 <button onClick={handleTripAction} style={{ flex: 1, padding: 14, borderRadius: 12, background: BLUE, color: 'white', border: 0, fontWeight: 800 }}>{String(ride.status) === 'arrived' ? 'Start Trip →' : (String(ride.status).includes('progress') || String(ride.status) === 'picked_up' || String(ride.status) === 'en_route' || String(ride.status) === 'on_trip') ? 'Complete ✓ • Receipt' : 'I Have Arrived'}</button>
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Track my BuddyRide ${ride.id} https://www.google.com/maps?q=${location[1]},${location[0]}`)}`, '_blank')} style={{ flex: 1, padding: 10, borderRadius: 10, background: '#EFF6FF', color: BLUE, border: '1px solid #DBEAFE', fontWeight: 700, fontSize: 12 }}>📤 Share Trip</button>
-                <button onClick={() => { const r = prompt('Report reason?'); if (r) supabase.from('complaints').insert({ ride_id: ride.id, driver_id: profile.id, reason: r }).then(({ error }) => { if (error) alert(error.message); else alert('Report sent to BuddyRide Support') }) }} style={{ flex: 1, padding: 10, borderRadius: 10, background: '#F8FAFF', border: `1px solid ${BORDER}`, fontWeight: 700, fontSize: 12 }}>⚠️ Report</button>
-              </div>
-              <div style={{ marginTop: 10 }}><PanicButton rideId={ride.id} lat={location[1]} lng={location[0]} /></div>
             </div>
           )}
         </BottomSheet>
@@ -201,14 +227,24 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'end center' }}>
           <div style={{ width: '100%', maxWidth: 480, background: '#fff', borderRadius: '20px 20px 0 0', padding: 20, maxHeight: '85dvh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>Complete to Go Online</h3><button onClick={() => setShowFix(false)} style={{ border: 0, background: '#F2F4F7', borderRadius: 999, padding: '6px 12px', fontWeight: 800 }}>✕</button></div>
-            <p style={{ color: '#667085', fontSize: 13 }}>Pick where you drive and what ride type. You are already inside the app.</p>
+            <p style={{ color: '#667085', fontSize: 13 }}>Pick where you drive and what ride type + vehicle.</p>
             <div style={{ fontWeight: 800, margin: '12px 0 6px' }}>📍 Service Area</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {(allZones.length ? allZones : [{id:'polokwane',name:'Polokwane'},{id:'seshego',name:'Seshego'},{id:'mankweng',name:'Mankweng'}]).map(z => { const on = selectedZones.includes(z.id); return <button key={z.id} onClick={() => setSelectedZones(s => on ? s.filter(x => x!==z.id) : [...s, z.id])} style={{ padding: '10px 14px', borderRadius: 999, border: on ? `2px solid ${BLUE}` : `1px solid ${BORDER}`, background: on ? '#EFF6FF' : '#fff', color: on ? BLUE : '#182230', fontWeight: 800 }}>{on ? '✓ ' : ''}{z.name}</button> })}
             </div>
-            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>🚙 Ride Type - Your 3 Categories</div>
+            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>🚙 Ride Type</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {CATEGORIES.map(t => { const on = selectedRideType === t.id; return <button key={t.id} onClick={() => setSelectedRideType(t.id)} style={{ padding: '12px 14px', borderRadius: 12, border: on ? `2px solid ${BLUE}` : `1px solid ${BORDER}`, background: on ? '#EFF6FF' : '#fff', color: on ? BLUE : '#182230', fontWeight: 800, textAlign: 'left' }}>{on ? '✓ ' : ''}{t.name} • {t.seats}<div style={{ fontSize: 11, fontWeight: 400, color: '#667085' }}>{t.desc}</div></button> })}
+            </div>
+            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>🚗 Vehicle (fixes red bar)</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input value={vMake} onChange={e=>setVMake(e.target.value)} placeholder="Make e.g. Toyota" style={{ padding: '12px', borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14 }} />
+              <input value={vModel} onChange={e=>setVModel(e.target.value)} placeholder="Model e.g. Corolla" style={{ padding: '12px', borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14 }} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={vColour} onChange={e=>setVColour(e.target.value)} placeholder="Colour e.g. White" style={{ flex: 1, padding: '12px', borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14 }} />
+                <input value={vYear} onChange={e=>setVYear(e.target.value)} placeholder="Year e.g. 2022" style={{ width: 100, padding: '12px', borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14 }} />
+              </div>
+              <input value={vReg} onChange={e=>setVReg(e.target.value.toUpperCase())} placeholder="Registration e.g. HCM 339 L" style={{ padding: '12px', borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, fontWeight: 700 }} />
             </div>
             <button onClick={saveFix} disabled={savingFix} style={{ width: '100%', marginTop: 20, padding: 16, borderRadius: 14, background: BLUE, color: '#fff', border: 0, fontWeight: 900 }}>{savingFix ? 'Saving...' : 'Save & Go Online →'}</button>
           </div>
