@@ -58,6 +58,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [docsList, setDocsList] = useState<any[]>([])
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null)
+  const [avatarUrl, setAvatarUrl] = useState<string | null>((profile as any).avatar_url || null)
   const fileRef = useRef<HTMLInputElement>(null)
   const docInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const pickupRef = useRef({ distance: MIN_KM, autoAccept: true })
@@ -76,6 +77,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const go = (path: string) => { setShowMenu(false); setTimeout(() => { window.location.assign(path) }, 80) }
 
+  // FIXED: No reload, updates instantly
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     setUploadingPhoto(true)
@@ -86,10 +88,12 @@ export function DriverHome({ profile }: { profile: Profile }) {
       if (upErr) throw upErr
       const { data } = supabase.storage.from('avatars').getPublicUrl(path)
       await supabase.from('profiles').update({ avatar_url: data.publicUrl } as any).eq('id', profile.id)
-      window.location.reload()
-    } catch (err: any) { alert(err.message || 'Photo failed') } finally { setUploadingPhoto(false) }
+      setAvatarUrl(data.publicUrl)
+      alert('Photo updated!')
+    } catch (err: any) { alert('Photo failed: ' + (err.message || '')) } finally { setUploadingPhoto(false); if (e.target) e.target.value = '' }
   }
 
+  // FIXED: Better error + status handling
   async function uploadDoc(type: string, file: File) {
     setUploadingDoc(type)
     try {
@@ -100,13 +104,16 @@ export function DriverHome({ profile }: { profile: Profile }) {
       const { data } = supabase.storage.from('driver_docs').getPublicUrl(path)
       const existing = docsList.find((d: any) => d.doc_type === type)
       if (existing) {
-        await supabase.from('driver_documents').update({ file_url: data.publicUrl, status: 'pending', updated_at: new Date().toISOString() }).eq('id', existing.id)
+        const { error: updErr } = await supabase.from('driver_documents').update({ file_url: data.publicUrl, status: 'pending', updated_at: new Date().toISOString() }).eq('id', existing.id)
+        if (updErr) throw updErr
       } else {
-        await supabase.from('driver_documents').insert({ driver_id: profile.id, doc_type: type, file_url: data.publicUrl, status: 'pending' })
+        const { error: insErr } = await supabase.from('driver_documents').insert({ driver_id: profile.id, doc_type: type, file_url: data.publicUrl, status: 'pending' })
+        if (insErr) throw insErr
       }
       const { data: fresh } = await supabase.from('driver_documents').select('*').eq('driver_id', profile.id)
       if (fresh) setDocsList(fresh)
-    } catch (e: any) { alert(e.message) } finally { setUploadingDoc(null) }
+      alert(`${type} uploaded - pending review`)
+    } catch (e: any) { console.error(e); alert('Upload failed: ' + (e.message || '')) } finally { setUploadingDoc(null) }
   }
 
   async function savePickupDistance(newDist: number, newAuto: boolean) {
@@ -127,6 +134,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       if (zones) setAllZones(zones as any)
       if (docs) setDocsList(docs)
       if (p) {
+        if ((p as any).avatar_url) setAvatarUrl((p as any).avatar_url)
         const d = Number((p as any).search_radius_km ?? MIN_KM)
         if (d >= MIN_KM && d <= MAX_KM) setPickupDistance(d)
         setAutoAccept((p as any).auto_accept_enabled ?? true)
@@ -265,19 +273,26 @@ export function DriverHome({ profile }: { profile: Profile }) {
     </div>
   )
 
+  // FIXED: Badge uses real docsList, not hook that lies
+  const DOC_TYPES = [
+    { id: 'license', name: "Driver's License", icon: '🪪' },
+    { id: 'id_doc', name: 'SA ID / Passport', icon: '🆔' },
+    { id: 'vehicle_disc', name: 'Vehicle Disc', icon: '🚗' },
+    { id: 'insurance', name: 'Insurance', icon: '🛡️' },
+  ]
+  const verifiedCount = DOC_TYPES.filter(t => docsList.find((d: any) => d.doc_type === t.id && d.status === 'verified')).length
+  const pendingCount = DOC_TYPES.filter(t => docsList.find((d: any) => d.doc_type === t.id && d.status === 'pending')).length
+  const docsAllVerified = verifiedCount === DOC_TYPES.length
+  const docsOverallLabel = docsAllVerified ? '✓ Verified' : docsList.length === 0 ? '✕ Missing' : pendingCount > 0 ? '⏳ Pending' : '✕ Missing'
+
   const DocsInBurger = (
     <div style={{ background: isDark ? '#111a2a' : '#fff', borderRadius: 20, padding: 14, border: `1px solid ${THEME_BORDER}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <span style={{ fontWeight: 800, fontSize: 14, color: THEME_TEXT }}>📄 My Documents</span>
-        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 800, background: docsOk && verified ? '#ECFDF3' : '#FFFAEB', color: docsOk && verified ? '#12B76A' : '#F79009' }}>{docsOk && verified ? '✓ Verified' : '⏳ Pending'}</span>
+        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 800, background: docsAllVerified ? '#ECFDF3' : '#FFFAEB', color: docsAllVerified ? '#12B76A' : '#F79009', border: `1px solid ${docsAllVerified ? '#ABEFC6' : '#FEDF89'}` }}>{docsOverallLabel} {verifiedCount}/4</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {[
-          { id: 'license', name: "Driver's License", icon: '🪪' },
-          { id: 'id_doc', name: 'SA ID / Passport', icon: '🆔' },
-          { id: 'vehicle_disc', name: 'Vehicle Disc', icon: '🚗' },
-          { id: 'insurance', name: 'Insurance', icon: '🛡️' },
-        ].map(doc => {
+        {DOC_TYPES.map(doc => {
           const existing = docsList.find((d: any) => d.doc_type === doc.id)
           const status = existing?.status || 'missing'
           return (
@@ -301,6 +316,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
           )
         })}
       </div>
+      {docsList.length === 0 && <div style={{ fontSize: 11, color: THEME_SUB, marginTop: 8, textAlign: 'center' }}>Upload all 4 to go online</div>}
     </div>
   )
 
@@ -357,7 +373,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
             <div style={{ margin: 14, background: isDark ? '#1e293b' : '#fff', borderRadius: 20, padding: 16, border: `1px solid ${THEME_BORDER}` }}>
               <div style={{ display: 'flex', gap: 12 }}>
                 <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#DBEAFE', border: `2px solid ${BLUE}`, display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: BLUE, overflow: 'hidden', flexShrink: 0 }}>
-                  {(profile as any).avatar_url ? <img src={(profile as any).avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}
+                  {avatarUrl ? <img src={avatarUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 15, lineHeight: 1.2 }}>{profile.full_name || 'Nakampe Trevor Mokgalaka'}</div>
