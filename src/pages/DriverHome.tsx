@@ -28,18 +28,77 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [showChat, setShowChat] = useState(false)
   const timer = useRef<any>(null)
 
+  // FIX: Inline fix for Zones + Ride Type inside app - no onboarding bounce
+  const [showFix, setShowFix] = useState(false)
+  const [allZones, setAllZones] = useState<{id:string, name:string}[]>([])
+  const [selectedZones, setSelectedZones] = useState<string[]>([])
+  const [selectedRideType, setSelectedRideType] = useState('')
+  const [savingFix, setSavingFix] = useState(false)
+  const [vehicleInfo, setVehicleInfo] = useState<any>(null)
+
   const { bundleCredits, bundleCount, reloadBundle } = useBundle(profile.id)
-  const { missingFields, vehicleOk } = useVehicleCheck(profile.id)
+  const { missingFields, vehicleOk, reload: reloadVehicle } = useVehicleCheck(profile.id) as any
   const { docsOk, verified } = useDocsCheck(profile.id)
   const { location, lastLoc } = useDriverLocation(profile.id, isOnline, !!ride)
 
-  const canGoOnline = docsOk && verified && vehicleOk && (bundleCredits ?? 0) > 0
+  // Load current zones / ride_type / vehicle from driver_vehicles
+  useEffect(() => {
+    void (async () => {
+      const [{ data: v }, { data: zones }] = await Promise.all([
+        supabase.from('driver_vehicles').select('*').eq('driver_id', profile.id).maybeSingle(),
+        supabase.from('service_zones').select('id,name').order('name'),
+      ])
+      if (zones) setAllZones(zones as any)
+      if (v) {
+        setVehicleInfo(v)
+        if (Array.isArray((v as any).service_zones)) setSelectedZones((v as any).service_zones)
+        if ((v as any).ride_type) setSelectedRideType((v as any).ride_type)
+      }
+      // Fallback to profiles if vehicle row empty
+      if (!v || !(v as any).service_zones?.length) {
+        const { data: p } = await supabase.from('profiles').select('service_zones,ride_type').eq('id', profile.id).single()
+        if (p?.service_zones?.length) setSelectedZones(p.service_zones)
+        if (p?.ride_type) setSelectedRideType(p.ride_type)
+      }
+    })()
+  }, [profile.id])
+
+  const hasZones = selectedZones.length > 0
+  const hasRideType = Boolean(selectedRideType)
+  const zonesMissing = missingFields?.includes('Service Area') || !hasZones
+  const rideTypeMissing = missingFields?.includes('Ride Type') || !hasRideType
+
+  // FIX: Go Online requires zones + ride type, but entry to app is already allowed (Guard fix)
+  const canGoOnline = docsOk && verified && vehicleOk && hasZones && hasRideType && (bundleCredits ?? 0) > 0
+
+  async function saveFix() {
+    if (!hasZones) { alert('Pick at least 1 Service Area'); return }
+    if (!hasRideType) { alert('Pick a Ride Type'); return }
+    setSavingFix(true)
+    try {
+      // Save to BOTH tables - Guard checks driver_vehicles, Home checks both
+      const { error: vErr } = await supabase.from('driver_vehicles').upsert(
+        { driver_id: profile.id, service_zones: selectedZones, ride_type: selectedRideType, updated_at: new Date().toISOString() },
+        { onConflict: 'driver_id' }
+      )
+      if (vErr) throw vErr
+      const { error: pErr } = await supabase.from('profiles').update({ service_zones: selectedZones, ride_type: selectedRideType }).eq('id', profile.id)
+      if (pErr) throw pErr
+      if (reloadVehicle) await reloadVehicle()
+      setShowFix(false)
+      alert('✅ Service Area & Ride Type saved - you can now Go Online')
+    } catch (e: any) {
+      alert(e.message || 'Could not save - try again')
+    } finally { setSavingFix(false) }
+  }
 
   async function toggleOnline() {
     if (!isOnline) {
-      if (missingFields.length > 0) { window.location.assign('/driver/onboarding'); return }
+      // FIX: Don't bounce to onboarding - open inline fix sheet
+      if (zonesMissing || rideTypeMissing) { setShowFix(true); return }
+      if (missingFields.length > 0) { setShowFix(true); return }
       if ((bundleCredits ?? 0) <= 0) { window.location.assign('/driver/bundle'); return }
-      if (!docsOk || !verified) { alert('Waiting admin approval'); return }
+      if (!docsOk || !verified) { alert('Waiting admin approval - docs still under review'); return }
     }
     const next = !isOnline
     const { error } = await supabase.from('driver_status').upsert({ driver_id: profile.id, is_online: next, updated_at: new Date().toISOString() }, { onConflict: 'driver_id' })
@@ -73,7 +132,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     if (!ride) return
     const s = String(ride.status)
     if (s === 'arrived') {
-      // FIX: updateRide returns Ride directly, not { data } - was TS2339 Property 'data' does not exist on type 'Ride'
       const data = await updateRide(ride.id, { status: 'in_progress' })
       if (data) setRide(data as any)
       return
@@ -91,7 +149,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
       }
       return
     }
-    // FIX: Same - updateRide returns Ride directly
     const data = await updateRide(ride.id, { status: 'arrived' })
     if (data) setRide(data as any)
   }
@@ -126,9 +183,18 @@ export function DriverHome({ profile }: { profile: Profile }) {
         </button>
       </header>
 
-      {missingFields.length > 0 && (
+      {/* FIX: Inline banner - Fix HERE, not onboarding */}
+      {(zonesMissing || rideTypeMissing) && (
+        <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 12, borderRadius: 12, background: '#FEF3F2', color: '#B42318', fontSize: 13, fontWeight: 700, border: '1px solid #FECACA' }}>
+          ⚠️ Complete to Go Online: {zonesMissing ? 'Service Area ' : ''}{zonesMissing && rideTypeMissing ? '• ' : ''}{rideTypeMissing ? 'Ride Type' : ''}
+          {vehicleInfo && <div style={{ color: '#067647', marginTop: 4, fontSize: 12 }}>🚗 {vehicleInfo.vehicle_year || vehicleInfo.year} {vehicleInfo.make_model || vehicleInfo.vehicle_make_model} • {vehicleInfo.colour || vehicleInfo.vehicle_colour} • {vehicleInfo.registration || vehicleInfo.vehicle_registration}</div>}
+          <button onClick={() => setShowFix(true)} style={{ marginTop: 8, width: '100%', background: BLUE, color: '#fff', border: 0, borderRadius: 8, padding: '10px', fontWeight: 900 }}>Fix Service Area & Ride Type →</button>
+        </div>
+      )}
+
+      {missingFields.length > 0 && !zonesMissing && !rideTypeMissing && (
         <div style={{ position: 'relative', zIndex: 250, margin: 8, padding: 10, borderRadius: 12, background: '#FEF2F2', color: '#B42318', fontSize: 12, fontWeight: 800, border: '1px solid #FECACA' }}>
-          ⚠️ Missing: {missingFields.join(', ')} <button onClick={() => window.location.assign('/driver/onboarding')} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button>
+          ⚠️ Missing: {missingFields.join(', ')} <button onClick={() => setShowFix(true)} style={{ marginLeft: 8, background: BLUE, color: '#fff', border: 0, borderRadius: 6, padding: '4px 8px', fontWeight: 900 }}>Fix →</button>
         </div>
       )}
 
@@ -136,8 +202,8 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <BottomSheet snapPoint={50} onSnapChange={() => {}}>
           {!ride ? (
             <div style={{ textAlign: 'center' }}>
-              <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline} style={{ width: '100%', padding: 16, borderRadius: 14, background: canGoOnline ? (isOnline ? '#B42318' : BLUE) : '#94A3B8', color: 'white', border: 0, fontWeight: 900 }}>
-                {canGoOnline ? (isOnline ? 'GO OFFLINE' : 'GO ONLINE • BLUE') : 'Waiting Approval'}
+              <button onClick={toggleOnline} disabled={!isOnline && !canGoOnline && !zonesMissing && !rideTypeMissing && !docsOk} style={{ width: '100%', padding: 16, borderRadius: 14, background: (canGoOnline || zonesMissing || rideTypeMissing) ? (isOnline ? '#B42318' : BLUE) : '#94A3B8', color: 'white', border: 0, fontWeight: 900 }}>
+                {isOnline ? 'GO OFFLINE' : (zonesMissing || rideTypeMissing) ? 'FIX & GO ONLINE →' : canGoOnline ? 'GO ONLINE • BLUE' : 'Waiting Approval'}
               </button>
               <div style={{ marginTop: 8, fontSize: 11, color: '#64748B' }}>POPIA: Trip data kept 6 months • Compliant</div>
             </div>
@@ -168,6 +234,34 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <div style={{position:'fixed',inset:0,zIndex:5000,background:'white'}}>
           <button onClick={() => setShowChat(false)} style={{position:'absolute',top:12,right:12,zIndex:5001,padding:'8px 12px',borderRadius:999,border:`1px solid ${BORDER}`,background:'white',fontWeight:800}}>✕ Close</button>
           <RideChat rideId={ride.id} myId={profile.id} />
+        </div>
+      )}
+
+      {/* FIX SHEET - New driver fixes zones/ride type HERE */}
+      {showFix && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'end center' }}>
+          <div style={{ width: '100%', maxWidth: 480, background: '#fff', borderRadius: '20px 20px 0 0', padding: 20, maxHeight: '85dvh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Complete to Go Online</h3>
+              <button onClick={() => setShowFix(false)} style={{ border: 0, background: '#F2F4F7', borderRadius: 999, padding: '6px 12px', fontWeight: 800 }}>✕</button>
+            </div>
+            <p style={{ color: '#667085', fontSize: 13 }}>Pick where you drive and what ride type. You are already inside the app.</p>
+            <div style={{ fontWeight: 800, margin: '12px 0 6px' }}>📍 Service Area</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {(allZones.length ? allZones : [{id:'polokwane',name:'Polokwane'},{id:'seshego',name:'Seshego'},{id:'mankweng',name:'Mankweng'}]).map(z => {
+                const on = selectedZones.includes(z.id)
+                return <button key={z.id} onClick={() => setSelectedZones(s => on ? s.filter(x => x!==z.id) : [...s, z.id])} style={{ padding: '10px 14px', borderRadius: 999, border: on ? `2px solid ${BLUE}` : `1px solid ${BORDER}`, background: on ? '#EFF6FF' : '#fff', color: on ? BLUE : '#182230', fontWeight: 800 }}>{on ? '✓ ' : ''}{z.name}</button>
+              })}
+            </div>
+            <div style={{ fontWeight: 800, margin: '16px 0 6px' }}>🚙 Ride Type</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {['buddy_lite','buddy_go','buddy_xl','buddy_plus'].map(t => {
+                const on = selectedRideType === t
+                return <button key={t} onClick={() => setSelectedRideType(t)} style={{ padding: '10px 14px', borderRadius: 999, border: on ? `2px solid ${BLUE}` : `1px solid ${BORDER}`, background: on ? '#EFF6FF' : '#fff', color: on ? BLUE : '#182230', fontWeight: 800 }}>{on ? '✓ ' : ''}{t.replace('buddy_','Buddy ').toUpperCase()}</button>
+              })}
+            </div>
+            <button onClick={saveFix} disabled={savingFix} style={{ width: '100%', marginTop: 20, padding: 16, borderRadius: 14, background: BLUE, color: '#fff', border: 0, fontWeight: 900 }}>{savingFix ? 'Saving...' : 'Save & Go Online →'}</button>
+          </div>
         </div>
       )}
     </div>

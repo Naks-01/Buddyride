@@ -80,13 +80,29 @@ export function DriverDashboardGuard({ profile, onRequireOnboarding, children }:
       setRejectedDocs(rejected); setPendingDocs(pending); setApprovedCount(approvedList.length); setTotalDocs(REQUIRED_DOCS.length); setProfileRejectionReason(profileData.verification_rejection_reason || null)
       const vStatus = String(profileData.verification_status || '').toLowerCase()
       const profileApproved = profileData.is_verified === true && ['approved', 'verified'].includes(vStatus)
-      // FIX: identity_complete alone is NOT approved - was letting driver into dashboard without vehicle/zones
-      if (profileApproved && approvedList.length === REQUIRED_DOCS.length) { setAccess('approved'); return }
-      if (vStatus === 'identity_complete') { setAccess('pending'); return }
+
+      // FIX - YOUR RULE: After Identity, user MUST get inside App.
+      // Identity = Selfie + SA ID + Drivers License + ID Numbers (4/4) = Enter App
+      // Vehicle + Zones + Ride Type + remaining 11 docs = finish INSIDE. Only Go Online is blocked in DriverHome.
+      const localFlag = typeof window !== 'undefined' && localStorage.getItem('br_identity_complete') === '1'
+      const identityKeys = ['profile_photo', 'selfie', 'sa_id', 'drivers_license']
+      const identityCount = identityKeys.filter(k => latest.has(normalizeKey(k)) && hasRealDocument((latest.get(normalizeKey(k)) as any)?.file_url || (latest.get(normalizeKey(k)) as any)?.document_url || (latest.get(normalizeKey(k)) as any)?.storage_path || (latest.get(normalizeKey(k)) as any)?.file_path)).length
+      const hasIdentityDocs = identityCount >= 4
+
+      // 1. Fully approved -> inside
+      if (profileApproved) { setAccess('approved'); return }
+      // 2. Identity complete in DB -> inside (THE FIX - was pending)
+      if (vStatus === 'identity_complete') { setAccess('approved'); return }
+      // 3. Local flag from Enter App -> inside, even if DB still says pending_verification
+      if (localFlag) { setAccess('approved'); return }
+      // 4. Has 4 identity docs uploaded -> inside, even if status is pending_verification
+      if (hasIdentityDocs && ['pending', 'pending_verification', 'submitted', 'under_review', 'in_review'].includes(vStatus)) { setAccess('approved'); return }
+      // 5. Rejected docs -> still show pending screen to fix (but App.tsx already lets identity users in, this is for non-identity users)
       if (rejected.length > 0) { setAccess('pending'); return }
       if (['pending', 'pending_verification', 'submitted', 'under_review', 'in_review'].includes(vStatus)) { setAccess('pending'); return }
       if (docs.length === 0 || !vStatus || vStatus === 'not_started') { if (!onboardingSentRef.current) { onboardingSentRef.current = true; onRequireOnboarding() } return }
-      if (vStatus !== 'rejected' && pending.length === 0 && approvedList.length < REQUIRED_DOCS.length) { if (!onboardingSentRef.current) { onboardingSentRef.current = true; onRequireOnboarding() } return }
+      // FIX: Don't bounce back to onboarding if docs are missing - user should finish INSIDE DriverHome
+      // Old code: if (pending.length===0 && approved < total) -> onboarding. Removed.
       setAccess('pending')
     } finally {
       checkingRef.current = false; setChecking(false)
@@ -96,7 +112,6 @@ export function DriverDashboardGuard({ profile, onRequireOnboarding, children }:
 
   useEffect(() => {
     void check()
-    // FIX: Only poll while NOT approved - was polling every 5s forever
     const interval = setInterval(() => { if (accessRef.current !== 'approved') void check() }, 15000)
     const ch = supabase.channel(`guard-${profile.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${profile.id}` }, () => { void check() })
