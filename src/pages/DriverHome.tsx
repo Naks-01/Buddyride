@@ -6,7 +6,6 @@ import { getTomTomRoute as getRoute } from '../lib/tomtom'
 import { createRealtimeChannel } from '../lib/realtime'
 import { updateRide } from '../lib/rideUpdates'
 import { supabase, type Profile, type Ride } from '../lib/supabase'
-import { NavigationMenu } from '../components/NavigationMenu'
 import { useDriverLocation } from '../hooks/useDriverLocation'
 import { useBundle } from '../hooks/useBundle'
 import { useVehicleCheck } from '../hooks/useVehicleCheck'
@@ -42,31 +41,27 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [showChat, setShowChat] = useState(false)
   const timer = useRef<any>(null)
   const [showFix, setShowFix] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  const [showMenu, setShowMenu] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<25 | 50 | 80 | 90>(25)
   const [allZones, setAllZones] = useState<{id:string, name:string}[]>([])
   const [selectedZones, setSelectedZones] = useState<string[]>([])
   const [selectedRideType, setSelectedRideType] = useState('buddy_plus')
   const [savingFix, setSavingFix] = useState(false)
-  const [vehicleInfo, setVehicleInfo] = useState<any>(null)
   const [vMake, setVMake] = useState('')
   const [vModel, setVModel] = useState('')
   const [vColour, setVColour] = useState('')
   const [vReg, setVReg] = useState('')
   const [vYear, setVYear] = useState('')
-
   const [pickupDistance, setPickupDistance] = useState(MIN_KM)
   const [autoAccept, setAutoAccept] = useState(true)
   const [savingDistance, setSavingDistance] = useState(false)
   const pickupRef = useRef({ distance: MIN_KM, autoAccept: true })
   pickupRef.current = { distance: pickupDistance, autoAccept }
-
   const { theme, setTheme, isDark } = useGlobalTheme()
   const THEME_BG = isDark ? '#0b1120' : '#f5f5f7'
   const THEME_BORDER = isDark ? '#29364a' : 'rgba(0,0,0,0.08)'
   const THEME_TEXT = isDark ? '#f8fafc' : '#111827'
   const THEME_SUB = isDark ? '#aeb9cb' : '#6b7280'
-
   const { bundleCredits, bundleCount, reloadBundle } = useBundle(profile.id)
   const { missingFields, missingLabels, vehicleOk, reloadVehicle, vehicle } = useVehicleCheck(profile.id) as any
   const { docsOk, verified } = useDocsCheck(profile.id)
@@ -82,7 +77,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
     await supabase.from('profiles').update({ search_radius_km: clamped, auto_accept_enabled: newAuto } as any).eq('id', profile.id)
     setSavingDistance(false)
   }
-
   useEffect(() => {
     void (async () => {
       const [{ data: v }, { data: zones }, { data: p }] = await Promise.all([
@@ -91,7 +85,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
         supabase.from('profiles').select('*').eq('id', profile.id).maybeSingle(),
       ])
       if (zones) setAllZones(zones as any)
-      if (v) setVehicleInfo(v)
       if (p) {
         const d = Number((p as any).search_radius_km ?? MIN_KM)
         if (d >= MIN_KM && d <= MAX_KM) setPickupDistance(d)
@@ -220,28 +213,27 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const pct = ((pickupDistance - MIN_KM) / (MAX_KM - MIN_KM)) * 100
 
-  // STEP 4: Blue brand, respects dark/light - no more hardcoded black/green
   const PickupDistanceCard = (
     <div style={{ background: isDark ? '#111a2a' : '#ffffff', borderRadius: 24, padding: 20, color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: 700, fontSize: 20 }}>Maximum pickup distance</span>
+        <span style={{ fontWeight: 700, fontSize: 18 }}>Maximum pickup distance</span>
         <button onClick={() => void savePickupDistance(pickupDistance, !autoAccept)} style={{ width: 52, height: 32, borderRadius: 999, border: 0, background: autoAccept ? BLUE : '#2a2a2a', position: 'relative', cursor: 'pointer' }}>
           <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: autoAccept ? 22 : 2, transition: '0.2s' }} />
         </button>
       </div>
-      <div style={{ color: THEME_SUB, fontSize: 16, marginTop: 16, lineHeight: 1.4 }}>Rides within this distance will be<br />automatically accepted</div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 28, marginTop: 20 }}>
-        <button onClick={() => pickupDistance > MIN_KM && void savePickupDistance(pickupDistance - 1, autoAccept)} disabled={pickupDistance <= MIN_KM} style={{ width: 60, height: 60, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#f5f5f7', color: THEME_TEXT, fontSize: 30, cursor: 'pointer', opacity: pickupDistance <= MIN_KM ? 0.4 : 1 }}>—</button>
-        <div style={{ textAlign: 'center', minWidth: 70 }}><div style={{ fontSize: 52, fontWeight: 800 }}>{pickupDistance}</div><div style={{ color: THEME_SUB, fontSize: 16, marginTop: -4 }}>km</div></div>
-        <button onClick={() => pickupDistance < MAX_KM && void savePickupDistance(pickupDistance + 1, autoAccept)} disabled={pickupDistance >= MAX_KM} style={{ width: 60, height: 60, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#f5f5f7', color: THEME_TEXT, fontSize: 30, cursor: 'pointer', opacity: pickupDistance >= MAX_KM ? 0.4 : 1 }}>+</button>
+      <div style={{ color: THEME_SUB, fontSize: 14, marginTop: 12, lineHeight: 1.4 }}>Rides within this distance will be automatically accepted</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 28, marginTop: 16 }}>
+        <button onClick={() => pickupDistance > MIN_KM && void savePickupDistance(pickupDistance - 1, autoAccept)} disabled={pickupDistance <= MIN_KM} style={{ width: 56, height: 56, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#f5f5f7', color: THEME_TEXT, fontSize: 28, cursor: 'pointer', opacity: pickupDistance <= MIN_KM ? 0.4 : 1 }}>—</button>
+        <div style={{ textAlign: 'center', minWidth: 70 }}><div style={{ fontSize: 48, fontWeight: 800 }}>{pickupDistance}</div><div style={{ color: THEME_SUB, fontSize: 14, marginTop: -4 }}>km</div></div>
+        <button onClick={() => pickupDistance < MAX_KM && void savePickupDistance(pickupDistance + 1, autoAccept)} disabled={pickupDistance >= MAX_KM} style={{ width: 56, height: 56, borderRadius: '50%', border: 0, background: isDark ? '#1a2332' : '#f5f5f7', color: THEME_TEXT, fontSize: 28, cursor: 'pointer', opacity: pickupDistance >= MAX_KM ? 0.4 : 1 }}>+</button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, padding: '0 8px' }}>
-        <div style={{ color: BLUE, fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 18 }}>{MIN_KM}</span><span style={{ fontSize: 16, marginTop: 4 }}>min</span></div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, padding: '0 8px' }}>
+        <div style={{ color: BLUE, fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 16 }}>{MIN_KM}</span><span style={{ fontSize: 14, marginTop: 4 }}>min</span></div>
         <div style={{ flex: 1, margin: '0 16px', position: 'relative', height: 30, display: 'flex', alignItems: 'center' }}>
           <div style={{ width: '100%', height: 6, background: isDark ? '#29364a' : '#E4E7EC', borderRadius: 999 }}><div style={{ width: `${pct}%`, height: 6, background: BLUE, borderRadius: 999 }} /></div>
           <div style={{ position: 'absolute', left: `calc(${pct}% - 3px)`, top: 0, width: 6, height: 22, background: BLUE, borderRadius: 999 }} />
         </div>
-        <div style={{ color: THEME_SUB, fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 18 }}>{MAX_KM}</span><span style={{ fontSize: 16, marginTop: 4 }}>max</span></div>
+        <div style={{ color: THEME_SUB, fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}><span style={{ fontSize: 16 }}>{MAX_KM}</span><span style={{ fontSize: 14, marginTop: 4 }}>max</span></div>
       </div>
       {savingDistance && <div style={{ fontSize: 11, color: BLUE, marginTop: 8, textAlign: 'center' }}>Saving...</div>}
     </div>
@@ -250,12 +242,15 @@ export function DriverHome({ profile }: { profile: Profile }) {
   return (
     <div style={{ height: '100dvh', position: 'relative', overflow: 'hidden', background: THEME_BG }}>
       <div style={{ position: 'absolute', top: 56, left: 0, right: 0, bottom: 0 }}><DriverTomTomMap center={mapCenter} driverLocation={location} route={route} theme={theme} /></div>
-      <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 8, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
-        <NavigationMenu profile={profile} theme={theme} onThemeChange={setTheme} onSignOut={() => supabase.auth.signOut()} />
-        <button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, borderRadius: 999, padding: '8px 12px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 12 }}>{bundleCredits ?? 0} trips • {bundleCount} bundles</button>
-        <button onClick={() => setShowSettings(true)} style={{ width: 44, height: 44, borderRadius: 12, border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#F2F4F7', display: 'grid', placeItems: 'center', fontSize: 20 }}>⚙️</button>
-        <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ width: 44, height: 32, borderRadius: 999, border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#F2F4F7', display: 'grid', placeItems: 'center', fontSize: 16 }}>{isDark ? '🌙' : '☀️'}</button>
+
+      {/* HEADER - BURGER + BUNDLE PILL - CLEAN */}
+      <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
+        <button onClick={() => setShowMenu(true)} style={{ width: 44, height: 44, borderRadius: '50%', border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#fff', display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: THEME_TEXT, cursor: 'pointer', flexShrink: 0 }}>☰</button>
+        <button onClick={() => window.location.href = '/driver/bundle'} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, textAlign: 'center', cursor: 'pointer' }}>
+          {bundleCredits ?? 0} trips • {bundleCount} bundles
+        </button>
       </header>
+
       {needsFix && (
         <div onClick={() => setShowFix(true)} style={{ position: 'relative', zIndex: 250, margin: '8px 12px 0', padding: '10px 14px', borderRadius: 999, background: isDark ? '#7F1D1D' : '#FEF3F2', color: isDark ? '#FECACA' : '#B42318', fontSize: 12, fontWeight: 700, border: `1px solid ${isDark ? '#991B1B' : '#FECACA'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
           <span>⚠️ Fix: {missingLabels.join(', ')}</span>
@@ -266,20 +261,13 @@ export function DriverHome({ profile }: { profile: Profile }) {
         <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme}>
           {!ride ? (
             <div style={{ padding: '0 4px 12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#12B76A' : '#98A2B3' }} />
-                  <span style={{ fontSize: 14, fontWeight: 700, color: THEME_TEXT }}>{isOnline ? 'You are online' : 'You are offline'}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 12, color: THEME_SUB }}>{bundleCredits ?? 0} trips</span>
-                  <button onClick={() => setShowSettings(true)} style={{ fontSize: 12, padding: '4px 8px', borderRadius: 999, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, color: THEME_TEXT }}>⚙️ Settings</button>
-                </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#12B76A' : '#98A2B3' }} />
+                <span style={{ fontSize: 14, fontWeight: 700, color: THEME_TEXT }}>{isOnline ? 'You are online' : 'You are offline'}</span>
               </div>
               <button onClick={toggleOnline} style={{ width: '100%', padding: 18, borderRadius: 100, background: isOnline ? (isDark ? '#334155' : '#1D2939') : BLUE, color: 'white', border: 0, fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,102,255,.25)' }}>
                 {isOnline ? 'GO OFFLINE' : needsFix ? 'FIX & GO ONLINE' : canGoOnline ? 'GO ONLINE' : 'WAITING APPROVAL'}
               </button>
-              <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11, color: THEME_SUB }}>POPIA • 6 months • {isDark ? 'Dark' : 'Light'} mode</div>
             </div>
           ) : (
             <div style={{ padding: '0 4px 12px' }}>
@@ -295,18 +283,57 @@ export function DriverHome({ profile }: { profile: Profile }) {
       </div>
       {incoming && <IncomingRideSheet ride={incoming} countdown={countdown} onAccept={accept} onDecline={decline} />}
 
-      {showSettings && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 7000, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'end center' }}>
-          <div style={{ width: '100%', maxWidth: 480, background: isDark ? '#0f172a' : '#FFFFFF', borderRadius: '20px 20px 0 0', padding: 20, maxHeight: '90dvh', overflowY: 'auto', color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Settings</h3>
-              <button onClick={() => setShowSettings(false)} style={{ border: 0, background: isDark ? '#1e293b' : '#F2F4F7', borderRadius: 999, padding: '8px 14px', fontWeight: 800, color: THEME_TEXT, fontSize: 14 }}>✕ Close</button>
+      {/* PROFESSIONAL BURGER MENU */}
+      {showMenu && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 7000, display: 'flex' }}>
+          <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={() => setShowMenu(false)} />
+          <div style={{ width: '85%', maxWidth: 360, height: '100%', background: isDark ? '#0f172a' : '#E6F0FF', overflowY: 'auto', boxShadow: '-4px 0 20px rgba(0,0,0,0.2)' }}>
+            <div style={{ background: isDark ? '#1e293b' : '#fff', padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${THEME_BORDER}` }}>
+              <span style={{ fontWeight: 800, color: THEME_TEXT }}>BuddyRide Driver</span>
+              <button onClick={() => setShowMenu(false)} style={{ width: 32, height: 32, borderRadius: '50%', border: 0, background: isDark ? '#334155' : '#F2F4F7', color: THEME_TEXT, fontWeight: 800, cursor: 'pointer' }}>✕</button>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderRadius: 12, border: `1px solid ${THEME_BORDER}`, background: THEME_BG, marginBottom: 12 }}>
-              <span style={{ fontWeight: 700 }}>Theme</span>
-              <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ padding: '8px 14px', borderRadius: 999, border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#F2F4F7', color: THEME_TEXT, fontWeight: 800 }}>{isDark ? '🌙 Dark' : '☀️ Light'}</button>
+            <div style={{ margin: 16, background: isDark ? '#1e293b' : '#fff', borderRadius: 20, padding: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#DBEAFE', border: `2px solid ${BLUE}`, display: 'grid', placeItems: 'center', fontSize: 22, fontWeight: 800, color: BLUE }}>{(profile.full_name || 'N').charAt(0)}</div>
+                <div>
+                  <div style={{ fontWeight: 800, color: THEME_TEXT, lineHeight: 1.2 }}>{profile.full_name || 'Nakampe Trevor Mokgalaka'}</div>
+                  <span style={{ fontSize: 11, background: '#EFF6FF', color: BLUE, padding: '2px 8px', borderRadius: 999, fontWeight: 700 }}>🛡️ New</span>
+                  <div style={{ fontSize: 13, color: BLUE, fontWeight: 600, marginTop: 4 }}>Change profile photo</div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
+                {[['↗', '-', 'Driver Score'], ['⭐', '5.00', 'Rating'], ['%', '-', 'Acceptance'], ['✕', '-', 'Cancellation']].map(([icon, val, label]) => (
+                  <div key={label} style={{ background: isDark ? '#111a2a' : '#E6F0FF', borderRadius: 14, padding: 12, textAlign: 'center', border: `1px solid ${BLUE}22` }}>
+                    <div style={{ color: BLUE, fontSize: 18 }}>{icon}</div>
+                    <div style={{ fontWeight: 800, color: THEME_TEXT }}>{val}</div>
+                    <div style={{ fontSize: 11, color: THEME_SUB }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 13, color: THEME_SUB, marginTop: 12 }}>{profile.phone || '+27793051213'}</div>
             </div>
-            {PickupDistanceCard}
+            <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                { label: 'My Profile', icon: '👤', action: () => { setShowMenu(false); setShowFix(true) } },
+                { label: 'Earnings', icon: '💳', action: () => { setShowMenu(false); window.location.href = '/driver/earnings' } },
+                { label: 'My Trips', icon: '🚕', action: () => { setShowMenu(false); window.location.href = '/driver/trips' } },
+              ].map(m => (
+                <button key={m.label} onClick={m.action} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: 0, cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 12, fontWeight: 700, color: THEME_TEXT }}><span style={{ width: 40, height: 40, background: '#DBEAFE', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 18 }}>{m.icon}</span>{m.label}</span>
+                  <span style={{ color: BLUE, fontWeight: 800 }}>›</span>
+                </button>
+              ))}
+              <div style={{ fontSize: 11, fontWeight: 800, color: THEME_SUB, textTransform: 'uppercase', letterSpacing: 1, marginTop: 16, padding: '0 4px' }}>Settings</div>
+              <div style={{ background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, color: THEME_TEXT }}>{isDark ? '🌙 Dark Mode' : '☀️ Light Mode'}</span>
+                <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ width: 48, height: 28, borderRadius: 999, border: 0, background: isDark ? BLUE : '#E4E7EC', position: 'relative', cursor: 'pointer' }}>
+                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: isDark ? 22 : 2, transition: '0.2s' }} />
+                </button>
+              </div>
+              {PickupDistanceCard}
+              <button onClick={() => { setShowMenu(false); supabase.auth.signOut() }} style={{ width: '100%', background: isDark ? '#7F1D1D' : '#FEF3F2', color: '#B42318', borderRadius: 16, padding: 14, border: 0, fontWeight: 800, cursor: 'pointer', marginTop: 8 }}>Log out</button>
+              <div style={{ textAlign: 'center', fontSize: 11, color: THEME_SUB, padding: '8px 0 24px' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles • POPIA • 6 months</div>
+            </div>
           </div>
         </div>
       )}
