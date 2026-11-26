@@ -25,14 +25,13 @@ function parseRouteToLngLats(route: any): [number, number][] {
   return []
 }
 
-// FIX: No innerHTML - build marker with DOM + textContent, XSS safe
 function makeMarker(bg: string, size: number, emoji?: string) {
   const el = document.createElement('div')
   el.style.width = `${size}px`
   el.style.height = `${size}px`
   el.style.background = bg
   el.style.border = '3px solid white'
-  el.style.borderRadius = size >= 36 ? '50%' : '50%'
+  el.style.borderRadius = '50%'
   el.style.display = 'flex'
   el.style.alignItems = 'center'
   el.style.justifyContent = 'center'
@@ -44,18 +43,19 @@ function makeMarker(bg: string, size: number, emoji?: string) {
 
 function getStyle(theme: 'dark' | 'light') {
   const hasKey = TOMTOM_KEY && TOMTOM_KEY.length > 10
-  // FIX: Fallback to CARTO if TomTom key missing - was blank map
-  if (!hasKey) {
+  // FIX: CARTO requires API key -> shows API KEY REQUIRED. Use TomTom or free OSM.
+  if (hasKey) {
     return {
       version: 8,
-      sources: { osm: { type: 'raster', tiles: theme === 'dark' ? ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'] : ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'], tileSize: 256, attribution: '© OpenStreetMap © CARTO', maxzoom: 19 } },
-      layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+      sources: { tomtom: { type: 'raster', tiles: [`https://api.tomtom.com/map/1/tile/basic/${theme === 'dark' ? 'night' : 'main'}/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`], tileSize: 256, maxzoom: 19 } },
+      layers: [{ id: 'tomtom', type: 'raster', source: 'tomtom', paint: { 'raster-fade-duration': 0 } }],
     } as any
   }
+  // Fallback: FREE OSM - no key needed, never blank
   return {
     version: 8,
-    sources: { tomtom: { type: 'raster', tiles: [`https://api.tomtom.com/map/1/tile/basic/${theme === 'dark' ? 'night' : 'main'}/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`], tileSize: 256, maxzoom: 19 } },
-    layers: [{ id: 'tomtom', type: 'raster', source: 'tomtom', paint: { 'raster-fade-duration': 0 } }],
+    sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap', maxzoom: 19 } },
+    layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
   } as any
 }
 
@@ -75,10 +75,11 @@ export function PassengerTomTomMap({ center, route, driverLocation, availableCar
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
+    const safeCenter: [number, number] = center && center[0] !== 0 && center[1] !== 0 ? center : [29.4587, -23.9045]
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: getStyle(theme),
-      center: [center[0], center[1]], zoom: 15,
+      center: [safeCenter[0], safeCenter[1]], zoom: 15,
     })
     map.setPadding({ top: 0, bottom: 220, left: 0, right: 0 })
     map.on('movestart', (e: any) => { if (e.originalEvent) userHasDraggedRef.current = true })
@@ -91,7 +92,6 @@ export function PassengerTomTomMap({ center, route, driverLocation, availableCar
     })
     mapRef.current = map
     return () => {
-      // FIX: Cleanup all markers on unmount - was leaking car/driver markers
       routeMarkersRef.current.forEach(m => m.remove()); routeMarkersRef.current = []
       carMarkersRef.current.forEach(m => m.remove()); carMarkersRef.current = []
       driverMarkerRef.current?.remove(); driverMarkerRef.current = null
@@ -100,7 +100,6 @@ export function PassengerTomTomMap({ center, route, driverLocation, availableCar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // FIX: Theme change now swaps tiles - was ignored after mount
   useEffect(() => {
     const map = mapRef.current
     if (!map) return

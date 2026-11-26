@@ -40,16 +40,36 @@ function lerpAngle(a: number, b: number, t: number) {
 
 function getMapStyle(theme: string | undefined) {
   const isDark = theme === 'dark'
+  const tomtomKey = import.meta.env.VITE_TOMTOM_API_KEY as string | undefined
+
+  // FIX: CARTO now requires API key and shows "API KEY REQUIRED"
+  // Use TomTom tiles (you already use TomTom for routing) OR free OSM fallback
+  if (tomtomKey) {
+    const tomtomStyle = isDark ? 'night' : 'main'
+    return {
+      version: 8,
+      sources: {
+        tomtom: {
+          type: 'raster',
+          tiles: [`https://api.tomtom.com/map/1/tile/basic/${tomtomStyle}/{z}/{x}/{y}.png?key=${tomtomKey}`],
+          tileSize: 256,
+          attribution: '© TomTom © OpenStreetMap',
+          maxzoom: 19,
+        },
+      },
+      layers: [{ id: 'tomtom', type: 'raster', source: 'tomtom' }],
+    } as any
+  }
+
+  // Fallback: free OSM - no API key needed, never shows API KEY REQUIRED
   return {
     version: 8,
     sources: {
       osm: {
         type: 'raster',
-        tiles: isDark
-          ? ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png']
-          : ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'],
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
         tileSize: 256,
-        attribution: '© OpenStreetMap © CARTO',
+        attribution: '© OpenStreetMap',
         maxzoom: 19,
       },
     },
@@ -100,10 +120,12 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
+    // Default Polokwane if center is 0,0
+    const safeCenter: [number, number] = center && center[0] !== 0 && center[1] !== 0 ? center : [29.4587, -23.9045]
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: getMapStyle(theme),
-      center: [center[0], center[1]],
+      center: [safeCenter[0], safeCenter[1]],
       zoom: 16.5,
       attributionControl: false,
     })
@@ -136,10 +158,10 @@ export function DriverTomTomMap({ center, driverLocation, route, bearing = 0, fo
     const map = mapRef.current
     if (!map || !driverLocation) return
     const lngLat: [number, number] = [driverLocation[0], driverLocation[1]]
+    if (lngLat[0] === 0 || lngLat[1] === 0) return
     if (!markerRef.current) {
       const el = document.createElement('div')
       el.style.width = '48px'; el.style.height = '48px'; el.style.background = '#0066FF'; el.style.borderRadius = '14px'; el.style.border = '3px solid white'; el.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)'; el.style.display = 'grid'; el.style.placeItems = 'center'; el.style.transform = `rotate(${bearing}deg)`
-      // FIX: No innerHTML - XSS safe, Blue Lite (was #111 black + innerHTML)
       const arrow = document.createElement('div')
       arrow.textContent = '▲'
       arrow.style.color = 'white'
