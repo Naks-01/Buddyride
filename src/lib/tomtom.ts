@@ -1,4 +1,4 @@
-// src/lib/tomtom.ts - PASSENGER - TomTom ONLY + Photon fallback + Plus Code for RDP
+// src/lib/tomtom.ts - PASSENGER - TomTom ONLY + Photon fallback + Plus Code + GPS House Number Fix
 import { OpenLocationCode } from 'open-location-code'
 
 const KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
@@ -29,6 +29,7 @@ function isKeyOk() {
 const reverseCache = new Map<string, string>()
 const searchCache = new Map<string, any[]>()
 
+// FIXED: Photon now reads housenumber
 async function reversePhoton(coords: [number, number]): Promise<string | null> {
   try {
     const res = await fetch(`https://photon.komoot.io/reverse?lon=${coords[0]}&lat=${coords[1]}&lang=en`)
@@ -36,22 +37,52 @@ async function reversePhoton(coords: [number, number]): Promise<string | null> {
     const data = await res.json()
     const p = data.features?.[0]?.properties
     if (!p) return null
+    const num = p.housenumber || ''
     const street = p.street || p.name || ''
     const district = p.district || ''
     const city = p.city || p.county || 'Polokwane'
     if (!street && !district) return null
-    const parts = [street, district, city].filter(Boolean)
+    const streetWithNum = num ? `${num} ${street}` : street
+    const parts = [streetWithNum, district, city].filter(Boolean)
     const out = parts.join(', ')
-    // Don't accept if it's just city
     if (out === city || out === 'Polokwane') return null
     return out
+  } catch { return null }
+}
+
+// NEW: Find nearest house number on same street if reverse gives street only
+async function getNearestHouseNumber(coords: [number, number], streetName: string): Promise<string | null> {
+  try {
+    if (!streetName || !isKeyOk()) return null
+    const res = await fetch(
+      `https://api.tomtom.com/search/2/fuzzySearch/${encodeURIComponent(streetName)}.json?key=${KEY}&countrySet=ZA&lat=${coords[1]}&lon=${coords[0]}&radius=300&limit=15&idxSet=Addr`
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    let bestNum: string | null = null
+    let bestDist = Infinity
+    for (const r of data.results || []) {
+      const num = r.address?.streetNumber
+      if (!num) continue
+      const dLat = r.position.lat - coords[1]
+      const dLon = r.position.lon - coords[0]
+      const dist = Math.sqrt(dLat * dLat + dLon * dLon)
+      if (dist < bestDist) {
+        bestDist = dist
+        bestNum = num
+      }
+    }
+    // Accept only if within ~150m
+    if (bestNum && bestDist < 0.0015) return bestNum
+    return null
   } catch { return null }
 }
 
 export async function reverseTomTom(coords: [number, number]): Promise<string> {
   const plusCode = getPlusCodeFromCoords(coords[1], coords[0])
   const fallback = `Dropped Pin - ${plusCode}`
-  const cacheKey = `${coords[0].toFixed(4)},${coords[1].toFixed(4)}`
+  // FIXED: Precise cache (1m) so 9 doesn't collide with next house
+  const cacheKey = `${coords[0].toFixed(5)},${coords[1].toFixed(5)}`
   if (reverseCache.has(cacheKey)) return reverseCache.get(cacheKey)!
   
   if (isKeyOk()) {
@@ -62,7 +93,12 @@ export async function reverseTomTom(coords: [number, number]): Promise<string> {
         const a = data.addresses?.[0]?.address
         if (a) {
           const street = a.streetName || a.street || ''
-          const number = a.streetNumber || ''
+          let number = a.streetNumber || ''
+          // FIX: If street but no number, get nearest numbered address on same street
+          if (street && !number) {
+            const near = await getNearestHouseNumber(coords, street)
+            if (near) number = near
+          }
           const suburb = a.municipalitySubdivision || a.suburb || a.district || ''
           const city = a.municipality || 'Polokwane'
           const free = a.freeformAddress || ''
@@ -103,8 +139,9 @@ async function searchPhoton(query: string) {
     return (data.features || []).map((f: any) => {
       const [lon, lat] = f.geometry.coordinates
       const p = f.properties || {}
-      const name = p.name || p.street || query
-      const place = [p.name, p.street, p.district, p.city, p.state].filter(Boolean).join(', ')
+      const num = p.housenumber ? `${p.housenumber} ` : ''
+      const name = p.name || `${num}${p.street || query}`
+      const place = [p.name, p.street ? `${num}${p.street}` : '', p.district, p.city, p.state].filter(Boolean).join(', ')
       return { id: `photon_${lon}_${lat}`, center: [lon, lat] as [number, number], text: name, place_name: place || name, geometry: { coordinates: [lon, lat] } }
     })
   } catch { return [] }
