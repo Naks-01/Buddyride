@@ -32,17 +32,20 @@ function errMsg(e: any) { return e?.message || e?.error_description || (typeof e
 function safeUUID() { if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID(); return `${Date.now()}-${Math.random().toString(36).slice(2)}` }
 function formatDisplayName(fullName?: string | null) { if (!fullName?.trim()) return 'Passenger'; return fullName.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') }
 function firstName(fullName?: string | null) { if (!fullName?.trim()) return ''; return fullName.trim().split(/\s+/)[0].charAt(0).toUpperCase() + fullName.trim().split(/\s+/)[0].slice(1).toLowerCase() }
-// PROD FIX: Strip Local Municipality everywhere
+// FIX: Keep house number, strip Ward 20 / Municipality / Polokwane Ward junk
 function cleanAddress(raw: string) {
   if (!raw) return raw
-  return raw
+  let out = raw
     .replace(/,?\s*Polokwane Local Municipality/gi, '')
-    .replace(/,\s*Polokwane Local Municipality.*/gi, '')
-    .replace(/\s*Polokwane Local Municipality/gi, '')
+    .replace(/Polokwane Local Municipality/gi, '')
     .replace(/Local Municipality/gi, '')
+    .replace(/,?\s*Polokwane Ward \d+/gi, '')
+    .replace(/,?\s*Ward \d+/gi, '')
     .replace(/,\s*,/g, ',')
+    .replace(/^\s*,\s*/,'')
     .replace(/\s*,\s*$/,'')
     .trim()
+  return out
 }
 function haversine(a:[number,number], b:[number,number]){ const toRad=(d:number)=>d*Math.PI/180; const dLat=toRad(b[1]-a[1]); const dLng=toRad(b[0]-a[0]); const s=Math.sin(dLat/2)**2+Math.cos(toRad(a[1]))*Math.cos(toRad(b[1]))*Math.sin(dLng/2)**2; return 6371*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s)) }
 async function compress(file: File | Blob): Promise<Blob> {
@@ -71,12 +74,21 @@ function isValidSAID(id: string) {
   for (let index = 11; index >= 0; index -= 1) { let digit = Number(id[index]); if (doubleDigit) { digit *= 2; if (digit > 9) digit -= 9 } sum += digit; doubleDigit = !doubleDigit }
   return (sum + Number(id[12])) % 10 === 0
 }
+// FIX: Build place_name from streetNumber + streetName so search also keeps 9
+function buildPlaceName(r: any) {
+  const num = r.address?.streetNumber ? `${r.address.streetNumber} ` : ''
+  const street = r.address?.streetName || r.address?.street || ''
+  const free = r.address?.freeformAddress || ''
+  if (num && street) return cleanAddress(`${num}${street}`)
+  if (r.poi?.name) return cleanAddress(`${r.poi.name}, ${free}`)
+  return cleanAddress(free)
+}
 async function searchPlaces(query: string, setter: any, setShow: any) {
   if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
   const q = encodeURIComponent(query.trim())
   if (TOMTOM_KEY) {
-    try { const res = await fetch(`https://api.tomtom.com/search/2/poiSearch/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8`); if (res.ok) { const data = await res.json(); if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: cleanAddress(r.poi?.name || r.address.freeformAddress), place_name: cleanAddress(r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress), center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return } } } catch {}
-    try { const res = await fetch(`https://api.tomtom.com/search/2/search/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8&idxSet=POI,Addr`); if (res.ok) { const data = await res.json(); if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: cleanAddress(r.poi?.name || r.address.freeformAddress), place_name: cleanAddress(r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress), center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return } } } catch {}
+    try { const res = await fetch(`https://api.tomtom.com/search/2/poiSearch/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8`); if (res.ok) { const data = await res.json(); if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: buildPlaceName(r), place_name: buildPlaceName(r), center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return } } } catch {}
+    try { const res = await fetch(`https://api.tomtom.com/search/2/search/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8&idxSet=POI,Addr`); if (res.ok) { const data = await res.json(); if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: buildPlaceName(r), place_name: buildPlaceName(r), center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return } } } catch {}
   }
   setter([]); setShow(false)
 }
@@ -136,6 +148,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => { try { localStorage.setItem('buddyride-theme', 'light'); document.documentElement.setAttribute('data-theme', 'light'); document.documentElement.classList.remove('ride-app--dark'); document.documentElement.classList.add('ride-app--light'); document.body.style.background = '#f5f5f7'; document.body.style.color = '#111827'; } catch {} }, [])
   useEffect(() => () => { if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current); cameraStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
   useEffect(() => { if (rideStatus !== 'searching') { setSearchSec(0); return }; const iv = setInterval(()=>setSearchSec(s=>s+1), 1000); return ()=>clearInterval(iv) }, [rideStatus])
+  // GPS ONLY - load saved chips for display, NEVER auto-fill pickup from saved Home
   useEffect(() => { getSavedPlaces().then(setSaved).catch(()=>{}) }, [])
   async function saveCurrentPlace(which: 'pickup' | 'dropoff') {
     const rawAddress = which === 'pickup' ? pickup : dropoff
@@ -162,7 +175,16 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => () => { if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current) }, [])
   useEffect(() => { const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString(); supabase.from('driver_status').select('*').eq('is_online', true).gt('updated_at', fiveMinAgo).then(({ data }) => { if (data) setNearbyCars(data) }); const ch = createRealtimeChannel('buddyride-cars-live').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, (payload) => { const car = payload.new as any; if (!car) return; if (car.updated_at && new Date(car.updated_at).getTime() < Date.now() - 5 * 60 * 1000) { setNearbyCars(prev => prev.filter(c => c.driver_id !== car.driver_id)); return } if (car.is_online) { setNearbyCars(prev => { const exists = prev.find(c => c.driver_id === car.driver_id); return exists ? prev.map(c => c.driver_id === car.driver_id ? car : c) : [...prev, car] }) } else { setNearbyCars(prev => prev.filter(c => c.driver_id !== car.driver_id)) } }).subscribe(); return () => { supabase.removeChannel(ch) } }, [])
   useEffect(() => {
-    let active = true; if ('geolocation' in navigator) { navigator.geolocation.getCurrentPosition(async pos => { if (!active) return; const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setMapCenter(p); setPickupCoords(p); try { const real = cleanAddress(await reverseTomTom(p)); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') } }, () => { if (!active) return; setLocation(POLOKWANE_CENTER); setMapCenter(POLOKWANE_CENTER); setPickupCoords(POLOKWANE_CENTER); setPickup('Polokwane Central') }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }) }
+    let active = true
+    // FIX: Fresh GPS only, no stale cache (maximumAge 0), watch until accurate
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(async pos => {
+        if (!active) return
+        const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
+        setLocation(p); setMapCenter(p); setPickupCoords(p)
+        try { const real = cleanAddress(await reverseTomTom(p)); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') }
+      }, () => { if (!active) return; setLocation(POLOKWANE_CENTER); setMapCenter(POLOKWANE_CENTER); setPickupCoords(POLOKWANE_CENTER); setPickup('Polokwane Central') }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
+    }
     async function loadActiveRide() {
       const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
       try { await supabase.from('rides').update({ status: 'cancelled', cancel_reason: 'Auto-cancelled stale awaiting_payment on open', cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).eq('passenger_id', effectiveId).eq('status', 'awaiting_payment').lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString()) } catch {}
@@ -211,7 +233,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       setFareQuote({ ...quote, pickup: pCoords, dropoff: dCoords, category: normalizedCat }); setRoute(quote.geometry || undefined); setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(Number(quote.total_fare)); setShowEstimate(true); setSheetSnap(50)
     } catch (error) { setShowEstimate(false); setFareQuote(null); setRideError('Could not calculate fare: ' + errMsg(error)) } finally { setLoading(false) }
   }
-  async function useMyLocation() { navigator.geolocation.getCurrentPosition(async pos => { const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setFareQuote(null); setLocation(p); setMapCenter(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup'); setSheetSnap(25); try { const raw = await reverseTomTom(p); const real = cleanAddress(raw); setPickup(real); setRideError('') } catch { setPickup('My Location - Polokwane') } }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 10000 }) }
+  async function useMyLocation() { navigator.geolocation.getCurrentPosition(async pos => { const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setFareQuote(null); setLocation(p); setMapCenter(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup'); setSheetSnap(25); try { const raw = await reverseTomTom(p); const real = cleanAddress(raw); setPickup(real); setRideError('') } catch { setPickup('My Location - Polokwane') } }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }) }
   async function requestRide() { if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }; if (!pickup.trim() || !dropoff.trim()) { setRideError('Choose a pickup and destination.'); setSheetSnap(50); return }; const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id; const { data: passengerProfile } = await supabase.from('profiles').select('is_banned').eq('id', effectiveId).single(); if (passengerProfile?.is_banned) { setRideError('Your account is banned - contact support on 064 101 8991'); return }; await createRide() }
   async function createRide() {
     setLoading(true); setRideError('')
