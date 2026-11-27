@@ -29,37 +29,70 @@ function isKeyOk() {
 const reverseCache = new Map<string, string>()
 const searchCache = new Map<string, any[]>()
 
+async function reversePhoton(coords: [number, number]): Promise<string | null> {
+  try {
+    const res = await fetch(`https://photon.komoot.io/reverse?lon=${coords[0]}&lat=${coords[1]}&lang=en`)
+    if (!res.ok) return null
+    const data = await res.json()
+    const p = data.features?.[0]?.properties
+    if (!p) return null
+    const street = p.street || p.name || ''
+    const district = p.district || ''
+    const city = p.city || p.county || 'Polokwane'
+    if (!street && !district) return null
+    const parts = [street, district, city].filter(Boolean)
+    const out = parts.join(', ')
+    // Don't accept if it's just city
+    if (out === city || out === 'Polokwane') return null
+    return out
+  } catch { return null }
+}
+
 export async function reverseTomTom(coords: [number, number]): Promise<string> {
-  const fallback = `${coords[1].toFixed(5)}, ${coords[0].toFixed(5)}`
+  const plusCode = getPlusCodeFromCoords(coords[1], coords[0])
+  const fallback = `Dropped Pin - ${plusCode}`
   const cacheKey = `${coords[0].toFixed(4)},${coords[1].toFixed(4)}`
   if (reverseCache.has(cacheKey)) return reverseCache.get(cacheKey)!
-  if (!isKeyOk()) return fallback
-  try {
-    const res = await fetch(`https://api.tomtom.com/search/2/reverseGeocode/${coords[1]},${coords[0]}.json?key=${KEY}&returnSpeedLimit=false&entityType=Address`)
-    if (!res.ok) return fallback
-    const data = await res.json()
-    const a = data.addresses?.[0]?.address
-    if (!a) return fallback
-    const street = a.streetName || a.street || ''
-    const number = a.streetNumber || ''
-    const suburb = a.municipalitySubdivision || a.suburb || a.district || ''
-    const city = a.municipality || 'Polokwane'
-    const free = a.freeformAddress || ''
-    let out = ''
-    if (street) {
-      out = number ? `${number} ${street}` : street
-      if (suburb && suburb !== city && !suburb.includes('Local Municipality')) out += `, ${suburb}`
-      else out += `, ${city}`
-    } else if (suburb && !suburb.includes('Local Municipality')) {
-      out = `${suburb}, ${city}`
-    } else if (free && !free.includes('Local Municipality')) {
-      out = free
-    } else {
-      out = city
-    }
-    reverseCache.set(cacheKey, out)
-    return out
-  } catch { return fallback }
+  
+  if (isKeyOk()) {
+    try {
+      const res = await fetch(`https://api.tomtom.com/search/2/reverseGeocode/${coords[1]},${coords[0]}.json?key=${KEY}&returnSpeedLimit=false&entityType=Address`)
+      if (res.ok) {
+        const data = await res.json()
+        const a = data.addresses?.[0]?.address
+        if (a) {
+          const street = a.streetName || a.street || ''
+          const number = a.streetNumber || ''
+          const suburb = a.municipalitySubdivision || a.suburb || a.district || ''
+          const city = a.municipality || 'Polokwane'
+          const free = a.freeformAddress || ''
+          let out = ''
+          if (street && !street.includes('Local Municipality')) {
+            out = number ? `${number} ${street}` : street
+            if (suburb && suburb !== city && !suburb.includes('Local Municipality')) out += `, ${suburb}`
+            else out += `, ${city}`
+          } else if (suburb && !suburb.includes('Local Municipality')) {
+            out = `${suburb}, ${city}`
+          } else if (free && !free.includes('Local Municipality') && free !== city) {
+            out = free
+          }
+          if (out && out !== city && out !== 'Polokwane' && !out.includes('Local Municipality')) {
+            reverseCache.set(cacheKey, out)
+            return out
+          }
+        }
+      }
+    } catch {}
+  }
+  
+  const photonAddr = await reversePhoton(coords)
+  if (photonAddr) {
+    reverseCache.set(cacheKey, photonAddr)
+    return photonAddr
+  }
+  
+  reverseCache.set(cacheKey, fallback)
+  return fallback
 }
 
 async function searchPhoton(query: string) {
