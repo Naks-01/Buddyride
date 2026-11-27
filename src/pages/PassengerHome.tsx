@@ -11,47 +11,33 @@ import { supabase, type Profile, type Ride } from '../lib/supabase'
 
 const BLUE = '#0066FF'
 const BLUE_LIGHT = '#E6F0FF'
-const MIN_FARE = 42
 const FALLBACK_ZONES = ['Bela-Bela','Burgersfort','Giyani','Lebowakgomo','Lephalale','Makhado','Mankweng','Mokopane','Musina','Phalaborwa','Polokwane','Seshego','Thohoyandou','Tzaneen','Moletji','Soweto','Tembisa','EastRand','Soshanguve','Vaal','Johannesburg','Klerksdorp','Durban','TSHWANE','Pietermaritzburg','Potchefstroom']
-
 const PassengerTomTomMap = lazy(() => import('../components/PassengerTomTomMap').then(module => ({ default: module.PassengerTomTomMap })))
 const POLOKWANE_CENTER: [number, number] = [29.4589, -23.9045]
 const TOMTOM_KEY = import.meta.env.VITE_TOMTOM_API_KEY as string
-
 const CATEGORIES = [
   { id: 'buddy_lite', name: 'Buddy Lite', icon: '🛺', seats: '2 seats', desc: 'Small & cheapest' },
   { id: 'buddy_plus', name: 'Buddy Plus', icon: '🚗', seats: '3 seats', desc: 'Standard - popular' },
   { id: 'buddy_max', name: 'Buddy Max', icon: '🚐', seats: '7 seats', desc: 'Family van' },
 ]
-
 function normalizeCategory(raw: string | null | undefined) {
   const v = String(raw || '').toLowerCase()
   if (v === 'buddy' || v === 'economy') return 'buddy_lite'
   if (v === 'buddy_xl' || v === 'xl' || v === 'comfort') return 'buddy_max'
   if (v === 'buddy_family' || v === 'family') return 'buddy_max'
-  if (v === 'buddy_plus') return 'buddy_plus'
-  if (v === 'buddy_lite') return 'buddy_lite'
-  if (v === 'buddy_max') return 'buddy_max'
-  return 'buddy_plus'
+  return (['buddy_lite','buddy_plus','buddy_max'].includes(v) ? v : 'buddy_plus')
 }
 function errMsg(e: any) { return e?.message || e?.error_description || (typeof e === 'string' ? e : JSON.stringify(e)) }
 function safeUUID() { if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID(); return `${Date.now()}-${Math.random().toString(36).slice(2)}` }
-function formatDisplayName(fullName?: string | null) {
-  if (!fullName?.trim()) return 'Passenger'
-  return fullName.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
-}
-function firstName(fullName?: string | null) {
-  if (!fullName?.trim()) return ''
-  return fullName.trim().split(/\s+/)[0].charAt(0).toUpperCase() + fullName.trim().split(/\s+/)[0].slice(1).toLowerCase()
-}
+function formatDisplayName(fullName?: string | null) { if (!fullName?.trim()) return 'Passenger'; return fullName.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') }
+function firstName(fullName?: string | null) { if (!fullName?.trim()) return ''; return fullName.trim().split(/\s+/)[0].charAt(0).toUpperCase() + fullName.trim().split(/\s+/)[0].slice(1).toLowerCase() }
 function haversine(a:[number,number], b:[number,number]){ const toRad=(d:number)=>d*Math.PI/180; const dLat=toRad(b[1]-a[1]); const dLng=toRad(b[0]-a[0]); const s=Math.sin(dLat/2)**2+Math.cos(toRad(a[1]))*Math.cos(toRad(b[1]))*Math.sin(dLng/2)**2; return 6371*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s)) }
 async function compress(file: File | Blob): Promise<Blob> {
   try {
     if (typeof createImageBitmap === 'undefined') return file
     const bitmap = await createImageBitmap(file, { resizeWidth: 1280, resizeQuality: 'medium' } as any)
     const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale))
     const ctx = canvas.getContext('2d'); if (!ctx) { bitmap.close?.(); return file }
     ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close?.()
     const blob: Blob | null = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.75))
@@ -76,20 +62,8 @@ async function searchPlaces(query: string, setter: any, setShow: any) {
   if (!query || query.trim().length < 2) { setter([]); setShow(false); return }
   const q = encodeURIComponent(query.trim())
   if (TOMTOM_KEY) {
-    try {
-      const res = await fetch(`https://api.tomtom.com/search/2/poiSearch/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8`)
-      if (res.ok) {
-        const data = await res.json()
-        if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return }
-      }
-    } catch {}
-    try {
-      const res = await fetch(`https://api.tomtom.com/search/2/search/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8&idxSet=POI,Addr`)
-      if (res.ok) {
-        const data = await res.json()
-        if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return }
-      }
-    } catch {}
+    try { const res = await fetch(`https://api.tomtom.com/search/2/poiSearch/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8`); if (res.ok) { const data = await res.json(); if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return } } } catch {}
+    try { const res = await fetch(`https://api.tomtom.com/search/2/search/${q}.json?key=${TOMTOM_KEY}&countrySet=ZA&lat=-23.9045&lon=29.4589&radius=50000&limit=8&idxSet=POI,Addr`); if (res.ok) { const data = await res.json(); if (data.results?.length > 0) { const places = data.results.map((r: any) => ({ text: r.poi?.name || r.address.freeformAddress, place_name: r.poi?.name ? `${r.poi.name}, ${r.address.freeformAddress}` : r.address.freeformAddress, center: [r.position.lon, r.position.lat] as [number, number] })); setter(places); setShow(true); return } } } catch {}
   }
   setter([]); setShow(false)
 }
@@ -97,7 +71,6 @@ async function geocodeAddress(text: string): Promise<[number, number] | null> {
   if (TOMTOM_KEY) { try { const res = await fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(text)}.json?key=${TOMTOM_KEY}&countrySet=ZA&limit=1&idxSet=POI,Addr`); if (res.ok) { const data = await res.json(); if (data.results?.[0]) return [data.results[0].position.lon, data.results[0].position.lat] } } catch {} }
   return null
 }
-
 export function PassengerHome({ profile }: { profile: Profile }) {
   const [location, setLocation] = useState<[number, number]>(POLOKWANE_CENTER)
   const [mapCenter, setMapCenter] = useState<[number, number]>(POLOKWANE_CENTER)
@@ -118,32 +91,24 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [rating, setRating] = useState(0); const [ratingComment, setRatingComment] = useState('')
   const [showCancelReason, setShowCancelReason] = useState(false); const [cancelReason, setCancelReason] = useState('')
   const [nearbyCars, setNearbyCars] = useState<any[]>([]); const [showChat, setShowChat] = useState(false)
-  const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(90); const [pinTarget, setPinTarget] = useState<'pickup' | 'dropoff'>('pickup')
+  const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(25)
+  const [pinTarget, setPinTarget] = useState<'pickup' | 'dropoff'>('pickup')
   const [isMapMoving, setIsMapMoving] = useState(false)
   const [outOfService, setOutOfService] = useState(false); const [outOfServicePlace, setOutOfServicePlace] = useState('')
-  const [customFare] = useState<number | null>(null); const [searchSec, setSearchSec] = useState(0)
+  const [searchSec, setSearchSec] = useState(0)
   const [safetyProfile, setSafetyProfile] = useState({ avatar_url: profile.avatar_url, selfie_url: profile.selfie_url ?? null, id_document_url: profile.id_document_url ?? null, id_number: profile.id_number ?? null, id_verified: profile.id_verified ?? false, is_verified: profile.is_verified ?? false, })
   const [verificationStatus, setVerificationStatus] = useState(profile.verification_status || 'not_started'); const [verificationRejectionReason, setVerificationRejectionReason] = useState(profile.verification_rejection_reason || ''); const [verificationLoaded, setVerificationLoaded] = useState(false); const [verificationError, setVerificationError] = useState(''); const [uploadToast, setUploadToast] = useState(''); const [showSafetyModal, setShowSafetyModal] = useState(false); const [safetyIdNumber, setSafetyIdNumber] = useState(''); const [verificationUploadType, setVerificationUploadType] = useState<string | null>(null); const [cameraDocument, setCameraDocument] = useState<PassengerSafetyCapture | null>(null); const [cameraError, setCameraError] = useState(''); const [cameraReady, setCameraReady] = useState(false)
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null); const cameraStreamRef = useRef<MediaStream | null>(null)
-  const galleryInputRef = useRef<HTMLInputElement | null>(null)
-  const galleryDocRef = useRef<PassengerSafetyCapture | null>(null)
+  const galleryInputRef = useRef<HTMLInputElement | null>(null); const galleryDocRef = useRef<PassengerSafetyCapture | null>(null)
   const pickupDebounce = useRef<any>(null); const dropoffDebounce = useRef<any>(null); const pickupAddressRequest = useRef(0); const dropoffAddressRequest = useRef(0); const mapAddressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null); const cancelledRideTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const uploadToastTimer = useRef<number | null>(null)
   const [cancelledNotification, setCancelledNotification] = useState<string | null>(null); const prevStatusRef = useRef<string>('')
-  const isDark = false; const bg = '#f5f5f7'; const bgCard = '#ffffff'; const bg2 = '#F2F4F7'; const text = '#111827'; const muted = '#667085'; const border = '#E4E7EC'
-  const hasIdNumber = !!(safetyProfile.id_number || safetyIdNumber.trim())
-  const hasIdDoc = !!safetyProfile.id_document_url
-  const hasSelfie = !!safetyProfile.selfie_url
-  const hasRequiredDocs = hasSelfie && hasIdNumber && hasIdDoc
+  const bg = '#f5f5f7'; const bgCard = '#ffffff'; const bg2 = '#F2F4F7'; const text = '#111827'; const muted = '#667085'; const border = '#E4E7EC'
+  const hasIdNumber = !!(safetyProfile.id_number || safetyIdNumber.trim()); const hasIdDoc = !!safetyProfile.id_document_url; const hasSelfie = !!safetyProfile.selfie_url; const hasRequiredDocs = hasSelfie && hasIdNumber && hasIdDoc
   const isVerified = verificationLoaded && hasRequiredDocs && (safetyProfile.is_verified === true || ['verified', 'approved'].includes(verificationStatus))
   const rideStatus = String(ride?.status || '').toLowerCase().replace(/[\s-]+/g, '_')
-  const displayPrice = price
-  const suggestedPrice = price ?? 56
-  const selectedCategoryLabel = CATEGORIES.find(c => c.id === normalizeCategory(selectedCat))?.name || 'Buddy Plus'
-
+  const displayPrice = price; const selectedCategoryLabel = CATEGORIES.find(c => c.id === normalizeCategory(selectedCat))?.name || 'Buddy Plus'
   function checkServiceArea(addr: string, coord?: [number,number] | null) {
-    const lower = (addr||'').toLowerCase()
-    if (FALLBACK_ZONES.some(z=> lower.includes(z.toLowerCase()))) return true
-    if (coord) { const d = haversine(coord, POLOKWANE_CENTER); if (d < 180) return true }
+    const lower = (addr||'').toLowerCase(); if (FALLBACK_ZONES.some(z=> lower.includes(z.toLowerCase()))) return true; if (coord) { const d = haversine(coord, POLOKWANE_CENTER); if (d < 180) return true }
     setOutOfServicePlace(addr); setOutOfService(true); return false
   }
   useEffect(() => {
@@ -152,134 +117,36 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     else if (['arrived', 'passenger_in', 'i_have_arrived'].includes(rideStatus)) setSheetSnap(80)
     else if (['on_trip', 'driving_to_destination', 'picked_up', 'in_progress', 'en_route'].includes(rideStatus)) setSheetSnap(50)
     else if (rideStatus === 'completed') setSheetSnap(90)
+    else setSheetSnap(25)
   }, [rideStatus])
-  useEffect(() => {
-    try {
-      localStorage.setItem('buddyride-theme', 'light')
-      document.documentElement.setAttribute('data-theme', 'light')
-      document.documentElement.classList.remove('ride-app--dark')
-      document.documentElement.classList.add('ride-app--light')
-      document.body.style.background = '#f5f5f7'
-      document.body.style.color = '#111827'
-      document.documentElement.style.setProperty('--ride-surface', 'rgba(255,255,255,.94)')
-      document.documentElement.style.setProperty('--ride-subtle', '#f5f5f7')
-      document.documentElement.style.setProperty('--ride-text', '#111827')
-      document.documentElement.style.setProperty('--ride-muted', '#6b7280')
-      document.documentElement.style.setProperty('--ride-border', 'rgba(0,0,0,.06)')
-    } catch {}
-  }, [])
+  useEffect(() => { try { localStorage.setItem('buddyride-theme', 'light'); document.documentElement.setAttribute('data-theme', 'light'); document.documentElement.classList.remove('ride-app--dark'); document.documentElement.classList.add('ride-app--light'); document.body.style.background = '#f5f5f7'; document.body.style.color = '#111827'; } catch {} }, [])
   useEffect(() => () => { if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current); cameraStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
-  useEffect(() => {
-    if (rideStatus !== 'searching') { setSearchSec(0); return }
-    const iv = setInterval(()=>setSearchSec(s=>s+1), 1000); return ()=>clearInterval(iv)
-  }, [rideStatus])
-  useEffect(() => {
-    let active = true
-    async function loadPassengerVerification() {
-      setVerificationLoaded(false); setVerificationError('')
-      try {
-        const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
-        const { data, error } = await supabase.from('profiles').select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status,verification_rejection_reason').eq('id', effectiveId).single()
-        if (error) throw error; if (!active) return
-        setSafetyProfile({ avatar_url: data.avatar_url, selfie_url: data.selfie_url, id_document_url: data.id_document_url, id_number: data.id_number, id_verified: data.id_verified, is_verified: data.is_verified })
-        setVerificationStatus(data.verification_status || 'not_started'); setVerificationRejectionReason(data.verification_rejection_reason || ''); setSafetyIdNumber(data.id_number || '')
-      } catch (error) { if (!active) return; setVerificationError('Could not load safety verification: ' + errMsg(error)) } finally { if (active) setVerificationLoaded(true) }
-    }
-    void loadPassengerVerification(); return () => { active = false }
-  }, [profile.id])
-  useEffect(() => {
-    if (!cameraDocument) return; let active = true; setCameraReady(false); setCameraError('')
-    if (!navigator.mediaDevices?.getUserMedia) { setCameraError('Camera access is not available in this browser.'); return }
-    void navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: cameraDocument.facingMode } }).then(stream => {
-      if (!active) { stream.getTracks().forEach(track => track.stop()); return }; cameraStreamRef.current = stream; setCameraReady(true)
-      if (cameraVideoRef.current) { cameraVideoRef.current.srcObject = stream; void cameraVideoRef.current.play().catch(error => { setCameraError('Could not start the camera preview: ' + errMsg(error)) }) }
-    }).catch(error => { if (active) setCameraError('Could not access the camera: ' + errMsg(error)) })
-    return () => { active = false; cameraStreamRef.current?.getTracks().forEach(track => track.stop()); cameraStreamRef.current = null }
-  }, [cameraDocument])
+  useEffect(() => { if (rideStatus !== 'searching') { setSearchSec(0); return }; const iv = setInterval(()=>setSearchSec(s=>s+1), 1000); return ()=>clearInterval(iv) }, [rideStatus])
+  useEffect(() => { let active = true; async function loadPassengerVerification() { setVerificationLoaded(false); setVerificationError(''); try { const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id; const { data, error } = await supabase.from('profiles').select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status,verification_rejection_reason').eq('id', effectiveId).single(); if (error) throw error; if (!active) return; setSafetyProfile({ avatar_url: data.avatar_url, selfie_url: data.selfie_url, id_document_url: data.id_document_url, id_number: data.id_number, id_verified: data.id_verified, is_verified: data.is_verified }); setVerificationStatus(data.verification_status || 'not_started'); setVerificationRejectionReason(data.verification_rejection_reason || ''); setSafetyIdNumber(data.id_number || '') } catch (error) { if (!active) return; setVerificationError('Could not load safety verification: ' + errMsg(error)) } finally { if (active) setVerificationLoaded(true) } }; void loadPassengerVerification(); return () => { active = false } }, [profile.id])
+  useEffect(() => { if (!cameraDocument) return; let active = true; setCameraReady(false); setCameraError(''); if (!navigator.mediaDevices?.getUserMedia) { setCameraError('Camera access is not available in this browser.'); return }; void navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: cameraDocument.facingMode } }).then(stream => { if (!active) { stream.getTracks().forEach(track => track.stop()); return }; cameraStreamRef.current = stream; setCameraReady(true); if (cameraVideoRef.current) { cameraVideoRef.current.srcObject = stream; void cameraVideoRef.current.play().catch(error => { setCameraError('Could not start the camera preview: ' + errMsg(error)) }) } }).catch(error => { if (active) setCameraError('Could not access the camera: ' + errMsg(error)) }); return () => { active = false; cameraStreamRef.current?.getTracks().forEach(track => track.stop()); cameraStreamRef.current = null } }, [cameraDocument])
   useEffect(() => () => { if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current) }, [])
+  useEffect(() => { const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString(); supabase.from('driver_status').select('*').eq('is_online', true).gt('updated_at', fiveMinAgo).then(({ data }) => { if (data) setNearbyCars(data) }); const ch = createRealtimeChannel('buddyride-cars-live').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, (payload) => { const car = payload.new as any; if (!car) return; if (car.updated_at && new Date(car.updated_at).getTime() < Date.now() - 5 * 60 * 1000) { setNearbyCars(prev => prev.filter(c => c.driver_id !== car.driver_id)); return } if (car.is_online) { setNearbyCars(prev => { const exists = prev.find(c => c.driver_id === car.driver_id); return exists ? prev.map(c => c.driver_id === car.driver_id ? car : c) : [...prev, car] }) } else { setNearbyCars(prev => prev.filter(c => c.driver_id !== car.driver_id)) } }).subscribe(); return () => { supabase.removeChannel(ch) } }, [])
   useEffect(() => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-    supabase.from('driver_status').select('*').eq('is_online', true).gt('updated_at', fiveMinAgo).then(({ data }) => { if (data) setNearbyCars(data) })
-    const ch = createRealtimeChannel('buddyride-cars-live').on('postgres_changes', { event: '*', schema: 'public', table: 'driver_status' }, (payload) => {
-      const car = payload.new as any; if (!car) return
-      if (car.updated_at && new Date(car.updated_at).getTime() < Date.now() - 5 * 60 * 1000) { setNearbyCars(prev => prev.filter(c => c.driver_id !== car.driver_id)); return }
-      if (car.is_online) { setNearbyCars(prev => { const exists = prev.find(c => c.driver_id === car.driver_id); return exists ? prev.map(c => c.driver_id === car.driver_id ? car : c) : [...prev, car] }) } else { setNearbyCars(prev => prev.filter(c => c.driver_id !== car.driver_id)) }
-    }).subscribe()
-    return () => { supabase.removeChannel(ch) }
-  }, [])
-  useEffect(() => {
-    let active = true
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(async pos => {
-        if (!active) return; const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setMapCenter(p); setPickupCoords(p)
-        try { const real = await reverseTomTom(p); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') }
-      }, () => {
-        if (!active) return
-        setLocation(POLOKWANE_CENTER); setMapCenter(POLOKWANE_CENTER); setPickupCoords(POLOKWANE_CENTER); setPickup('Polokwane Central')
-      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 })
-    }
+    let active = true; if ('geolocation' in navigator) { navigator.geolocation.getCurrentPosition(async pos => { if (!active) return; const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setLocation(p); setMapCenter(p); setPickupCoords(p); try { const real = await reverseTomTom(p); if (active) setPickup(real) } catch { if (active) setPickup('My Location - Polokwane') } }, () => { if (!active) return; setLocation(POLOKWANE_CENTER); setMapCenter(POLOKWANE_CENTER); setPickupCoords(POLOKWANE_CENTER); setPickup('Polokwane Central') }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }) }
     async function loadActiveRide() {
       const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
-      try {
-        await supabase.from('rides').update({ status: 'cancelled', cancel_reason: 'Auto-cancelled stale awaiting_payment on open', cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any)
-          .eq('passenger_id', effectiveId).eq('status', 'awaiting_payment').lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
-      } catch {}
+      try { await supabase.from('rides').update({ status: 'cancelled', cancel_reason: 'Auto-cancelled stale awaiting_payment on open', cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any).eq('passenger_id', effectiveId).eq('status', 'awaiting_payment').lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString()) } catch {}
       const { data: activeRide, error: activeRideError } = await supabase.from('rides').select('*').eq('passenger_id', effectiveId).in('status', ['searching', 'driver_assigned', 'accepted', 'arrived', 'picked_up', 'en_route', 'in_progress', 'on_trip', 'driving_to_destination'] as any).order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (activeRideError) { if (active) setRideError('Could not restore your active ride: ' + errMsg(activeRideError)); return }
       const { data: completedRideData, error: completedRideError } = activeRide ? { data: null, error: null } as any : await supabase.from('rides').select('*').eq('passenger_id', effectiveId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (completedRideError) { if (active) setRideError('Could not restore your pending rating: ' + errMsg(completedRideError)); return }
       const data = activeRide || completedRideData
-      if (active && data) {
-        prevStatusRef.current = data.status
-        if (data.status === 'completed') { const alreadyRated = (data as any).passenger_rating != null || (data as any).rating != null; if (alreadyRated) return; handleRideCompleted(data as Ride) }
-        else { setRide(data as Ride); setSheetSnap(data.status === 'completed' ? 90 : 50) }
-      }
+      if (active && data) { prevStatusRef.current = data.status; if (data.status === 'completed') { const alreadyRated = (data as any).passenger_rating != null || (data as any).rating != null; if (alreadyRated) return; handleRideCompleted(data as Ride) } else { setRide(data as Ride); setSheetSnap(data.status === 'completed' ? 90 : 50) } }
     }
     void loadActiveRide(); return () => { active = false }
   }, [profile.id])
+  useEffect(() => { if (!ride?.driver_id) { setDriverProfile(null); return }; let active = true; setDriverProfile(null); async function loadDriverDetails() { const [{ data: driver, error: driverError }, { data: car, error: carError }] = await Promise.all([ supabase.from('profiles').select('full_name, avatar_url, phone, phone_number, rating').eq('id', ride!.driver_id!).maybeSingle(), supabase.from('driver_vehicles').select('make_model, colour, registration, ride_type').eq('driver_id', ride!.driver_id!).maybeSingle(), ]); if (!active) return; if (driverError) console.error('Could not load driver profile:', driverError.message); if (carError) console.error('Could not load driver vehicle details:', carError.message); setDriverProfile({ id: ride!.driver_id!, role: 'driver', email: null, full_name: driver?.full_name || 'Driver', avatar_url: driver?.avatar_url ?? null, phone: driver?.phone ?? null, phone_number: driver?.phone_number ?? driver?.phone ?? null, rating: driver?.rating ?? null, car_make: (car as any)?.make_model ?? null, car_model: (car as any)?.make_model ?? null, car_color: (car as any)?.colour ?? null, license_plate: (car as any)?.registration ?? null, car_plate: (car as any)?.registration ?? null } as any) }; void loadDriverDetails(); return () => { active = false } }, [ride?.id, ride?.driver_id])
   useEffect(() => {
-    if (!ride?.driver_id) { setDriverProfile(null); return }; let active = true; setDriverProfile(null)
-    async function loadDriverDetails() {
-      const [{ data: driver, error: driverError }, { data: car, error: carError }] = await Promise.all([
-        supabase.from('profiles').select('full_name, avatar_url, phone, phone_number, rating').eq('id', ride!.driver_id!).maybeSingle(),
-        supabase.from('driver_vehicles').select('make_model, colour, registration, ride_type').eq('driver_id', ride!.driver_id!).maybeSingle(),
-      ])
-      if (!active) return
-      if (driverError) console.error('Could not load driver profile:', driverError.message)
-      if (carError) console.error('Could not load driver vehicle details:', carError.message)
-      setDriverProfile({ id: ride!.driver_id!, role: 'driver', email: null, full_name: driver?.full_name || 'Driver', avatar_url: driver?.avatar_url ?? null, phone: driver?.phone ?? null, phone_number: driver?.phone_number ?? driver?.phone ?? null, rating: driver?.rating ?? null, car_make: (car as any)?.make_model ?? null, car_model: (car as any)?.make_model ?? null, car_color: (car as any)?.colour ?? null, license_plate: (car as any)?.registration ?? null, car_plate: (car as any)?.registration ?? null } as any)
-    }
-    void loadDriverDetails(); return () => { active = false }
-  }, [ride?.id, ride?.driver_id])
-  useEffect(() => {
-    if (!ride) return
-    const handleUpdate = (p: any) => {
-      const newR = p.new as any; if (!newR) return
-      const oldStatus = prevStatusRef.current; const newStatus = newR.status
-      if (newStatus === 'rated') { setCompletedReceipt(newR as Ride); setCompletedRide(null); clearActiveRideState(); setRating(0); setRatingComment(''); setSheetSnap(50); prevStatusRef.current = newStatus; return }
-      if (newStatus === 'completed') { playSound('complete'); prevStatusRef.current = newStatus; handleRideCompleted(newR as Ride); return }
-      if (newStatus === 'cancelled' && newR.cancelled_by === 'driver') {
-        playSound('cancel'); setCancelledNotification('Driver cancelled: ' + (newR.cancel_reason || 'No reason'))
-        if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current)
-        cancelledRideTimer.current = setTimeout(() => { setCancelledNotification(null); clearActiveRideState(); setCompletedRide(null); setSheetSnap(90); cancelledRideTimer.current = null }, 5000) as any
-        prevStatusRef.current = newStatus; return
-      } else {
-        if (oldStatus !== newStatus) {
-          if (newStatus === 'accepted' || newStatus === 'driver_assigned') playSound('accept')
-          else if (newStatus === 'arrived') playSound('arrived')
-          else if (['picked_up', 'in_progress', 'en_route', 'on_trip', 'driving_to_destination'].includes(newStatus as any)) playSound('start')
-          else if (newStatus === 'completed') playSound('complete')
-        }
-      }
-      prevStatusRef.current = newStatus; setRide(newR as Ride)
-    }
-    const ch = createRealtimeChannel('ride-' + ride.id).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides', filter: 'id=eq.' + ride.id }, handleUpdate).subscribe()
-    return () => { supabase.removeChannel(ch) }
-  }, [ride?.id])
+    if (!ride) return; const handleUpdate = (p: any) => { const newR = p.new as any; if (!newR) return; const oldStatus = prevStatusRef.current; const newStatus = newR.status; if (newStatus === 'rated') { setCompletedReceipt(newR as Ride); setCompletedRide(null); clearActiveRideState(); setRating(0); setRatingComment(''); setSheetSnap(50); prevStatusRef.current = newStatus; return } if (newStatus === 'completed') { playSound('complete'); prevStatusRef.current = newStatus; handleRideCompleted(newR as Ride); return } if (newStatus === 'cancelled' && newR.cancelled_by === 'driver') { playSound('cancel'); setCancelledNotification('Driver cancelled: ' + (newR.cancel_reason || 'No reason')); if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current); cancelledRideTimer.current = setTimeout(() => { setCancelledNotification(null); clearActiveRideState(); setCompletedRide(null); setSheetSnap(25); cancelledRideTimer.current = null }, 5000) as any; prevStatusRef.current = newStatus; return } else { if (oldStatus !== newStatus) { if (newStatus === 'accepted' || newStatus === 'driver_assigned') playSound('accept'); else if (newStatus === 'arrived') playSound('arrived'); else if (['picked_up', 'in_progress', 'en_route', 'on_trip', 'driving_to_destination'].includes(newStatus as any)) playSound('start'); else if (newStatus === 'completed') playSound('complete') } }; prevStatusRef.current = newStatus; setRide(newR as Ride) }; const ch = createRealtimeChannel('ride-' + ride.id).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides', filter: 'id=eq.' + ride.id }, handleUpdate).subscribe(); return () => { supabase.removeChannel(ch) } }, [ride?.id])
   function onPickupChange(val: string) { setFareQuote(null); setPickup(val); setPickupCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); pickupDebounce.current = setTimeout(() => searchPlaces(val, setPickupSuggestions, setShowPickupSug), 300) }
   function onDropoffChange(val: string) { setFareQuote(null); setDropoff(val); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); dropoffDebounce.current = setTimeout(() => searchPlaces(val, setDropoffSuggestions, setShowDropoffSug), 300) }
-  function selectPickupSuggestion(item: any) { setFareQuote(null); setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowPickupSug(false); setPinTarget('dropoff') }
-  function selectDropoffSuggestion(item: any) { setFareQuote(null); setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowDropoffSug(false); setSheetSnap(90); if(!checkServiceArea(item.place_name, [item.center[0], item.center[1]])) return }
+  function selectPickupSuggestion(item: any) { setFareQuote(null); setPickup(item.place_name); setPickupCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowPickupSug(false); setPinTarget('dropoff'); setSheetSnap(50) }
+  function selectDropoffSuggestion(item: any) { setFareQuote(null); setDropoff(item.place_name); setDropoffCoords([item.center[0], item.center[1]]); setMapCenter([item.center[0], item.center[1]]); setDistance(null); setPrice(null); setShowEstimate(false); setRoute(undefined); setRideError(''); setShowDropoffSug(false); setSheetSnap(50); if(!checkServiceArea(item.place_name, [item.center[0], item.center[1]])) return }
   function onMapMove(coords: [number, number]) {
     setIsMapMoving(true)
     if (pinTarget === 'pickup') {
@@ -294,267 +161,64 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       mapAddressTimeout.current = setTimeout(async () => { try { const address = await reverseTomTom(coords); if (requestId === dropoffAddressRequest.current) { setDropoff(address); setIsMapMoving(false) } } catch { setIsMapMoving(false) } }, 600) as any
     }
   }
-  async function ensureCoords() {
-    let pCoords = pickupCoords; let dCoords = dropoffCoords
-    if (!pCoords && pickup.trim()) { pCoords = await geocodeAddress(pickup); if (pCoords) setPickupCoords(pCoords) }
-    if (!dCoords && dropoff.trim()) { dCoords = await geocodeAddress(dropoff); if (dCoords) setDropoffCoords(dCoords) }
-    if (!pCoords && /my location/i.test(pickup)) { pCoords = location; setPickupCoords(pCoords) }
-    if (!pCoords) { pCoords = location; setPickupCoords(pCoords) }
-    return { pCoords, dCoords }
-  }
+  async function ensureCoords() { let pCoords = pickupCoords; let dCoords = dropoffCoords; if (!pCoords && pickup.trim()) { pCoords = await geocodeAddress(pickup); if (pCoords) setPickupCoords(pCoords) }; if (!dCoords && dropoff.trim()) { dCoords = await geocodeAddress(dropoff); if (dCoords) setDropoffCoords(dCoords) }; if (!pCoords && /my location/i.test(pickup)) { pCoords = location; setPickupCoords(pCoords) }; if (!pCoords) { pCoords = location; setPickupCoords(pCoords) }; return { pCoords, dCoords } }
   async function calculateEstimate() {
-    if (!dropoff) { setRideError('Enter a destination before estimating your fare.'); return }
+    if (!dropoff) { setRideError('Enter a destination'); setSheetSnap(50); return }
     setLoading(true)
     try {
       const { pCoords, dCoords } = await ensureCoords()
-      if (!pCoords || !dCoords) { setRideError('Choose valid pickup and destination locations.'); return }
+      if (!pCoords || !dCoords) { setRideError('Choose valid locations'); return }
       if (!checkServiceArea(dropoff, dCoords) || !checkServiceArea(pickup, pCoords)) { setLoading(false); return }
       setRideError(''); setPickupCoords(pCoords); setDropoffCoords(dCoords)
       const normalizedCat = normalizeCategory(selectedCat)
-      const { data: quote, error } = await supabase.functions.invoke('calculate-fare', {
-        body: { pickup: { lng: pCoords[0], lat: pCoords[1] }, dropoff: { lng: dCoords[0], lat: dCoords[1] }, category: normalizedCat },
-      })
-      if (error) throw new Error(error.message || 'Fare service unavailable')
-      if (!quote?.quote_id || !Number.isFinite(Number(quote.total_fare))) throw new Error(quote?.error || 'Could not obtain a verified fare quote.')
-      setFareQuote({ ...quote, pickup: pCoords, dropoff: dCoords, category: normalizedCat })
-      setRoute(quote.geometry || undefined); setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(Number(quote.total_fare)); setShowEstimate(true)
-    } catch (error) { setShowEstimate(false); setFareQuote(null); setRideError('Could not calculate verified fare: ' + errMsg(error)) } finally { setLoading(false) }
+      const { data: quote, error } = await supabase.functions.invoke('calculate-fare', { body: { pickup: { lng: pCoords[0], lat: pCoords[1] }, dropoff: { lng: dCoords[0], lat: dCoords[1] }, category: normalizedCat }, })
+      if (error) throw new Error(error.message || 'Fare service unavailable'); if (!quote?.quote_id || !Number.isFinite(Number(quote.total_fare))) throw new Error(quote?.error || 'Could not obtain a verified fare quote.')
+      setFareQuote({ ...quote, pickup: pCoords, dropoff: dCoords, category: normalizedCat }); setRoute(quote.geometry || undefined); setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(Number(quote.total_fare)); setShowEstimate(true); setSheetSnap(50)
+    } catch (error) { setShowEstimate(false); setFareQuote(null); setRideError('Could not calculate fare: ' + errMsg(error)) } finally { setLoading(false) }
   }
-  async function useMyLocation() {
-    navigator.geolocation.getCurrentPosition(async pos => {
-      const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-      setFareQuote(null); setLocation(p); setMapCenter(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup')
-      try { const real = await reverseTomTom(p); setPickup(real); setRideError('') } catch { setPickup('My Location - Polokwane') }
-    }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 10000 })
-  }
-  async function requestRide() {
-    if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }
-    if (!pickup.trim() || !dropoff.trim()) { setRideError('Choose a pickup and destination.'); return }
-    const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id
-    const { data: passengerProfile } = await supabase.from('profiles').select('is_banned').eq('id', effectiveId).single()
-    if (passengerProfile?.is_banned) { setRideError('Your account is banned - contact support on 064 101 8991'); return }
-    await createRide()
-  }
+  async function useMyLocation() { navigator.geolocation.getCurrentPosition(async pos => { const p: [number, number] = [pos.coords.longitude, pos.coords.latitude]; setFareQuote(null); setLocation(p); setMapCenter(p); setPickupCoords(p); setDistance(null); setPrice(null); setShowEstimate(false); setPinTarget('pickup'); setSheetSnap(25); try { const real = await reverseTomTom(p); setPickup(real); setRideError('') } catch { setPickup('My Location - Polokwane') } }, error => setRideError('Could not access your location: ' + errMsg(error)), { enableHighAccuracy: true, timeout: 10000 }) }
+  async function requestRide() { if (!verificationLoaded) { setRideError('Safety verification is still loading. Please try again.'); return }; if (!pickup.trim() || !dropoff.trim()) { setRideError('Choose a pickup and destination.'); setSheetSnap(50); return }; const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id; const { data: passengerProfile } = await supabase.from('profiles').select('is_banned').eq('id', effectiveId).single(); if (passengerProfile?.is_banned) { setRideError('Your account is banned - contact support on 064 101 8991'); return }; await createRide() }
   async function createRide() {
     setLoading(true); setRideError('')
     try {
       const { pCoords, dCoords } = await ensureCoords()
       if (!pCoords || !dCoords || !pickup.trim() || !dropoff.trim()) throw new Error('Choose a pickup and destination.')
       if (!checkServiceArea(dropoff, dCoords)) throw new Error('Out of service area')
-      const { data: { user } } = await supabase.auth.getUser()
-      const effectiveId = user?.id || profile.id
-      if (!user) throw new Error('Your session has expired. Please log in again.')
-      let quote = fareQuote
-      const normalizedCat = normalizeCategory(selectedCat)
-      const quoteMatches = quote && normalizeCategory(quote.category) === normalizedCat
-        && quote.pickup?.[0] === pCoords[0] && quote.pickup?.[1] === pCoords[1]
-        && quote.dropoff?.[0] === dCoords[0] && quote.dropoff?.[1] === dCoords[1]
-        && Date.parse(quote.expires_at) > Date.now() + 5000
-      if (!quoteMatches) {
-        const { data, error: quoteError } = await supabase.functions.invoke('calculate-fare', {
-          body: { pickup: { lng: pCoords[0], lat: pCoords[1] }, dropoff: { lng: dCoords[0], lat: dCoords[1] }, category: normalizedCat },
-        })
-        if (quoteError) throw new Error('Could not calculate a verified fare: ' + quoteError.message)
-        quote = data
-      }
-      if (!quote?.quote_id || !Number.isFinite(Number(quote.total_fare || quote.fare)) || !Number.isFinite(Number(quote.distance_km))) {
-        throw new Error(quote?.error || 'The fare service returned an invalid quote. Please try again.')
-      }
-      const finalFare = Number(quote.total_fare || quote.fare)
-      setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(finalFare)
-      setRoute(quote.geometry || undefined)
-      const initialStatus = 'searching'
-      const { data, error } = await supabase.from('rides').insert({
-        passenger_id: effectiveId,
-        pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup,
-        dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff,
-        status: initialStatus,
-        fare_quote_id: quote.quote_id,
-        fare: finalFare, distance_km: Number(quote.distance_km), duration_min: Number(quote.duration_min),
-        payment_method: paymentMethod, ride_category: normalizedCat,
-        ride_type: normalizedCat,
-      } as any).select().single()
-      if (error) throw error
-      setFareQuote(null); setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = data.status
-      if (initialStatus === 'searching') {
-        await notifyDriversInPickupZone(data.id, pickup, normalizedCat)
-      }
+      const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id; if (!user) throw new Error('Your session has expired. Please log in again.')
+      let quote = fareQuote; const normalizedCat = normalizeCategory(selectedCat); const quoteMatches = quote && normalizeCategory(quote.category) === normalizedCat && quote.pickup?.[0] === pCoords[0] && quote.pickup?.[1] === pCoords[1] && quote.dropoff?.[0] === dCoords[0] && quote.dropoff?.[1] === dCoords[1] && Date.parse(quote.expires_at) > Date.now() + 5000
+      if (!quoteMatches) { const { data, error: quoteError } = await supabase.functions.invoke('calculate-fare', { body: { pickup: { lng: pCoords[0], lat: pCoords[1] }, dropoff: { lng: dCoords[0], lat: dCoords[1] }, category: normalizedCat }, }); if (quoteError) throw new Error('Could not calculate a verified fare: ' + quoteError.message); quote = data }
+      if (!quote?.quote_id || !Number.isFinite(Number(quote.total_fare || quote.fare)) || !Number.isFinite(Number(quote.distance_km))) { throw new Error(quote?.error || 'The fare service returned an invalid quote. Please try again.') }
+      const finalFare = Number(quote.total_fare || quote.fare); setDistance(Number(quote.distance_km)); setDuration(Number(quote.duration_min)); setPrice(finalFare); setRoute(quote.geometry || undefined)
+      const { data, error } = await supabase.from('rides').insert({ passenger_id: effectiveId, pickup_lat: pCoords[1], pickup_lng: pCoords[0], pickup_address: pickup, dropoff_lat: dCoords[1], dropoff_lng: dCoords[0], dropoff_address: dropoff, status: 'searching', fare_quote_id: quote.quote_id, fare: finalFare, distance_km: Number(quote.distance_km), duration_min: Number(quote.duration_min), payment_method: paymentMethod, ride_category: normalizedCat, ride_type: normalizedCat, } as any).select().single()
+      if (error) throw error; setFareQuote(null); setRide(data as Ride); setSheetSnap(50); prevStatusRef.current = data.status
     } catch (error) { console.error('createRide error:', error); setRideError(errMsg(error)) } finally { setLoading(false) }
   }
-  async function notifyDriversInPickupZone(rideId: string, pickupText: string, rideCategory: string) {
-    try {
-      const pickupLower = pickupText.toLowerCase()
-      const { data: zones } = await supabase.from('service_zones').select('id,name,keywords')
-      if (!zones || zones.length === 0) return
-      let matchedZone: any = null
-      for (const z of zones as any[]) {
-        const names = [z.name, z.id, ...(z.keywords || [])].map((s: string) => String(s).toLowerCase())
-        if (names.some(n => n && pickupLower.includes(n))) { matchedZone = z; break }
-      }
-      if (!matchedZone) return
-      const { data: vehicles } = await supabase.from('driver_vehicles').select('driver_id,service_zones,ride_type')
-      if (!vehicles || vehicles.length === 0) return
-      const matchedVehicles = vehicles.filter((v: any) => {
-        const sz = v.service_zones || []
-        return sz.includes(matchedZone.id) || sz.includes(matchedZone.name)
-      })
-      if (matchedVehicles.length === 0) return
-      const driverIds = matchedVehicles.map((v: any) => v.driver_id)
-      const { data: online } = await supabase.from('driver_status').select('driver_id').eq('is_online', true).in('driver_id', driverIds)
-      if (!online || online.length === 0) return
-      const onlineIds = new Set(online.map((o: any) => o.driver_id))
-      const { data: approved } = await supabase.from('profiles').select('id').eq('role', 'driver').eq('verification_status', 'verified').in('id', [...onlineIds])
-      if (!approved || approved.length === 0) return
-      const rows = approved.map((p: any) => ({ ride_id: rideId, driver_id: p.id, status: 'pending', pickup_zone_id: matchedZone.id, pickup_zone_name: matchedZone.name }))
-      await supabase.from('ride_requests').insert(rows as any)
-    } catch (e) { console.error('notifyDrivers failed:', e) }
-  }
-  async function verifyAndRequestRide(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setVerificationError('')
-    if (!safetyProfile.selfie_url) { setVerificationError('Take a selfie before continuing.'); return }
-    const trimmedIdNumber = safetyIdNumber.trim(); const idDocumentUrl = safetyProfile.id_document_url
-    if (!trimmedIdNumber) { setVerificationError('Enter your SA ID number.'); return }
-    if (/^\d{13}$/.test(trimmedIdNumber) && !isValidSAID(trimmedIdNumber)) { setVerificationError('Enter a valid 13-digit SA ID.'); return }
-    if (!idDocumentUrl) { setVerificationError('Upload ID document.'); return }
-    setLoading(true)
-    try {
-      const { error } = await supabase.rpc('verify_passenger_safety', { p_method: 'id_both', p_id_number: trimmedIdNumber, p_id_document_url: idDocumentUrl })
-      if (error) throw error
-      setSafetyProfile(current => ({ ...current, id_number: trimmedIdNumber, id_document_url: idDocumentUrl, id_verified: false, is_verified: false }))
-      setVerificationStatus('pending_verification'); setVerificationLoaded(true); setShowSafetyModal(false)
-      setRideError('Submitted for approval.')
-    } catch (error) { setVerificationError('Could not verify: ' + errMsg(error)) } finally { setLoading(false) }
-  }
-  async function sendPassengerSos() {
-    if (!window.confirm('Send SOS? Share your live location with BuddyRide Support?')) return
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Please log in again')
-      const coords = liveDriverLocation?.coordinates || location
-      const { error } = await supabase.from('sos_reports').insert({ user_id: user.id, ride_id: ride?.id || null, message: 'Passenger SOS', status: 'open', type: 'passenger_sos', latitude: coords?.[1] ?? null, longitude: coords?.[0] ?? null, } as any)
-      if (error) throw error
-      window.alert('SOS sent - Support + driver notified. Stay safe.')
-    } catch (error) { window.alert('SOS failed: ' + errMsg(error)) }
-  }
-  async function cancelRide() {
-    if (!ride) return
-    if (!cancelReason) { setShowCancelReason(true); return }
-    const rideId = ride.id
-    // FIX: TS2339 Property 'select' does not exist on type 'Promise<Ride>' - updateRide returns Ride directly, not builder
-    // Was: const { data: cancelledRide, error } = await updateRide(rideId, {...}).select('id').maybeSingle()
-    try {
-      const cancelledRide = await updateRide(rideId, { status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any)
-      if (!cancelledRide) { setRideError('Ride no longer available to cancel.'); return }
-      try { await supabase.from('ride_requests').update({ status: 'cancelled' }).eq('ride_id', rideId).eq('status', 'pending') } catch {}
-      setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(90); setCancelReason('')
-    } catch (e: any) {
-      setRideError('Could not cancel: ' + errMsg(e))
-    }
-  }
-  async function finishTrip() {
-    const finishedRide = completedRide || completedReceipt; if (!finishedRide) return; if (rating === 0 || !finishedRide.driver_id) return
-    const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: finishedRide.id, p_rating: rating, p_comment: ratingComment.trim() || null })
-    const alreadyRated = error && (error.code === '23505' || /already rated/i.test(error.message || ''))
-    if (error && !alreadyRated) { setRideError('Could not submit rating: ' + errMsg(error)); return }
-    setCompletedReceipt(null); setCompletedRide(null); clearActiveRideState(); setSheetSnap(90); setRating(0); setRatingComment('')
-  }
+  async function verifyAndRequestRide(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setVerificationError(''); if (!safetyProfile.selfie_url) { setVerificationError('Take a selfie before continuing.'); return }; const trimmedIdNumber = safetyIdNumber.trim(); const idDocumentUrl = safetyProfile.id_document_url; if (!trimmedIdNumber) { setVerificationError('Enter your SA ID number.'); return }; if (/^\d{13}$/.test(trimmedIdNumber) && !isValidSAID(trimmedIdNumber)) { setVerificationError('Enter a valid 13-digit SA ID.'); return }; if (!idDocumentUrl) { setVerificationError('Upload ID document.'); return }; setLoading(true); try { const { error } = await supabase.rpc('verify_passenger_safety', { p_method: 'id_both', p_id_number: trimmedIdNumber, p_id_document_url: idDocumentUrl }); if (error) throw error; setSafetyProfile(current => ({ ...current, id_number: trimmedIdNumber, id_document_url: idDocumentUrl, id_verified: false, is_verified: false })); setVerificationStatus('pending_verification'); setVerificationLoaded(true); setShowSafetyModal(false); setRideError('Submitted for approval.') } catch (error) { setVerificationError('Could not verify: ' + errMsg(error)) } finally { setLoading(false) } }
+  async function sendPassengerSos() { if (!window.confirm('Send SOS? Share your live location with BuddyRide Support?')) return; try { const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error('Please log in again'); const coords = liveDriverLocation?.coordinates || location; const { error } = await supabase.from('sos_reports').insert({ user_id: user.id, ride_id: ride?.id || null, message: 'Passenger SOS', status: 'open', type: 'passenger_sos', latitude: coords?.[1] ?? null, longitude: coords?.[0] ?? null, } as any); if (error) throw error; window.alert('SOS sent - Support + driver notified. Stay safe.') } catch (error) { window.alert('SOS failed: ' + errMsg(error)) } }
+  async function cancelRide() { if (!ride) return; if (!cancelReason) { setShowCancelReason(true); return }; const rideId = ride.id; try { const cancelledRide = await updateRide(rideId, { status: 'cancelled', cancel_reason: cancelReason, cancelled_at: new Date().toISOString(), cancelled_by: 'passenger' } as any); if (!cancelledRide) { setRideError('Ride no longer available to cancel.'); return }; try { await supabase.from('ride_requests').update({ status: 'cancelled' }).eq('ride_id', rideId).eq('status', 'pending') } catch {}; setShowCancelReason(false); setRoute(undefined); setDriverProfile(null); setShowEstimate(false); setRide(null); setShowChat(false); setSheetSnap(25); setCancelReason('') } catch (e: any) { setRideError('Could not cancel: ' + errMsg(e)) } }
+  async function finishTrip() { const finishedRide = completedRide || completedReceipt; if (!finishedRide) return; if (rating === 0 || !finishedRide.driver_id) return; const { error } = await supabase.rpc('submit_ride_rating', { p_ride_id: finishedRide.id, p_rating: rating, p_comment: ratingComment.trim() || null }); const alreadyRated = error && (error.code === '23505' || /already rated/i.test(error.message || '')); if (error && !alreadyRated) { setRideError('Could not submit rating: ' + errMsg(error)); return }; setCompletedReceipt(null); setCompletedRide(null); clearActiveRideState(); setSheetSnap(25); setRating(0); setRatingComment('') }
   const sugStyle = (dark: boolean) => ({ position: 'absolute' as const, top: '48px', left: 0, right: 0, zIndex: 9999, background: dark ? '#2a2a2a' : 'white', border: '1px solid ' + (dark ? '#444' : '#ddd'), borderRadius: '12px', maxHeight: '220px', overflowY: 'auto' as const })
   const sugItemStyle = (dark: boolean) => ({ padding: '12px 14px', borderBottom: '1px solid ' + (dark ? '#333' : '#eee'), cursor: 'pointer', fontSize: '14px', color: dark ? 'white' : 'black' })
-  function clearActiveRideState() { setRide(null); setDriverProfile(null); setRoute(undefined); setShowChat(false); setShowCancelReason(false); setCancelReason(''); setPickup(''); setDropoff(''); setPickupCoords(null); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); setRideError(''); setRating(0); setRatingComment(''); setSheetSnap(90); setPinTarget('pickup') }
+  function clearActiveRideState() { setRide(null); setDriverProfile(null); setRoute(undefined); setShowChat(false); setShowCancelReason(false); setCancelReason(''); setPickup(''); setDropoff(''); setPickupCoords(null); setDropoffCoords(null); setDistance(null); setPrice(null); setShowEstimate(false); setRideError(''); setRating(0); setRatingComment(''); setSheetSnap(25); setPinTarget('pickup') }
   function handleRideCompleted(finishedRide: Ride) { setCompletedRide(finishedRide); clearActiveRideState() }
-  async function uploadPassengerVerification(document: PassengerSafetyCapture, photo: Blob) {
-    setVerificationUploadType(document.type); setVerificationError(''); let uploadedPath: string | null = null; let uploadedBucket = ''
-    try {
-      const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error('Not logged in'); const ownerId = user.id
-      const bucket = document.type === 'passenger_selfie' ? 'safety-selfies' : 'passenger-ids'; uploadedBucket = bucket
-      let blobToUpload: Blob = photo; try { blobToUpload = await compress(photo) } catch { blobToUpload = photo }
-      const path = `${ownerId}/${document.type}-${safeUUID()}.jpg`; uploadedPath = path
-      const { error: uploadError } = await supabase.storage.from(bucket).upload(path, blobToUpload, { contentType: 'image/jpeg', upsert: true })
-      if (uploadError) throw new Error(uploadError.message)
-      const storageRef = `${bucket}:${path}`; const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path); const publicUrl = urlData.publicUrl
-      const savedValue = publicUrl && publicUrl.startsWith('https://') ? publicUrl : storageRef; const idSavedValue = document.type === 'passenger_id' ? storageRef : savedValue
-      const profileField = document.type === 'passenger_selfie' ? { selfie_url: savedValue } : { id_document_url: idSavedValue }
-      const { error: saveError } = await supabase.from('profiles').update(profileField).eq('id', ownerId)
-      if (saveError) { await supabase.storage.from(bucket).remove([path]).catch(()=>{}); throw new Error(saveError.message) }
-      setSafetyProfile(current => document.type === 'passenger_selfie' ? { ...current, selfie_url: savedValue } : { ...current, id_document_url: idSavedValue })
-    } catch (error) {
-      if (uploadedPath && uploadedBucket) await supabase.storage.from(uploadedBucket).remove([uploadedPath]).catch(()=>{})
-      const message = error instanceof Error ? error.message : errMsg(error); setVerificationError(message); setUploadToast(message)
-      if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current); uploadToastTimer.current = window.setTimeout(() => setUploadToast(''), 4000) as any
-    } finally { setVerificationUploadType(null) }
-  }
+  async function uploadPassengerVerification(document: PassengerSafetyCapture, photo: Blob) { setVerificationUploadType(document.type); setVerificationError(''); let uploadedPath: string | null = null; let uploadedBucket = ''; try { const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error('Not logged in'); const ownerId = user.id; const bucket = document.type === 'passenger_selfie' ? 'safety-selfies' : 'passenger-ids'; uploadedBucket = bucket; let blobToUpload: Blob = photo; try { blobToUpload = await compress(photo) } catch { blobToUpload = photo }; const path = `${ownerId}/${document.type}-${safeUUID()}.jpg`; uploadedPath = path; const { error: uploadError } = await supabase.storage.from(bucket).upload(path, blobToUpload, { contentType: 'image/jpeg', upsert: true }); if (uploadError) throw new Error(uploadError.message); const storageRef = `${bucket}:${path}`; const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path); const publicUrl = urlData.publicUrl; const savedValue = publicUrl && publicUrl.startsWith('https://') ? publicUrl : storageRef; const idSavedValue = document.type === 'passenger_id' ? storageRef : savedValue; const profileField = document.type === 'passenger_selfie' ? { selfie_url: savedValue } : { id_document_url: idSavedValue }; const { error: saveError } = await supabase.from('profiles').update(profileField).eq('id', ownerId); if (saveError) { await supabase.storage.from(bucket).remove([path]).catch(()=>{}); throw new Error(saveError.message) }; setSafetyProfile(current => document.type === 'passenger_selfie' ? { ...current, selfie_url: savedValue } : { ...current, id_document_url: idSavedValue }) } catch (error) { if (uploadedPath && uploadedBucket) await supabase.storage.from(uploadedBucket).remove([uploadedPath]).catch(()=>{}); const message = error instanceof Error ? error.message : errMsg(error); setVerificationError(message); setUploadToast(message); if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current); uploadToastTimer.current = window.setTimeout(() => setUploadToast(''), 4000) as any } finally { setVerificationUploadType(null) } }
   function closeVerificationCamera() { cameraStreamRef.current?.getTracks().forEach(track => track.stop()); cameraStreamRef.current = null; setCameraDocument(null); setCameraError(''); setCameraReady(false) }
-  async function handleGalleryFile(file: File) {
-    const doc = galleryDocRef.current || cameraDocument
-    if (!doc) return
-    closeVerificationCamera()
-    await uploadPassengerVerification(doc, file)
-  }
-  async function captureVerificationPhoto() {
-    const video = cameraVideoRef.current; const verificationDocument = cameraDocument
-    if (!video || !verificationDocument || !video.videoWidth || !video.videoHeight) { setCameraError('Camera not ready'); return }
-    const canvas = window.document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight; const context = canvas.getContext('2d')
-    if (!context) { setCameraError('Could not capture'); return }
-    context.drawImage(video, 0, 0, canvas.width, canvas.height); const photo = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85))
-    if (!photo) { setCameraError('Could not capture'); return }
-    closeVerificationCamera(); await uploadPassengerVerification(verificationDocument, photo)
-  }
-  function playSound(type: 'accept' | 'arrived' | 'start' | 'complete' | 'cancel' = 'accept') {
-    const sounds: any = { accept: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', arrived: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-2-269292.mp3', start: 'https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3', complete: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', cancel: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3' }
-    try { const audio = new Audio(sounds[type]); audio.volume = 1.0; audio.play().catch(() => {}) } catch {}; if ('vibrate' in navigator) { if (type === 'arrived') navigator.vibrate([200, 100, 200, 100, 400]); else if (type === 'cancel') navigator.vibrate([500, 200, 500]); else navigator.vibrate(300) }
-  }
+  async function handleGalleryFile(file: File) { const doc = galleryDocRef.current || cameraDocument; if (!doc) return; closeVerificationCamera(); await uploadPassengerVerification(doc, file) }
+  async function captureVerificationPhoto() { const video = cameraVideoRef.current; const verificationDocument = cameraDocument; if (!video || !verificationDocument || !video.videoWidth || !video.videoHeight) { setCameraError('Camera not ready'); return }; const canvas = window.document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight; const context = canvas.getContext('2d'); if (!context) { setCameraError('Could not capture'); return }; context.drawImage(video, 0, 0, canvas.width, canvas.height); const photo = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85)); if (!photo) { setCameraError('Could not capture'); return }; closeVerificationCamera(); await uploadPassengerVerification(verificationDocument, photo) }
+  function playSound(type: 'accept' | 'arrived' | 'start' | 'complete' | 'cancel' = 'accept') { const sounds: any = { accept: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', arrived: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-2-269292.mp3', start: 'https://cdn.pixabay.com/download/audio/2022/03/24/audio_1d171a2a6f.mp3?filename=notification-sound-7062.mp3', complete: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=success-1-6297.mp3', cancel: 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c8b9d2.mp3?filename=notification-sound-7062.mp3' }; try { const audio = new Audio(sounds[type]); audio.volume = 1.0; audio.play().catch(() => {}) } catch {}; if ('vibrate' in navigator) { if (type === 'arrived') navigator.vibrate([200, 100, 200, 100, 400]); else if (type === 'cancel') navigator.vibrate([500, 200, 500]); else navigator.vibrate(300) } }
   return <div className={'ride-app ride-app--light'} style={{ position: 'relative', height: '100dvh', overflow: 'hidden', background: bg, color: text, paddingTop: 'env(safe-area-inset-top)' }}>
     <input ref={galleryInputRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0] as any; if (f) void handleGalleryFile(f); e.currentTarget.value = '' }} />
     {uploadToast && <div role="alert" style={{ position: 'fixed', left: 16, right: 16, bottom: 24, zIndex: 100002, margin: '0 auto', maxWidth: 480, padding: '12px 16px', borderRadius: 10, background: '#b91c1c', color: 'white', fontWeight: 700 }}>Upload failed: {uploadToast}</div>}
     {showSafetyModal && <PassengerSafetyModal dark={false} avatarUrl={safetyProfile.selfie_url} idDocumentUrl={safetyProfile.id_document_url} idNumber={safetyIdNumber} loading={loading} uploading={verificationUploadType !== null} error={verificationError} onIdNumberChange={setSafetyIdNumber} onOpenCamera={type => { const cap = type === 'passenger_selfie' ? PASSENGER_SAFETY_CAPTURES[0] : PASSENGER_SAFETY_CAPTURES[1]; galleryDocRef.current = cap; setCameraDocument(cap) }} onSubmit={event => { void verifyAndRequestRide(event) }} onClose={() => setShowSafetyModal(false)} />}
-    {cameraDocument && <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 100002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'rgba(0,0,0,.88)' }}>
-      <section style={{ width: '100%', maxWidth: 480, padding: 16, borderRadius: 18, background: bgCard, color: text }}>
-        <h2 style={{ margin: '0 0 12px' }}>{cameraDocument.action}</h2>
-        <video ref={cameraVideoRef} autoPlay playsInline muted style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 12, background: '#111', objectFit: 'cover' }} />
-        {cameraError && <p role="alert" style={{ color: '#dc2626', fontSize: 13 }}>{cameraError}</p>}
-        <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button type="button" onClick={closeVerificationCamera} style={{ flex: 1, padding: 13, borderRadius: 12, border: '1px solid ' + border, background: bg2, color: text }}>Cancel</button>
-            <button type="button" onClick={() => void captureVerificationPhoto()} disabled={!cameraReady} style={{ flex: 1, padding: 13, borderRadius: 12, border: 'none', background: cameraReady ? BLUE : '#555', color: 'white', fontWeight: 700 }}>Capture</button>
-          </div>
-          <button type="button" onClick={() => { galleryDocRef.current = cameraDocument; galleryInputRef.current?.click() }} style={{ width: '100%', padding: 13, borderRadius: 12, border: `2px solid ${BLUE}`, background: bgCard, color: BLUE, fontWeight: 800 }}>🖼️ Choose from Gallery instead</button>
-        </div>
-      </section>
-    </div>}
-    {outOfService && <div style={{ position:'fixed', inset:0, zIndex:100003, background: bg, display:'grid', placeItems:'center', padding:24, textAlign:'center' }}>
-      <div><div style={{fontSize:80}}>😭</div><h2 style={{color: text}}>Out Of Service Area</h2><p style={{color: muted, lineHeight:1.6}}>Apologies! We are currently not serving in <strong style={{color:BLUE}}>{outOfServicePlace}</strong>. Our services are only available in <span style={{color:BLUE, fontWeight:700}}>Polokwane, Tzaneen, Giyani, Thohoyandou, Mankweng, Seshego, Mokopane, Makhado, Lebowakgomo + TSHWANE, Soweto, EastRand, Soshanguve, Vaal, Johannesburg, Klerksdorp, Durban, Pietermaritzburg, Potchefstroom.</span></p>
-      <button onClick={()=>{ setOutOfService(false); setDropoff(''); setDropoffCoords(null); setPrice(null) }} style={{width:'100%', marginTop:12, background:BLUE, color:'#fff', border:0, borderRadius:12, padding:14, fontWeight:800}}>Try other Location</button>
-      <button onClick={()=>{ setOutOfService(false) }} style={{width:'100%', marginTop:8, background:bg2, color:text, border:'1px solid '+border, borderRadius:12, padding:14, fontWeight:700}}>Back to Home</button></div>
-    </div>}
-    {ride && rideStatus==='searching' && <div style={{ position:'fixed', inset:0, zIndex:9998, background: bg, display:'grid', placeItems:'start center', paddingTop:'calc(env(safe-area-inset-top) + 12px)' }}>
-      <div style={{ width:'100%', maxWidth:480, padding:16, textAlign:'left' }}>
-        <div style={{ height:220, position:'relative', display:'grid', placeItems:'center', background: bg2, borderRadius:20, border: '1px solid '+border }}>
-          <div style={{ width:140, height:140, borderRadius:70, background:'rgba(0,102,255,0.15)', animation:'bro-pulse 1.8s infinite', display:'grid', placeItems:'center' }}><div style={{ width:60, height:60, borderRadius:30, background:BLUE, display:'grid', placeItems:'center', fontSize:24 }}>📍</div></div>
-        </div>
-        <h3 style={{ margin:'16px 0 4px', color: text }}>Finding nearest Buddy — {selectedCategoryLabel}</h3>
-        <p style={{ margin:'0 0 12px', color: muted, fontSize:13 }}>Searching... 0:{String(searchSec).padStart(2,'0')}</p>
-        <div style={{ background: bg2, border: '1px solid '+border, borderRadius:12, padding:12, display:'grid', gap:8, fontSize:13, color: text }}>
-          <div>● Pickup: <strong>{ride.pickup_address}</strong></div>
-          <div>● Destination: <strong>{ride.dropoff_address}</strong></div>
-          <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{color: muted}}>{paymentMethod === 'card' ? 'Card' : 'Cash'} - Fixed Fare</span><strong>R {ride.fare}</strong></div>
-        </div>
-        <button onClick={()=>{ setCancelReason('Changed mind'); void cancelRide() }} style={{ width:'100%', marginTop:16, background:'none', border:0, color:'#FF6B6B', fontWeight:800 }}>Cancel ride</button>
-      </div>
-      <style>{'@keyframes bro-pulse{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}'}</style>
-    </div>}
+    {cameraDocument && <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 100002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'rgba(0,0,0,.88)' }}><section style={{ width: '100%', maxWidth: 480, padding: 16, borderRadius: 18, background: bgCard, color: text }}><h2 style={{ margin: '0 0 12px' }}>{cameraDocument.action}</h2><video ref={cameraVideoRef} autoPlay playsInline muted style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 12, background: '#111', objectFit: 'cover' }} />{cameraError && <p role="alert" style={{ color: '#dc2626', fontSize: 13 }}>{cameraError}</p>}<div style={{ display: 'grid', gap: 10, marginTop: 12 }}><div style={{ display: 'flex', gap: 10 }}><button type="button" onClick={closeVerificationCamera} style={{ flex: 1, padding: 13, borderRadius: 12, border: '1px solid ' + border, background: bg2, color: text }}>Cancel</button><button type="button" onClick={() => void captureVerificationPhoto()} disabled={!cameraReady} style={{ flex: 1, padding: 13, borderRadius: 12, border: 'none', background: cameraReady ? BLUE : '#555', color: 'white', fontWeight: 700 }}>Capture</button></div><button type="button" onClick={() => { galleryDocRef.current = cameraDocument; galleryInputRef.current?.click() }} style={{ width: '100%', padding: 13, borderRadius: 12, border: `2px solid ${BLUE}`, background: bgCard, color: BLUE, fontWeight: 800 }}>🖼️ Choose from Gallery instead</button></div></section></div>}
+    {outOfService && <div style={{ position:'fixed', inset:0, zIndex:100003, background: bg, display:'grid', placeItems:'center', padding:24, textAlign:'center' }}><div><div style={{fontSize:80}}>😭</div><h2 style={{color: text}}>Out Of Service Area</h2><p style={{color: muted, lineHeight:1.6}}>Apologies! We are currently not serving in <strong style={{color:BLUE}}>{outOfServicePlace}</strong>. Our services are only available in <span style={{color:BLUE, fontWeight:700}}>Polokwane, Tzaneen, Giyani, Thohoyandou, Mankweng, Seshego, Mokopane, Makhado, Lebowakgomo + TSHWANE, Soweto, EastRand, Soshanguve, Vaal, Johannesburg, Klerksdorp, Durban, Pietermaritzburg, Potchefstroom.</span></p><button onClick={()=>{ setOutOfService(false); setDropoff(''); setDropoffCoords(null); setPrice(null) }} style={{width:'100%', marginTop:12, background:BLUE, color:'#fff', border:0, borderRadius:12, padding:14, fontWeight:800}}>Try other Location</button><button onClick={()=>{ setOutOfService(false) }} style={{width:'100%', marginTop:8, background:bg2, color:text, border:'1px solid '+border, borderRadius:12, padding:14, fontWeight:700}}>Back to Home</button></div></div>}
+    {ride && rideStatus==='searching' && <div style={{ position:'fixed', inset:0, zIndex:9998, background: bg, display:'grid', placeItems:'start center', paddingTop:'calc(env(safe-area-inset-top) + 12px)' }}><div style={{ width:'100%', maxWidth:480, padding:16, textAlign:'left' }}><div style={{ height:220, position:'relative', display:'grid', placeItems:'center', background: bg2, borderRadius:20, border: '1px solid '+border }}><div style={{ width:140, height:140, borderRadius:70, background:'rgba(0,102,255,0.15)', animation:'bro-pulse 1.8s infinite', display:'grid', placeItems:'center' }}><div style={{ width:60, height:60, borderRadius:30, background:BLUE, display:'grid', placeItems:'center', fontSize:24 }}>📍</div></div></div><h3 style={{ margin:'16px 0 4px', color: text }}>Finding nearest Buddy — {selectedCategoryLabel}</h3><p style={{ margin:'0 0 12px', color: muted, fontSize:13 }}>Searching... 0:{String(searchSec).padStart(2,'0')}</p><div style={{ background: bg2, border: '1px solid '+border, borderRadius:12, padding:12, display:'grid', gap:8, fontSize:13, color: text }}><div>● Pickup: <strong>{ride.pickup_address}</strong></div><div>● Destination: <strong>{ride.dropoff_address}</strong></div><div style={{ display:'flex', justifyContent:'space-between' }}><span style={{color: muted}}>{paymentMethod === 'card' ? 'Card' : 'Cash'} - Fixed Fare</span><strong>R {ride.fare}</strong></div></div><button onClick={()=>{ setCancelReason('Changed mind'); void cancelRide() }} style={{ width:'100%', marginTop:16, background:'none', border:0, color:'#FF6B6B', fontWeight:800 }}>Cancel ride</button></div><style>{'@keyframes bro-pulse{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}'}</style></div>}
     <header className="ride-header" style={{ zIndex: 100, display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: bgCard, color: text, borderBottom: '1px solid ' + border, minHeight: 56, position: 'relative' }}>
       <PassengerNavigationMenu profile={profile} theme={theme} onThemeChange={() => {}} onSignOut={() => { void supabase.auth.signOut() }} verificationStatus={verificationStatus} verificationRejectionReason={verificationRejectionReason} onReuploadVerification={() => { setVerificationError(''); setShowSafetyModal(true) }} />
-      <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 1 }}>
-        <strong style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.2px', lineHeight: 1.1, color: BLUE }}>BuddyRide</strong>
-        <span style={{ fontSize: 12, fontWeight: 600, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatDisplayName(profile.full_name)} {isVerified && <span style={{ color: '#22c55e' }}>● Verified</span>}</span>
-      </div>
+      <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 1 }}><strong style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.2px', lineHeight: 1.1, color: BLUE }}>BuddyRide</strong><span style={{ fontSize: 12, fontWeight: 600, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatDisplayName(profile.full_name)} {isVerified && <span style={{ color: '#22c55e' }}>● Verified</span>}</span></div>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}><button type="button" className="sos-btn" onClick={() => void sendPassengerSos()} aria-label="Send emergency SOS" style={{ height: 36, padding: '0 14px', borderRadius: 20, background: '#dc2626', color: 'white', border: 0, fontWeight: 900, fontSize: 13 }}>SOS</button></div>
     </header>
-    {cancelledNotification && (<div style={{ position: 'fixed', top: 'calc(env(safe-area-inset-top) + 70px)', left: '12px', right: '12px', zIndex: 99999, background: '#ff3b30', borderRadius: '16px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-      <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>❌</div>
-      <div style={{ flex: 1 }}><div style={{ color: 'white', fontWeight: '900' }}>Driver Cancelled!</div><div style={{ color: 'white', fontSize: '13px' }}>{cancelledNotification}</div></div>
-      <button onClick={() => setCancelledNotification(null)} style={{ background: 'white', color: '#ff3b30', border: 'none', borderRadius: '20px', padding: '8px 14px', fontWeight: 'bold' }}>OK</button>
-    </div>)}
+    {cancelledNotification && (<div style={{ position: 'fixed', top: 'calc(env(safe-area-inset-top) + 70px)', left: '12px', right: '12px', zIndex: 99999, background: '#ff3b30', borderRadius: '16px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}><div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>❌</div><div style={{ flex: 1 }}><div style={{ color: 'white', fontWeight: '900' }}>Driver Cancelled!</div><div style={{ color: 'white', fontSize: '13px' }}>{cancelledNotification}</div></div><button onClick={() => setCancelledNotification(null)} style={{ background: 'white', color: '#ff3b30', border: 'none', borderRadius: '20px', padding: '8px 14px', fontWeight: 'bold' }}>OK</button></div>)}
     <div style={{ position: 'absolute', inset: '0 0 0 0', top: 'calc(env(safe-area-inset-top) + 56px)', bottom: 0, zIndex: 1 }}>
       <Suspense fallback={<div aria-label="Loading map" style={{ width: '100%', height: '100%', background: bg2 }} />}>
         <PassengerTomTomMap center={mapCenter} route={route} driverLocation={liveDriverLocation?.coordinates || (driverProfile?.current_lat != null && driverProfile.current_lng != null ? [driverProfile.current_lng, driverProfile.current_lat] : undefined)} availableCars={nearbyCars as any} theme={theme} onMapMove={ride || completedRide || completedReceipt ? undefined : onMapMove} />
@@ -562,7 +226,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       {!ride && !completedRide && !completedReceipt && (
         <>
           <div aria-hidden="true" style={{ position: 'absolute', left: '50%', top: '50%', zIndex: 300, transform: `translate(-50%, -100%) translateY(${isMapMoving ? -8 : 0})`, fontSize: '34px', lineHeight: 1, pointerEvents: 'none', transition: 'transform 0.15s' }}>📍</div>
-          <div style={{ position: 'absolute', left: '50%', top: 'calc(50% + 8px)', transform: 'translateX(-50%)', zIndex: 300, pointerEvents: 'none', background: BLUE, color: 'white', fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>{pinTarget === 'pickup' ? 'PICKUP PIN' : 'DROP-OFF PIN'} — drag map</div>
+          <div style={{ position: 'absolute', left: '50%', top: 'calc(50% + 8px)', transform: 'translateX(-50%)', zIndex: 300, pointerEvents: 'none', background: BLUE, color: 'white', fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>{pinTarget === 'pickup' ? 'PICKUP PIN - drag map to set pickup' : 'DROP-OFF PIN - drag map'}</div>
         </>
       )}
       <button aria-label="Center map on my location" onClick={useMyLocation} style={{ position: 'absolute', right: '16px', bottom: '100px', zIndex: 400, width: '48px', height: '48px', borderRadius: '24px', background: BLUE, color: 'white', border: 'none', fontSize: '22px' }}>📍</button>
@@ -570,85 +234,21 @@ export function PassengerHome({ profile }: { profile: Profile }) {
     <div style={{ position: 'absolute', inset: 'auto 0 0', height: '90dvh', zIndex: 60, pointerEvents: 'none' }}>
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
         {!ride && !completedRide && !completedReceipt && (<>
-          <div style={{ display: 'grid', gap: 4, margin: '0 0 12px' }}>
-            <h2 style={{ margin: 0, fontSize: 20, color: text }}>Where are you going?</h2>
-            <span style={{ fontSize: 13, color: muted, fontWeight: 500 }}>Hi {firstName(profile.full_name)} {isVerified ? <span style={{ color: '#22c55e', fontWeight: 700 }}>● Verified</span> : <span>• Ready to ride</span>}</span>
-          </div>
+          <div style={{ display: 'grid', gap: 4, margin: '0 0 12px' }}><h2 style={{ margin: 0, fontSize: 20, color: text }}>Where are you going?</h2><span style={{ fontSize: 13, color: muted, fontWeight: 500 }}>Hi {firstName(profile.full_name)} {isVerified ? <span style={{ color: '#22c55e', fontWeight: 700 }}>● Verified</span> : <span>• Ready to ride - Drag map to set pickup</span>}</span></div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ position: 'relative' }}>
-              <input value={pickup} onFocus={() => setPinTarget('pickup')} onChange={e => onPickupChange(e.target.value)} placeholder="Pickup location" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />
-              {showPickupSug && <div style={sugStyle(false) as any}>{pickupSuggestions.map((s, i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}
-            </div>
-            <div style={{ position: 'relative' }}>
-              <input value={dropoff} onFocus={() => setPinTarget('dropoff')} onChange={e => onDropoffChange(e.target.value)} placeholder="Where to?" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />
-              {showDropoffSug && <div style={sugStyle(false) as any}>{dropoffSuggestions.map((s, i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}
-            </div>
-            <div>
-              <h3 style={{ margin: '8px 0 8px', fontSize: 15, color: text }}>Choose a ride</h3>
-              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: 4 }}>
-                {categories.map(cat => {
-                  const isSel = selectedCat === cat.id
-                  return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); setFareQuote(null); setPrice(null); setShowEstimate(false) }} style={{ minWidth: '115px', padding: '12px 10px', borderRadius: '16px', border: isSel ? `2px solid ${BLUE}` : '1px solid ' + border, background: isSel ? BLUE : bg2, color: isSel ? 'white' : text, textAlign: 'left', transition: 'all 0.15s' }}><div style={{ fontSize: '20px' }}>{(cat as any).icon}</div><div style={{ fontWeight: '800', fontSize: '13px', marginTop: 6 }}>{(cat as any).name}</div><div style={{ fontSize: '11px', color: isSel ? 'rgba(255,255,255,0.85)' : muted }}>{(cat as any).seats || ''} • {(cat as any).desc || ''}</div>{isSel && showEstimate && displayPrice !== null && <div style={{ fontWeight: '900', color: 'white', fontSize: '13px', marginTop: 4 }}>R {displayPrice}</div>}</button>
-                })}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" onClick={() => setPaymentMethod('cash')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'cash' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'cash' ? BLUE_LIGHT : bg2, color: paymentMethod === 'cash' ? BLUE : text, fontWeight: 800 }}>💵 Cash</button>
-              <button type="button" onClick={() => setPaymentMethod('card')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'card' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'card' ? BLUE_LIGHT : bg2, color: paymentMethod === 'card' ? BLUE : text, fontWeight: 800 }}>💳 Card</button>
-            </div>
-            {showEstimate && displayPrice !== null && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, background: bg2, borderRadius: 14, padding: 12, border: '1px solid '+border }}>
-                <div style={{ textAlign:'center' }}>
-                  <div style={{ fontWeight:900, fontSize:20, color: text }}>R {displayPrice}</div>
-                  <div style={{ fontSize:11, color: muted }}>Fixed Fare • {selectedCategoryLabel} • {paymentMethod === 'card' ? 'Card' : 'Cash'} • No negotiation</div>
-                </div>
-              </div>
-            )}
+            <div style={{ position: 'relative' }}><input value={pickup} onFocus={() => { setPinTarget('pickup'); setSheetSnap(25) }} onChange={e => onPickupChange(e.target.value)} placeholder="Pickup location" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />{showPickupSug && <div style={sugStyle(false) as any}>{pickupSuggestions.map((s, i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}</div>
+            <div style={{ position: 'relative' }}><input value={dropoff} onFocus={() => { setPinTarget('dropoff'); setSheetSnap(50) }} onChange={e => onDropoffChange(e.target.value)} placeholder="Where to?" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />{showDropoffSug && <div style={sugStyle(false) as any}>{dropoffSuggestions.map((s, i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}</div>
+            <div><h3 style={{ margin: '8px 0 8px', fontSize: 15, color: text }}>Choose a ride</h3><div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: 4 }}>{categories.map(cat => { const isSel = selectedCat === cat.id; return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); setFareQuote(null); setPrice(null); setShowEstimate(false) }} style={{ minWidth: '115px', padding: '12px 10px', borderRadius: '16px', border: isSel ? `2px solid ${BLUE}` : '1px solid ' + border, background: isSel ? BLUE : bg2, color: isSel ? 'white' : text, textAlign: 'left', transition: 'all 0.15s' }}><div style={{ fontSize: '20px' }}>{(cat as any).icon}</div><div style={{ fontWeight: '800', fontSize: '13px', marginTop: 6 }}>{(cat as any).name}</div><div style={{ fontSize: '11px', color: isSel ? 'rgba(255,255,255,0.85)' : muted }}>{(cat as any).seats || ''} • {(cat as any).desc || ''}</div>{isSel && showEstimate && displayPrice !== null && <div style={{ fontWeight: '900', color: 'white', fontSize: '13px', marginTop: 4 }}>R {displayPrice}</div>}</button> })}</div></div>
+            <div style={{ display: 'flex', gap: 8 }}><button type="button" onClick={() => setPaymentMethod('cash')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'cash' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'cash' ? BLUE_LIGHT : bg2, color: paymentMethod === 'cash' ? BLUE : text, fontWeight: 800 }}>💵 Cash</button><button type="button" onClick={() => setPaymentMethod('card')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'card' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'card' ? BLUE_LIGHT : bg2, color: paymentMethod === 'card' ? BLUE : text, fontWeight: 800 }}>💳 Card</button></div>
+            {showEstimate && displayPrice !== null && (<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, background: bg2, borderRadius: 14, padding: 12, border: '1px solid '+border }}><div style={{ textAlign:'center' }}><div style={{ fontWeight:900, fontSize:20, color: text }}>R {displayPrice}</div><div style={{ fontSize:11, color: muted }}>Fixed Fare • {selectedCategoryLabel} • {paymentMethod === 'card' ? 'Card' : 'Cash'} • No negotiation</div></div></div>)}
             <p style={{fontSize:12,color:muted,textAlign:'center'}}>Payment: {paymentMethod === 'card' ? 'Card - pay in app after trip' : 'Cash paid directly to your driver.'} • POPIA: Trip data kept 6 months</p>
             {rideError && <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 13, background: '#fee', padding: 8, borderRadius: 8 }}>{rideError}</p>}
-            <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: '10px 0 calc(10px + env(safe-area-inset-bottom))', background: bgCard, borderTop: '1px solid ' + border }}>
-              <button onClick={calculateEstimate} style={{ flex: 1, minHeight: '50px', padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button>
-              <button onClick={() => { void requestRide() }} disabled={loading} style={{ flex: 1.5, minHeight: '50px', padding: '14px', borderRadius: '14px', border: 'none', background: loading ? '#555' : BLUE, color: 'white', fontWeight: 'bold', opacity: loading ? 0.6 : 1 }}>{loading ? 'Finding…' : displayPrice ? `Request - R${displayPrice}` : 'Request Ride'}</button>
-            </div>
+            <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', gap: '10px', padding: '10px 0 calc(10px + env(safe-area-inset-bottom))', background: bgCard, borderTop: '1px solid ' + border }}><button onClick={calculateEstimate} style={{ flex: 1, minHeight: '50px', padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, fontWeight: 'bold' }}>Estimate</button><button onClick={() => { void requestRide() }} disabled={loading} style={{ flex: 1.5, minHeight: '50px', padding: '14px', borderRadius: '14px', border: 'none', background: loading ? '#555' : BLUE, color: 'white', fontWeight: 'bold', opacity: loading ? 0.6 : 1 }}>{loading ? 'Finding…' : displayPrice ? `Request - R${displayPrice}` : 'Request Ride'}</button></div>
             {showEstimate && distance !== null && displayPrice !== null && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: '12px', background: bg2, border: '1px solid '+border, fontSize: 13, color: text }}><span>{distance.toFixed(1)} km • {duration} min</span><span style={{ fontWeight: 'bold' }}>R {displayPrice.toFixed(0)} • {selectedCategoryLabel}</span></div>)}
           </div>
         </>)}
-        {ride && rideStatus!=='searching' && <div style={{ padding: 16 }}>
-          <h3 style={{margin:'0 0 6px', color: text}}>{ride.status} • {CATEGORIES.find(c => c.id === normalizeCategory((ride as any).ride_category || (ride as any).ride_type))?.name || selectedCategoryLabel}</h3>
-          <p style={{margin:'0 0 8px', color: muted, fontSize:14}}>R {ride.fare} • {ride.payment_method} • {ride.distance_km?.toFixed(1)} km</p>
-          <p style={{margin:'0', fontSize:13, color: text}}>From: {ride.pickup_address}</p>
-          <p style={{margin:'0 0 12px', fontSize:13, color: text}}>To: {ride.dropoff_address}</p>
-          {driverProfile && ride.status !== 'searching' && (
-            <div style={{display:'flex', gap:12, background: bg2, padding:12, borderRadius:16, marginBottom:12, alignItems:'center', border: '1px solid '+border}}>
-              <div style={{width:48, height:48, borderRadius:24, background: BLUE, color:'white', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:20}}>{driverProfile.full_name?.[0] || 'D'}</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:900, color: text}}>{driverProfile.full_name} • {driverProfile.rating ? Number(driverProfile.rating).toFixed(1) : '5.0'}★</div>
-                <div style={{fontSize:12, color: muted}}>{driverProfile.car_color} {driverProfile.car_model || driverProfile.car_make} • {driverProfile.car_plate || driverProfile.license_plate}</div>
-              </div>
-              <button onClick={()=>setShowChat(true)} style={{width:44, height:44, borderRadius:22, background: BLUE, border:'none', fontSize:20, color:'white'}}>💬</button>
-            </div>
-          )}
-          <div style={{display:'flex', gap:8, marginTop:12}}>
-            <button onClick={()=>setShowChat(true)} style={{flex:1, padding:12, borderRadius:12, border:'1px solid '+border, background:bg2, color:text, fontWeight:'bold'}}>💬 Chat</button>
-            <button onClick={() => { setCancelReason('Changed mind'); void cancelRide() }} style={{ flex:1, padding: 12, background: '#ff3b30', color: 'white', borderRadius: 12, border: 'none', fontWeight:'bold' }}>Cancel</button>
-          </div>
-          <div style={{display:'flex', gap:8, marginTop:8}}>
-            <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Track my BuddyRide ${ride.id} ${ride.pickup_address} → ${ride.dropoff_address}`)}`, '_blank')} style={{flex:1, padding:10, borderRadius:10, background:'#EFF6FF', color:BLUE, border:'1px solid #DBEAFE', fontWeight:700, fontSize:12}}>📤 Share Trip</button>
-            <button onClick={() => { const r = prompt('Report driver / trip?'); if (r) supabase.from('complaints').insert({ ride_id: ride.id, passenger_id: profile.id, driver_id: ride.driver_id, reason: r }).then(({ error }) => { if (error) alert(error.message); else alert('Report sent to BuddyRide Support') }) }} style={{flex:1, padding:10, borderRadius:10, background:'#F8FAFF', border:`1px solid ${border}`, fontWeight:700, fontSize:12}}>⚠️ Report</button>
-          </div>
-          <p style={{fontSize:11, color:muted, textAlign:'center', marginTop:8}}>Receipt auto on Complete • POPIA 6 months • SOS in header</p>
-        </div>}
-        {(completedRide || completedReceipt) && (
-          <div style={{padding:16, textAlign:'center'}}>
-            <div style={{fontSize:48}}>✅</div>
-            <h2 style={{margin:'8px 0', color: text}}>Trip Completed!</h2><h1 style={{color: BLUE, margin:'4px 0'}}>R {(completedRide || completedReceipt)?.fare}</h1>
-            <p style={{color: muted}}>🧾 Receipt: R {(completedRide || completedReceipt)?.fare} • {(completedRide || completedReceipt)?.payment_method || paymentMethod} • {(completedRide || completedReceipt)?.pickup_address} → {(completedRide || completedReceipt)?.dropoff_address}</p>
-            <p style={{color: muted}}>Rate your driver</p>
-            <div style={{display:'flex', gap:4, justifyContent:'center', margin:'12px 0'}}>{[1,2,3,4,5].map(s=>(<button key={s} onClick={()=>setRating(s)} style={{fontSize:36, background:'none', border:'none', color: rating>=s? BLUE : muted}}>{rating>=s?'★':'☆'}</button>))}</div>
-            <textarea value={ratingComment} onChange={e=>setRatingComment(e.target.value)} placeholder="Comment (optional)" style={{width:'100%', padding:12, borderRadius:12, background:bg2, color:text, boxSizing:'border-box', border: '1px solid ' + border}} />
-            <button onClick={finishTrip} disabled={rating===0} style={{width:'100%', marginTop:12, padding:16, borderRadius:14, background: rating===0?'#555':BLUE, color:'white', border:'none', fontWeight:'bold'}}>{rating===0?'Select Stars':'Submit'}</button>
-          </div>
-        )}
+        {ride && rideStatus!=='searching' && <div style={{ padding: 16 }}><h3 style={{margin:'0 0 6px', color: text}}>{ride.status} • {CATEGORIES.find(c => c.id === normalizeCategory((ride as any).ride_category || (ride as any).ride_type))?.name || selectedCategoryLabel}</h3><p style={{margin:'0 0 8px', color: muted, fontSize:14}}>R {ride.fare} • {ride.payment_method} • {ride.distance_km?.toFixed(1)} km</p><p style={{margin:'0', fontSize:13, color: text}}>From: {ride.pickup_address}</p><p style={{margin:'0 0 12px', fontSize:13, color: text}}>To: {ride.dropoff_address}</p>{driverProfile && ride.status !== 'searching' && (<div style={{display:'flex', gap:12, background: bg2, padding:12, borderRadius:16, marginBottom:12, alignItems:'center', border: '1px solid '+border}}><div style={{width:48, height:48, borderRadius:24, background: BLUE, color:'white', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:20}}>{driverProfile.full_name?.[0] || 'D'}</div><div style={{flex:1}}><div style={{fontWeight:900, color: text}}>{driverProfile.full_name} • {driverProfile.rating ? Number(driverProfile.rating).toFixed(1) : '5.0'}★</div><div style={{fontSize:12, color: muted}}>{driverProfile.car_color} {driverProfile.car_model || driverProfile.car_make} • {driverProfile.car_plate || driverProfile.license_plate}</div></div><button onClick={()=>setShowChat(true)} style={{width:44, height:44, borderRadius:22, background: BLUE, border:'none', fontSize:20, color:'white'}}>💬</button></div>)}<div style={{display:'flex', gap:8, marginTop:12}}><button onClick={()=>setShowChat(true)} style={{flex:1, padding:12, borderRadius:12, border:'1px solid '+border, background:bg2, color:text, fontWeight:'bold'}}>💬 Chat</button><button onClick={() => { setCancelReason('Changed mind'); void cancelRide() }} style={{ flex:1, padding: 12, background: '#ff3b30', color: 'white', borderRadius: 12, border: 'none', fontWeight:'bold' }}>Cancel</button></div><div style={{display:'flex', gap:8, marginTop:8}}><button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Track my BuddyRide ${ride.id} ${ride.pickup_address} → ${ride.dropoff_address}`)}`, '_blank')} style={{flex:1, padding:10, borderRadius:10, background:'#EFF6FF', color:BLUE, border:'1px solid #DBEAFE', fontWeight:700, fontSize:12}}>📤 Share Trip</button><button onClick={() => { const r = prompt('Report driver / trip?'); if (r) supabase.from('complaints').insert({ ride_id: ride.id, passenger_id: profile.id, driver_id: ride.driver_id, reason: r }).then(({ error }) => { if (error) alert(error.message); else alert('Report sent to BuddyRide Support') }) }} style={{flex:1, padding:10, borderRadius:10, background:'#F8FAFF', border:`1px solid ${border}`, fontWeight:700, fontSize:12}}>⚠️ Report</button></div><p style={{fontSize:11, color:muted, textAlign:'center', marginTop:8}}>Receipt auto on Complete • POPIA 6 months • SOS in header</p></div>}
+        {(completedRide || completedReceipt) && (<div style={{padding:16, textAlign:'center'}}><div style={{fontSize:48}}>✅</div><h2 style={{margin:'8px 0', color: text}}>Trip Completed!</h2><h1 style={{color: BLUE, margin:'4px 0'}}>R {(completedRide || completedReceipt)?.fare}</h1><p style={{color: muted}}>🧾 Receipt: R {(completedRide || completedReceipt)?.fare} • {(completedRide || completedReceipt)?.payment_method || paymentMethod} • {(completedRide || completedReceipt)?.pickup_address} → {(completedRide || completedReceipt)?.dropoff_address}</p><p style={{color: muted}}>Rate your driver</p><div style={{display:'flex', gap:4, justifyContent:'center', margin:'12px 0'}}>{[1,2,3,4,5].map(s=>(<button key={s} onClick={()=>setRating(s)} style={{fontSize:36, background:'none', border:'none', color: rating>=s? BLUE : muted}}>{rating>=s?'★':'☆'}</button>))}</div><textarea value={ratingComment} onChange={e=>setRatingComment(e.target.value)} placeholder="Comment (optional)" style={{width:'100%', padding:12, borderRadius:12, background:bg2, color:text, boxSizing:'border-box', border: '1px solid ' + border}} /><button onClick={finishTrip} disabled={rating===0} style={{width:'100%', marginTop:12, padding:16, borderRadius:14, background: rating===0?'#555':BLUE, color:'white', border:'none', fontWeight:'bold'}}>{rating===0?'Select Stars':'Submit'}</button></div>)}
       </BottomSheet>
     </div>
     {showChat && ride && <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'flex-end'}}><div style={{background:bgCard, width:'100%', borderTopLeftRadius:32, borderTopRightRadius:32, height:'75vh', display:'flex', flexDirection:'column'}}><div style={{padding:16, display:'flex', justifyContent:'space-between', borderBottom:'1px solid '+border}}><b style={{color: text}}>Chat with Driver</b><button onClick={()=>setShowChat(false)} style={{width:36, height:36, borderRadius:18, border:'1px solid '+border, background:bg2, color:text}}>✕</button></div><div style={{flex:1, overflow:'hidden'}}><RideChat rideId={ride.id} myId={profile.id} /></div></div></div>}
