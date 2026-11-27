@@ -4,6 +4,7 @@ import { PassengerNavigationMenu } from '../components/PassengerNavigationMenu'
 import { PassengerSafetyModal } from '../components/PassengerSafetyModal'
 import { RideChat } from '../components/RideChat'
 import { reverseTomTom } from '../lib/tomtom'
+import { getSavedPlaces, addSavedPlace, deleteSavedPlace, type SavedPlace } from '../lib/savedPlaces'
 import { useDriverLiveLocation } from '../lib/useDriverLiveLocation'
 import { createRealtimeChannel } from '../lib/realtime'
 import { updateRide } from '../lib/rideUpdates'
@@ -93,6 +94,7 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   const [nearbyCars, setNearbyCars] = useState<any[]>([]); const [showChat, setShowChat] = useState(false)
   const [sheetSnap, setSheetSnap] = useState<BottomSheetSnapPoint>(25)
   const [pinTarget, setPinTarget] = useState<'pickup' | 'dropoff'>('pickup')
+  const [saved, setSaved] = useState<SavedPlace[]>([])
   const [isMapMoving, setIsMapMoving] = useState(false)
   const [outOfService, setOutOfService] = useState(false); const [outOfServicePlace, setOutOfServicePlace] = useState('')
   const [searchSec, setSearchSec] = useState(0)
@@ -122,6 +124,25 @@ export function PassengerHome({ profile }: { profile: Profile }) {
   useEffect(() => { try { localStorage.setItem('buddyride-theme', 'light'); document.documentElement.setAttribute('data-theme', 'light'); document.documentElement.classList.remove('ride-app--dark'); document.documentElement.classList.add('ride-app--light'); document.body.style.background = '#f5f5f7'; document.body.style.color = '#111827'; } catch {} }, [])
   useEffect(() => () => { if (uploadToastTimer.current) window.clearTimeout(uploadToastTimer.current); cameraStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
   useEffect(() => { if (rideStatus !== 'searching') { setSearchSec(0); return }; const iv = setInterval(()=>setSearchSec(s=>s+1), 1000); return ()=>clearInterval(iv) }, [rideStatus])
+  useEffect(() => { getSavedPlaces().then(setSaved).catch(()=>{}) }, [])
+  async function saveCurrentPlace(which: 'pickup' | 'dropoff') {
+    const address = which === 'pickup' ? pickup : dropoff
+    const coords = which === 'pickup' ? pickupCoords : dropoffCoords
+    if (!address.trim()) { setRideError('Enter address first'); setSheetSnap(50); return }
+    let finalCoords = coords
+    if (!finalCoords) finalCoords = await geocodeAddress(address)
+    if (!finalCoords) { setRideError('Could not locate that address'); setSheetSnap(50); return }
+    const label = window.prompt('Save as: Home, Work, Other') as 'Home' | 'Work' | 'Other' | null
+    if (!label || !['Home','Work','Other'].includes(label)) return
+    try {
+      await addSavedPlace(label as any, address, finalCoords)
+      setSaved(await getSavedPlaces())
+      setRideError(`${label} saved!`)
+    } catch (e:any) { setRideError('Save failed: ' + errMsg(e)); setSheetSnap(50) }
+  }
+  function useSavedPlace(p: SavedPlace) {
+    setDropoff(p.address); setDropoffCoords(p.coords as any); setMapCenter(p.coords as any); setPinTarget('dropoff'); setShowEstimate(false); setPrice(null)
+  }
   useEffect(() => { let active = true; async function loadPassengerVerification() { setVerificationLoaded(false); setVerificationError(''); try { const { data: { user } } = await supabase.auth.getUser(); const effectiveId = user?.id || profile.id; const { data, error } = await supabase.from('profiles').select('avatar_url,selfie_url,id_document_url,id_number,id_verified,is_verified,id_verification_method,verification_status,verification_rejection_reason').eq('id', effectiveId).single(); if (error) throw error; if (!active) return; setSafetyProfile({ avatar_url: data.avatar_url, selfie_url: data.selfie_url, id_document_url: data.id_document_url, id_number: data.id_number, id_verified: data.id_verified, is_verified: data.is_verified }); setVerificationStatus(data.verification_status || 'not_started'); setVerificationRejectionReason(data.verification_rejection_reason || ''); setSafetyIdNumber(data.id_number || '') } catch (error) { if (!active) return; setVerificationError('Could not load safety verification: ' + errMsg(error)) } finally { if (active) setVerificationLoaded(true) } }; void loadPassengerVerification(); return () => { active = false } }, [profile.id])
   useEffect(() => { if (!cameraDocument) return; let active = true; setCameraReady(false); setCameraError(''); if (!navigator.mediaDevices?.getUserMedia) { setCameraError('Camera access is not available in this browser.'); return }; void navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: cameraDocument.facingMode } }).then(stream => { if (!active) { stream.getTracks().forEach(track => track.stop()); return }; cameraStreamRef.current = stream; setCameraReady(true); if (cameraVideoRef.current) { cameraVideoRef.current.srcObject = stream; void cameraVideoRef.current.play().catch(error => { setCameraError('Could not start the camera preview: ' + errMsg(error)) }) } }).catch(error => { if (active) setCameraError('Could not access the camera: ' + errMsg(error)) }); return () => { active = false; cameraStreamRef.current?.getTracks().forEach(track => track.stop()); cameraStreamRef.current = null } }, [cameraDocument])
   useEffect(() => () => { if (mapAddressTimeout.current) clearTimeout(mapAddressTimeout.current); if (pickupDebounce.current) clearTimeout(pickupDebounce.current); if (dropoffDebounce.current) clearTimeout(dropoffDebounce.current); if (cancelledRideTimer.current) clearTimeout(cancelledRideTimer.current) }, [])
@@ -235,9 +256,23 @@ export function PassengerHome({ profile }: { profile: Profile }) {
       <BottomSheet snapPoint={sheetSnap} onSnapChange={setSheetSnap} theme={theme} fitToSnap>
         {!ride && !completedRide && !completedReceipt && (<>
           <div style={{ display: 'grid', gap: 4, margin: '0 0 12px' }}><h2 style={{ margin: 0, fontSize: 20, color: text }}>Where are you going?</h2><span style={{ fontSize: 13, color: muted, fontWeight: 500 }}>Hi {firstName(profile.full_name)} {isVerified ? <span style={{ color: '#22c55e', fontWeight: 700 }}>● Verified</span> : <span>• Ready to ride - Drag map to set pickup</span>}</span></div>
+          {saved.length > 0 && (
+            <div style={{ display:'flex', gap:8, overflowX:'auto', marginBottom:10, paddingBottom:2 }}>
+              {saved.map(p => (
+                <div key={p.id} style={{ display:'flex', alignItems:'center', background:bg2, border:`1px solid ${border}`, borderRadius:999, padding:'6px 6px 6px 10px', whiteSpace:'nowrap' }}>
+                  <button onClick={() => useSavedPlace(p)} style={{ background:'none', border:'none', color:text, fontWeight:700, fontSize:13 }}>
+                    {p.label === 'Home' ? '🏠' : p.label === 'Work' ? '💼' : '⭐'} {p.label}
+                  </button>
+                  <button onClick={async()=>{ if(confirm(`Delete ${p.label}?`)){ await deleteSavedPlace(p.id); setSaved(await getSavedPlaces()) } }} style={{ background:'none', border:'none', color:muted, fontSize:12, marginLeft:4 }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ position: 'relative' }}><input value={pickup} onFocus={() => { setPinTarget('pickup'); setSheetSnap(25) }} onChange={e => onPickupChange(e.target.value)} placeholder="Pickup location" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />{showPickupSug && <div style={sugStyle(false) as any}>{pickupSuggestions.map((s, i) => (<div key={i} onClick={() => selectPickupSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}</div>
+            <div style={{ display:'flex', gap:8, marginTop:-4 }}><button onClick={()=>saveCurrentPlace('pickup')} style={{ fontSize:12, fontWeight:700, color:BLUE, background:'none', border:'none' }}>⭐ Save Pickup as Home/Work</button></div>
             <div style={{ position: 'relative' }}><input value={dropoff} onFocus={() => { setPinTarget('dropoff'); setSheetSnap(50) }} onChange={e => onDropoffChange(e.target.value)} placeholder="Where to?" style={{ width: '100%', height: 44, padding: '14px', borderRadius: '14px', border: '1px solid ' + border, background: bg2, color: text, boxSizing: 'border-box', fontSize: 14, fontWeight: 600 }} />{showDropoffSug && <div style={sugStyle(false) as any}>{dropoffSuggestions.map((s, i) => (<div key={i} onClick={() => selectDropoffSuggestion(s)} style={sugItemStyle(false)}>📍 {s.place_name}</div>))}</div>}</div>
+            <div style={{ display:'flex', gap:8, marginTop:-4 }}><button onClick={()=>saveCurrentPlace('dropoff')} style={{ fontSize:12, fontWeight:700, color:BLUE, background:'none', border:'none' }}>⭐ Save Destination as Home/Work</button></div>
             <div><h3 style={{ margin: '8px 0 8px', fontSize: 15, color: text }}>Choose a ride</h3><div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: 4 }}>{categories.map(cat => { const isSel = selectedCat === cat.id; return <button key={cat.id} onClick={() => { setSelectedCat(cat.id); setFareQuote(null); setPrice(null); setShowEstimate(false) }} style={{ minWidth: '115px', padding: '12px 10px', borderRadius: '16px', border: isSel ? `2px solid ${BLUE}` : '1px solid ' + border, background: isSel ? BLUE : bg2, color: isSel ? 'white' : text, textAlign: 'left', transition: 'all 0.15s' }}><div style={{ fontSize: '20px' }}>{(cat as any).icon}</div><div style={{ fontWeight: '800', fontSize: '13px', marginTop: 6 }}>{(cat as any).name}</div><div style={{ fontSize: '11px', color: isSel ? 'rgba(255,255,255,0.85)' : muted }}>{(cat as any).seats || ''} • {(cat as any).desc || ''}</div>{isSel && showEstimate && displayPrice !== null && <div style={{ fontWeight: '900', color: 'white', fontSize: '13px', marginTop: 4 }}>R {displayPrice}</div>}</button> })}</div></div>
             <div style={{ display: 'flex', gap: 8 }}><button type="button" onClick={() => setPaymentMethod('cash')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'cash' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'cash' ? BLUE_LIGHT : bg2, color: paymentMethod === 'cash' ? BLUE : text, fontWeight: 800 }}>💵 Cash</button><button type="button" onClick={() => setPaymentMethod('card')} style={{ flex: 1, padding: 12, borderRadius: 12, border: paymentMethod === 'card' ? `2px solid ${BLUE}` : `1px solid ${border}`, background: paymentMethod === 'card' ? BLUE_LIGHT : bg2, color: paymentMethod === 'card' ? BLUE : text, fontWeight: 800 }}>💳 Card</button></div>
             {showEstimate && displayPrice !== null && (<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, background: bg2, borderRadius: 14, padding: 12, border: '1px solid '+border }}><div style={{ textAlign:'center' }}><div style={{ fontWeight:900, fontSize:20, color: text }}>R {displayPrice}</div><div style={{ fontSize:11, color: muted }}>Fixed Fare • {selectedCategoryLabel} • {paymentMethod === 'card' ? 'Card' : 'Cash'} • No negotiation</div></div></div>)}
