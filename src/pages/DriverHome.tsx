@@ -91,6 +91,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
   const [docsList, setDocsList] = useState<any[]>([])
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null)
   const [avatarUrl, setAvatarUrl] = useState<string | null>((profile as any).avatar_url || null)
+  const [avatarError, setAvatarError] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const docInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const pickupRef = useRef({ distance: MIN_KM, autoAccept: true })
@@ -113,13 +114,17 @@ export function DriverHome({ profile }: { profile: Profile }) {
     const file = e.target.files?.[0]; if (!file) return
     setUploadingPhoto(true)
     try {
-      const ext = file.name.split('.').pop()
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
       const path = `${profile.id}/avatar-${Date.now()}.${ext}`
-      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true })
+      // remove old file first to avoid stale broken url
+      try { await supabase.storage.from('avatars').remove([`${profile.id}/avatar-${profile.id}`]) } catch {}
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type })
       if (upErr) throw upErr
       const { data } = supabase.storage.from('avatars').getPublicUrl(path)
-      await supabase.from('profiles').update({ avatar_url: data.publicUrl } as any).eq('id', profile.id)
-      setAvatarUrl(data.publicUrl)
+      const finalUrl = `${data.publicUrl}?t=${Date.now()}`
+      await supabase.from('profiles').update({ avatar_url: finalUrl } as any).eq('id', profile.id)
+      setAvatarError(false)
+      setAvatarUrl(finalUrl)
     } catch (err: any) { alert('Photo failed: ' + (err.message || '')) } finally { setUploadingPhoto(false); if (e.target) e.target.value = '' }
   }
 
@@ -160,7 +165,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
       if (zones) setAllZones(zones as any)
       if (docs) setDocsList(docs)
       if (p) {
-        if ((p as any).avatar_url) setAvatarUrl((p as any).avatar_url)
+        if ((p as any).avatar_url) { setAvatarUrl((p as any).avatar_url); setAvatarError(false) }
         const d = Number((p as any).search_radius_km ?? MIN_KM)
         if (d >= MIN_KM && d <= MAX_KM) setPickupDistance(d)
         setAutoAccept((p as any).auto_accept_enabled ?? true)
@@ -292,6 +297,7 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
   const pct = ((pickupDistance - MIN_KM) / (MAX_KM - MIN_KM)) * 100
   const initials = (profile.full_name || 'N').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()
+  const showAvatar = avatarUrl && !avatarError
 
   const PickupDistanceCard = (
     <div style={{ background: isDark ? '#111a2a' : '#ffffff', borderRadius: 20, padding: 18, color: THEME_TEXT, border: `1px solid ${THEME_BORDER}` }}>
@@ -323,8 +329,9 @@ export function DriverHome({ profile }: { profile: Profile }) {
 
       <header style={{ position: 'relative', zIndex: 300, display: 'flex', gap: 10, padding: 12, background: THEME_BG, borderBottom: `1px solid ${THEME_BORDER}`, alignItems: 'center' }}>
         <button onClick={() => setShowMenu(true)} style={{ width: 44, height: 44, borderRadius: '50%', border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#fff', display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: THEME_TEXT, cursor: 'pointer', flexShrink: 0 }}>☰</button>
-        {/* FIXED: No 15/15 here */}
         <button onClick={() => go('/driver/bundle')} style={{ flex: 1, borderRadius: 999, padding: '10px 14px', border: `1px solid ${isDark ? '#334155' : '#DBEAFE'}`, background: isDark ? '#1e293b' : '#EFF6FF', color: BLUE, fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>{bundleCredits ?? 0} trips • {bundleCount} bundles</button>
+        {/* DAY/NIGHT - also on main header for quick toggle */}
+        <button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: 44, height: 44, borderRadius: '50%', border: `1px solid ${THEME_BORDER}`, background: isDark ? '#1e293b' : '#fff', display: 'grid', placeItems: 'center', fontSize: 18, cursor: 'pointer', flexShrink: 0 }}>{isDark ? '☀️' : '🌙'}</button>
       </header>
 
       {needsFix && (
@@ -340,7 +347,6 @@ export function DriverHome({ profile }: { profile: Profile }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOnline ? '#12B76A' : '#98A2B3' }} />
                 <span style={{ fontSize: 14, fontWeight: 700, color: THEME_TEXT }}>{isOnline ? 'You are online' : 'You are offline'}</span>
-                {/* FIXED: No 15/15 badge here */}
               </div>
               <button onClick={toggleOnline} style={{ width: '100%', padding: 18, borderRadius: 100, background: isOnline ? (isDark ? '#334155' : '#1D2939') : BLUE, color: 'white', border: 0, fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,102,255,.25)' }}>
                 {isOnline ? 'GO OFFLINE' : 'GO ONLINE'}
@@ -363,15 +369,24 @@ export function DriverHome({ profile }: { profile: Profile }) {
       {showMenu && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 7000, display: 'flex' }}>
           <div style={{ width: '88%', maxWidth: 360, height: '100%', background: isDark ? '#0f172a' : '#F0F6FF', overflowY: 'auto', boxShadow: '8px 0 30px rgba(0,0,0,0.3)' }}>
+            {/* BURGER HEADER WITH DAY/NIGHT BACK */}
             <div style={{ background: isDark ? '#1e293b' : '#fff', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${THEME_BORDER}`, position: 'sticky', top: 0, zIndex: 2 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 32, height: 32, background: BLUE, color: '#fff', borderRadius: 8, display: 'grid', placeItems: 'center', fontWeight: 800 }}>B</span><span style={{ fontWeight: 800, color: THEME_TEXT }}>BuddyRide Driver</span></div>
-              <button onClick={() => setShowMenu(false)} style={{ width: 36, height: 36, borderRadius: '50%', border: 0, background: isDark ? '#334155' : '#F2F4F7', color: THEME_TEXT, fontWeight: 800, cursor: 'pointer' }}>✕</button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button onClick={() => setTheme(isDark ? 'light' : 'dark')} title={isDark ? 'Day mode' : 'Night mode'} style={{ width: 36, height: 36, borderRadius: '50%', border: `1px solid ${THEME_BORDER}`, background: isDark ? '#334155' : '#F2F4F7', color: THEME_TEXT, cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 16 }}>{isDark ? '☀️' : '🌙'}</button>
+                <button onClick={() => setShowMenu(false)} style={{ width: 36, height: 36, borderRadius: '50%', border: 0, background: isDark ? '#334155' : '#F2F4F7', color: THEME_TEXT, fontWeight: 800, cursor: 'pointer' }}>✕</button>
+              </div>
             </div>
 
             <div style={{ margin: 14, background: isDark ? '#1e293b' : '#fff', borderRadius: 20, padding: 16, border: `1px solid ${THEME_BORDER}` }}>
               <div style={{ display: 'flex', gap: 12 }}>
+                {/* PROFILE PIC FIXED - no broken icon, fallback to initials */}
                 <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#DBEAFE', border: `2px solid ${BLUE}`, display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 800, color: BLUE, overflow: 'hidden', flexShrink: 0 }}>
-                  {avatarUrl ? <img src={avatarUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}
+                  {showAvatar ? (
+                    <img src={avatarUrl!} alt="profile" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={() => setAvatarError(true)} />
+                  ) : (
+                    <span>{initials}</span>
+                  )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 800, color: THEME_TEXT, fontSize: 15, lineHeight: 1.2 }}>{profile.full_name || 'Driver'}</div>
@@ -397,6 +412,11 @@ export function DriverHome({ profile }: { profile: Profile }) {
                 </button>
               ))}
               {PickupDistanceCard}
+              {/* DAY/NIGHT ALSO AS ROW IN MENU - in case you miss top button */}
+              <button onClick={() => setTheme(isDark ? 'light' : 'dark')} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', borderRadius: 16, padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${THEME_BORDER}`, cursor: 'pointer' }}>
+                <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}><span style={{ width: 36, height: 36, background: '#FEF3C7', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 16 }}>{isDark ? '☀️' : '🌙'}</span><span style={{ textAlign: 'left' }}><div style={{ fontWeight: 700, color: THEME_TEXT, fontSize: 13 }}>{isDark ? 'Day Mode' : 'Night Mode'}</div><div style={{ fontSize: 10, color: THEME_SUB }}>{isDark ? 'Switch to light' : 'Switch to dark'}</div></span></span>
+                <span style={{ color: BLUE, fontWeight: 800 }}>{isDark ? '☀️' : '🌙'}</span>
+              </button>
               <button onClick={() => { if (confirm('Log out?')) { setShowMenu(false); supabase.auth.signOut() } }} style={{ width: '100%', background: isDark ? '#1e293b' : '#fff', color: '#EF4444', borderRadius: 16, padding: 14, border: `1px solid ${isDark ? '#7F1D1D' : '#FECACA'}`, fontWeight: 800, cursor: 'pointer', marginTop: 6 }}>Log out</button>
             </div>
           </div>
